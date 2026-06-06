@@ -1,0 +1,237 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                 String                 @id @default(cuid())
+  provider           String
+  providerUserId     String
+  displayName        String?
+  createdAt          DateTime               @default(now())
+  updatedAt          DateTime               @updatedAt
+  profile            UserProfile?
+  musicPlatform      MusicPlatform?
+  refreshTokens      RefreshToken[]
+  libraryTrackStates LibraryTrackState[]
+  momentLogs         MomentLog[]
+  recommendationEvents RecommendationEvent[]
+  recaps             Recap[]
+  travelSessions     TravelSession[]
+  recapShareEvents   RecapShareEvent[]
+
+  @@unique([provider, providerUserId])
+}
+
+model RefreshToken {
+  id        String   @id @default(cuid())
+  tokenHash String   @unique
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model UserProfile {
+  userId                        String   @id
+  companionType                 String?
+  locationRecommendationEnabled Boolean  @default(true)
+  preferredGenres               String[]
+  preferredMoods                String[]
+  travelStyles                  String[]
+  dislikedArtists               String[] @default([])
+  birthYear                     Int?
+  gender                        String?
+  completedOnboarding           Boolean  @default(true)
+  updatedAt                     DateTime @updatedAt
+  user                          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model MusicPlatform {
+  userId             String   @id
+  selectedPlatformId String
+  connected          Boolean  @default(false)
+  providerUserId     String?
+  updatedAt          DateTime @updatedAt
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Place {
+  id             String   @id
+  title          String
+  address        String?
+  category       String?
+  contentType    String?
+  distanceMeters Int?
+  imageUrl       String?
+  lat            Float?
+  lng            Float?
+  overview       String?
+  source         String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model Track {
+  id                 String              @id
+  title              String
+  artist             String
+  fallbackColor      String?
+  albumImageUrl      String?
+  previewUrl         String?
+  externalUrl        String?
+  platformUrls       Json?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  playlistTracks     PlaylistTrack[]
+  moodRecommendations MoodRecommendation[]
+  libraryTrackStates LibraryTrackState[]
+  representativeRecaps Recap[]           @relation("RepresentativeTrack")
+}
+
+model Playlist {
+  id                 String          @id
+  regionName         String
+  description        String?
+  placeName          String?
+  reason             String
+  coverImageUrl      String?
+  backgroundImageUrl String?
+  trackCount         Int
+  durationText       String
+  source             String?
+  context            Json?
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+  tracks             PlaylistTrack[]
+}
+
+model PlaylistTrack {
+  playlistId String
+  trackId    String
+  position   Int
+  isLiked    Boolean @default(false)
+  isSaved    Boolean @default(false)
+  playlist   Playlist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+  track      Track    @relation(fields: [trackId], references: [id], onDelete: Cascade)
+
+  @@id([playlistId, trackId])
+  @@unique([playlistId, position])
+}
+
+model MoodRecommendation {
+  id           String   @id
+  title        String
+  subtitle     String?
+  color        String
+  genres       String[] @default([])
+  moods        String[] @default([])
+  travelStyles String[] @default([])
+  trackId      String
+  sortOrder    Int      @default(0)
+  track        Track    @relation(fields: [trackId], references: [id])
+}
+
+model LibraryTrackState {
+  userId     String
+  trackId    String
+  playlistId String?
+  isLiked    Boolean  @default(false)
+  isSaved    Boolean  @default(false)
+  likedAt    DateTime?
+  savedAt    DateTime?
+  updatedAt  DateTime @updatedAt
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  track      Track    @relation(fields: [trackId], references: [id])
+
+  @@id([userId, trackId])
+}
+
+model MomentLog {
+  id            String   @id
+  userId        String
+  photoUrl      String
+  createdAt     DateTime
+  sessionId     String?
+  lat           Float?
+  lng           Float?
+  placeCategory String?
+  placeId       String?
+  placeName     String?
+  trackSnapshot Json?
+  travelMode    String?
+  moodTags      String[]
+  source        String
+  syncStatus    String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model RecommendationEvent {
+  id         String   @id
+  userId     String
+  sessionId  String
+  type       String
+  trackId    String?
+  playlistId String?
+  value      String?
+  context    Json
+  createdAt  DateTime
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Recap {
+  id                    String   @id
+  userId                String
+  title                 String
+  placeName             String
+  representativeTrackId String
+  createdAt             DateTime @default(now())
+  momentCount           Int?
+  sessionId             String?
+  backgroundImageUrl    String?
+  discImageUrl          String?
+  recordedAt            DateTime?
+  shareImageUrl         String?
+  moments               Json?
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  representativeTrack   Track    @relation("RepresentativeTrack", fields: [representativeTrackId], references: [id])
+  shareEvents           RecapShareEvent[]
+}
+
+model RecapShareEvent {
+  id        String   @id @default(cuid())
+  recapId   String
+  userId    String
+  type      String
+  createdAt DateTime
+  recap     Recap    @relation(fields: [recapId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model TravelSession {
+  id         String   @id
+  userId     String
+  status     String
+  startedAt  DateTime?
+  endedAt    DateTime?
+  travelMode String?
+  lat        Float?
+  lng        Float?
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model RegionSoundTrend {
+  id          String   @id @default(cuid())
+  regionCode  String
+  regionName  String
+  period      String
+  topMoodTags String[]
+  topTrackIds String[]
+  sampleSize  Int?
+
+  @@unique([regionCode, period])
+}
