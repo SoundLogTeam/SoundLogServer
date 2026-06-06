@@ -13,8 +13,11 @@ const envSchema = z.object({
   JWT_SECRET: z.string().min(16),
   NODE_ENV: z.string().default('development'),
   PORT: z.coerce.number().int().positive().default(4000),
+  USE_MOCK_DB: z
+    .string()
+    .optional()
+    .transform((value) => value === 'true'),
   UPLOAD_PUBLIC_BASE_URL: z.string().url().default('http://localhost:4000'),
 });
 
 export const env = envSchema.parse(process.env);
-

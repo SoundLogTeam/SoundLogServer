@@ -1,5 +1,6 @@
 import { env } from '../config/env.js';
 import { prisma } from '../config/prisma.js';
+import { mockDb } from '../mock/mock-db.js';
 import {
   createRefreshToken,
   hashToken,
@@ -15,6 +16,10 @@ type SocialLoginInput = {
 
 export const authService = {
   async socialLogin(input: SocialLoginInput) {
+    if (env.USE_MOCK_DB) {
+      return createMockTokenPair();
+    }
+
     const providerUserId = input.deviceId ?? hashToken(input.providerToken).slice(0, 24);
 
     const user = await prisma.user.upsert({
@@ -51,6 +56,21 @@ export const authService = {
   },
 
   async refresh(refreshToken: string) {
+    if (env.USE_MOCK_DB) {
+      const tokenHash = hashToken(refreshToken);
+      const record = mockDb.refreshTokens.find((item) => item.tokenHash === tokenHash);
+
+      if (!record || record.expiresAt < new Date()) {
+        throw unauthorized('refresh token이 유효하지 않습니다.');
+      }
+
+      mockDb.refreshTokens = mockDb.refreshTokens.filter(
+        (item) => item.tokenHash !== tokenHash,
+      );
+
+      return createMockTokenPair();
+    }
+
     const tokenHash = hashToken(refreshToken);
     const record = await prisma.refreshToken.findUnique({
       where: { tokenHash },
@@ -81,6 +101,21 @@ async function createTokenPair(userId: string) {
 
   return {
     accessToken: signAccessToken(userId),
+    refreshToken,
+    expiresIn: env.JWT_EXPIRES_IN_SECONDS,
+  };
+}
+
+function createMockTokenPair() {
+  const refreshToken = createRefreshToken();
+
+  mockDb.refreshTokens.push({
+    tokenHash: hashToken(refreshToken),
+    expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+  });
+
+  return {
+    accessToken: signAccessToken(mockDb.user.id),
     refreshToken,
     expiresIn: env.JWT_EXPIRES_IN_SECONDS,
   };

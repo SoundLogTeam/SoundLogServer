@@ -3,9 +3,11 @@ import { beforeAll, describe, expect, it } from 'vitest';
 
 import { createApp } from '../src/app.js';
 import { prisma } from '../src/config/prisma.js';
+import { resetMockDb } from '../src/mock/mock-db.js';
 import { disconnectSeedDatabase, seedDatabase } from '../prisma/seed.js';
 
 const app = createApp();
+const useMockDb = process.env.USE_MOCK_DB === 'true';
 
 async function getToken() {
   const response = await request(app).post('/v1/auth/social-login').send({
@@ -25,7 +27,12 @@ describe('Soundlog API', () => {
   let createdRecapId: string;
 
   beforeAll(async () => {
-    await seedDatabase();
+    if (useMockDb) {
+      resetMockDb();
+    } else {
+      await seedDatabase();
+    }
+
     accessToken = await getToken();
     authHeader = `Bearer ${accessToken}`;
   });
@@ -256,8 +263,13 @@ describe('Soundlog API', () => {
   });
 
   afterAll(async () => {
-    await seedDatabase();
-    await disconnectSeedDatabase();
+    if (useMockDb) {
+      resetMockDb();
+    } else {
+      await seedDatabase();
+      await disconnectSeedDatabase();
+    }
+
     await prisma.$disconnect();
   });
 });
