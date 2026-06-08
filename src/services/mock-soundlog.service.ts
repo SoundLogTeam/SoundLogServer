@@ -152,11 +152,14 @@ function scoreMoodRecommendation(
     moodFilter?: string;
     preferredGenres?: string[];
     preferredMoods?: string[];
+    recommendationMode?: 'everyday' | 'travel';
     topFilter?: string;
     travelStyles?: string[];
   },
 ) {
   let score = item.sortOrder * -0.01;
+  const travelModeWeight = params.recommendationMode === 'travel' ? 2.4 : 1;
+  const tasteWeight = params.recommendationMode === 'travel' ? 0.7 : 1.4;
 
   if (params.topFilter && params.topFilter !== '전체' && item.moods.includes(params.topFilter)) {
     score += 8;
@@ -168,13 +171,13 @@ function scoreMoodRecommendation(
 
   score += (params.preferredGenres ?? []).filter((genre) =>
     item.genres.includes(genre),
-  ).length * 3;
+  ).length * 3 * tasteWeight;
   score += (params.preferredMoods ?? []).filter((mood) =>
     item.moods.includes(mood),
-  ).length * 2;
+  ).length * 2 * tasteWeight;
   score += (params.travelStyles ?? []).filter((style) =>
     item.travelStyles.includes(style),
-  ).length * 2;
+  ).length * 2 * travelModeWeight;
 
   return score;
 }
@@ -272,9 +275,12 @@ export const mockSoundlogService = {
     limit?: number;
     locationRecommendationEnabled: boolean;
     placeId?: string;
+    recommendationMode?: 'everyday' | 'travel';
   }) {
     const preferredId =
-      params.locationRecommendationEnabled && (params.lat || params.placeId)
+      params.recommendationMode === 'travel' &&
+      params.locationRecommendationEnabled &&
+      (params.lat || params.placeId)
         ? getDefaultPlaylistId({ lat: params.lat, placeId: params.placeId })
         : undefined;
 
@@ -306,6 +312,7 @@ export const mockSoundlogService = {
     moodFilter?: string;
     preferredGenres?: string[];
     preferredMoods?: string[];
+    recommendationMode?: 'everyday' | 'travel';
     topFilter?: string;
     travelStyles?: string[];
   }) {
