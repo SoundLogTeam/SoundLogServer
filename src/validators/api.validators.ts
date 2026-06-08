@@ -60,6 +60,8 @@ export const travelModeSchema = z.enum([
   'night',
 ]);
 
+export const recommendationModeSchema = z.enum(['everyday', 'travel']);
+
 export const moodTagSchema = z.enum([
   'calm',
   'fresh',
@@ -79,6 +81,7 @@ const recommendationContextSchema = z
     placeCategory: z.string().optional(),
     placeId: z.string().optional(),
     placeName: z.string().optional(),
+    recommendationMode: recommendationModeSchema.optional(),
     topFilter: z.string().optional(),
     travelMode: travelModeSchema.optional(),
   })
@@ -130,6 +133,7 @@ export const homeValidators = {
     lng: optionalQueryNumber,
     locationRecommendationEnabled: queryBoolean,
     placeId: z.string().optional(),
+    recommendationMode: recommendationModeSchema.optional().default('everyday'),
     travelMode: travelModeSchema.optional(),
   }),
   moodQuery: z.object({
@@ -137,6 +141,7 @@ export const homeValidators = {
     moodFilter: z.string().default('전체'),
     preferredGenres: optionalCsvArray,
     preferredMoods: optionalCsvArray,
+    recommendationMode: recommendationModeSchema.optional().default('everyday'),
     topFilter: z.string().default('전체'),
     travelMode: travelModeSchema.optional(),
     travelStyles: optionalCsvArray,
@@ -225,7 +230,9 @@ export const recommendationEventValidators = {
             'track_unlike',
             'track_save',
             'track_unsave',
+            'playlist_open',
             'mood_filter_change',
+            'recommendation_mode_change',
             'top_filter_change',
             'track_skip',
             'recap_representative_track_select',
@@ -286,4 +293,3 @@ export const trendValidators = {
     period: z.enum(['daily', 'weekly', 'monthly']).optional().default('weekly'),
   }),
 };
-
