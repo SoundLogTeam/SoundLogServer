@@ -259,6 +259,13 @@ paths:
           schema:
             type: boolean
           example: true
+        - name: recommendationMode
+          in: query
+          required: true
+          description: 홈 상단 토글에서 선택한 추천 모드. 일상 모드는 취향 중심, 여행 모드는 장소/관광 맥락 중심으로 정렬합니다.
+          schema:
+            $ref: "#/components/schemas/MusicRecommendationMode"
+          example: travel
         - $ref: "#/components/parameters/OptionalLat"
         - $ref: "#/components/parameters/OptionalLng"
         - name: placeId
@@ -304,7 +311,14 @@ paths:
           schema:
             type: string
             default: 전체
-          example: 드라이브
+          example: 청량한
+        - name: recommendationMode
+          in: query
+          required: true
+          description: 홈 상단 토글에서 선택한 추천 모드.
+          schema:
+            $ref: "#/components/schemas/MusicRecommendationMode"
+          example: everyday
         - name: preferredGenres
           in: query
           description: 온보딩 선호 장르. 쉼표 구분.
@@ -953,6 +967,13 @@ components:
         - festival
         - night
 
+    MusicRecommendationMode:
+      type: string
+      description: 홈 추천 토글 모드. `everyday`는 평소 취향, `travel`은 관광 장소 맥락을 우선합니다.
+      enum:
+        - everyday
+        - travel
+
     MoodTag:
       type: string
       description: 추천/기록에 사용하는 무드 태그
@@ -1130,6 +1151,10 @@ components:
             type: string
           example:
             - 드라이브
+        playlistId:
+          type: string
+          description: 추천 카드 선택 시 바로 열 수 있는 플레이리스트 ID. 없으면 앱은 트랙 미리 재생으로 폴백합니다.
+          example: drive
         track:
           $ref: "#/components/schemas/Track"
 
@@ -1304,6 +1329,8 @@ components:
         moodFilter:
           type: string
           example: 청량한
+        recommendationMode:
+          $ref: "#/components/schemas/MusicRecommendationMode"
         placeCategory:
           type: string
           example: 해변
@@ -1497,7 +1524,9 @@ components:
         - track_unlike
         - track_save
         - track_unsave
+        - playlist_open
         - mood_filter_change
+        - recommendation_mode_change
         - top_filter_change
         - track_skip
         - recap_representative_track_select
