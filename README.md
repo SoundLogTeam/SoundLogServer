@@ -46,6 +46,18 @@ EXPO_PUBLIC_SOUNDLOG_API_BASE_URL=http://localhost:4000 npm run web
 
 웹 기본 주소는 `http://localhost:8081`입니다.
 
+## Production hardening
+
+실제 사용자 배포 전에는 아래 조건을 맞춰야 합니다.
+
+- `ALLOW_DEV_AUTH_FALLBACK=false`
+- `GOOGLE_CLIENT_ID`, `APPLE_CLIENT_ID` 등 실제 OAuth provider 설정 완료
+- 프론트 앱은 mock provider token 대신 실제 provider token/idToken을 서버로 교환
+- `UPLOAD_PUBLIC_BASE_URL`과 앱의 `EXPO_PUBLIC_SOUNDLOG_API_BASE_URL`은 HTTPS 도메인 사용
+- iOS 앱 설정에 전체 ATS 예외를 넣지 않기
+
+서버 코드는 `NODE_ENV=production`에서 `ALLOW_DEV_AUTH_FALLBACK=true`가 잘못 설정되어도 dev social-login fallback을 사용하지 않습니다.
+
 ## Scripts
 
 ```bash

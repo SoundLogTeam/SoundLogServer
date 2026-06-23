@@ -200,7 +200,11 @@ async function verifySocialIdentity(input: SocialLoginInput): Promise<VerifiedSo
 }
 
 function shouldUseDevSocialLoginFallback() {
-  return env.ALLOW_DEV_AUTH_FALLBACK || env.NODE_ENV !== 'production';
+  if (env.NODE_ENV === 'production') {
+    return false;
+  }
+
+  return env.ALLOW_DEV_AUTH_FALLBACK || env.NODE_ENV === 'development' || env.NODE_ENV === 'test';
 }
 
 export const authService = {
