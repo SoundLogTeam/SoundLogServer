@@ -199,22 +199,27 @@ async function verifySocialIdentity(input: SocialLoginInput): Promise<VerifiedSo
   }
 }
 
+function shouldUseDevSocialLoginFallback() {
+  return env.ALLOW_DEV_AUTH_FALLBACK || env.NODE_ENV !== 'production';
+}
+
 export const authService = {
   async socialLogin(input: SocialLoginInput) {
     if (env.USE_MOCK_DB) {
       return createMockTokenPair(false);
     }
 
+    const useDevSocialLoginFallback = shouldUseDevSocialLoginFallback();
     const explicitDeviceId =
-      env.NODE_ENV === 'production' ? undefined : input.device?.deviceId ?? input.deviceId;
+      useDevSocialLoginFallback ? input.device?.deviceId ?? input.deviceId : undefined;
     const providerCredential = getProviderCredential(input);
-    const verifiedIdentity = env.NODE_ENV === 'production'
-      ? await verifySocialIdentity(input)
-      : {
+    const verifiedIdentity = useDevSocialLoginFallback
+      ? {
           displayName: 'Soundlog User',
           providerUserId:
             explicitDeviceId ?? hashToken(`${input.provider}:${providerCredential}`).slice(0, 24),
-        };
+        }
+      : await verifySocialIdentity(input);
 
     const existingUser = await prisma.user.findUnique({
       where: {
