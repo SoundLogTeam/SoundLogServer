@@ -12,11 +12,15 @@ const useMockDb = process.env.USE_MOCK_DB === 'true';
 async function getToken() {
   const response = await request(app).post('/v1/auth/social-login').send({
     provider: 'google',
-    providerToken: 'local-dev-token',
-    deviceId: 'local-soundlog-user',
+    providerAccessToken: 'local-dev-token',
+    device: {
+      deviceId: 'local-soundlog-user',
+      platform: 'web',
+    },
   });
 
   expect(response.status).toBe(200);
+  expect(response.body.data.user.id).toEqual(expect.any(String));
   return response.body.data.accessToken as string;
 }
 
@@ -51,11 +55,22 @@ describe('Soundlog API', () => {
     expect(response.body.error.code).toBe('UNAUTHORIZED');
   });
 
+  it('returns JSON not found for unknown routes', async () => {
+    const response = await request(app).get('/v1/no-such-route');
+
+    expect(response.status).toBe(404);
+    expect(response.headers['content-type']).toContain('application/json');
+    expect(response.body.error.code).toBe('NOT_FOUND');
+  });
+
   it('refreshes auth tokens', async () => {
     const login = await request(app).post('/v1/auth/social-login').send({
       provider: 'google',
-      providerToken: 'refresh-dev-token',
-      deviceId: 'refresh-user',
+      providerAccessToken: 'refresh-dev-token',
+      device: {
+        deviceId: 'refresh-user',
+        platform: 'web',
+      },
     });
     const response = await request(app).post('/v1/auth/refresh').send({
       refreshToken: login.body.data.refreshToken,
@@ -63,6 +78,37 @@ describe('Soundlog API', () => {
 
     expect(response.status).toBe(200);
     expect(response.body.data.accessToken).toEqual(expect.any(String));
+    expect(response.body.data.user.id).toEqual(expect.any(String));
+  });
+
+  it('returns account summary, migrates local data, and logs out', async () => {
+    const me = await request(app).get('/v1/me').set('Authorization', authHeader);
+    expect(me.status).toBe(200);
+    expect(me.body.data.user.id).toEqual(expect.any(String));
+    expect(me.body.data.profile).toBeDefined();
+
+    const migration = await request(app)
+      .post('/v1/me/migrate-local-data')
+      .set('Authorization', authHeader)
+      .send({
+        idempotencyKey: `test-migration-${Date.now()}`,
+        libraryTrackCount: 2,
+        momentLogCount: 3,
+        recapDraftCount: 1,
+      });
+    expect(migration.status).toBe(200);
+    expect(migration.body.data.accepted).toBe(true);
+    expect(migration.body.data.migrated.momentLogCount).toBe(3);
+
+    const login = await request(app).post('/v1/auth/social-login').send({
+      provider: 'kakao',
+      providerAccessToken: 'logout-dev-token',
+    });
+    const logout = await request(app).post('/v1/auth/logout').send({
+      refreshToken: login.body.data.refreshToken,
+    });
+    expect(logout.status).toBe(202);
+    expect(logout.body.data.accepted).toBe(true);
   });
 
   it('handles profile and music platform APIs', async () => {
@@ -113,6 +159,12 @@ describe('Soundlog API', () => {
     expect(featured.status).toBe(200);
     expect(featured.body.data.length).toBeGreaterThan(0);
 
+    const publicFeatured = await request(app)
+      .get('/v1/home/featured-playlists')
+      .query({ locationRecommendationEnabled: true, recommendationMode: 'travel', lat: 35.1532, lng: 129.1186 });
+    expect(publicFeatured.status).toBe(200);
+    expect(publicFeatured.body.data[0].id).toBe('busan-ocean');
+
     const mood = await request(app)
       .get('/v1/home/mood-recommendations')
       .set('Authorization', authHeader)
@@ -144,6 +196,10 @@ describe('Soundlog API', () => {
       .set('Authorization', authHeader);
     expect(detail.status).toBe(200);
     expect(detail.body.data.id).toBe('busan-ocean');
+
+    const publicDetail = await request(app).get('/v1/playlists/busan-ocean');
+    expect(publicDetail.status).toBe(200);
+    expect(publicDetail.body.data.id).toBe('busan-ocean');
   });
 
   it('handles library APIs', async () => {
@@ -164,9 +220,11 @@ describe('Soundlog API', () => {
   });
 
   it('handles moment log APIs', async () => {
+    const idempotencyKey = `moment-${Date.now()}`;
     const created = await request(app)
       .post('/v1/moment-logs')
       .set('Authorization', authHeader)
+      .set('Idempotency-Key', idempotencyKey)
       .field('createdAt', new Date().toISOString())
       .field('moodTags', 'fresh,calm')
       .field('placeName', '테스트 장소')
@@ -178,6 +236,21 @@ describe('Soundlog API', () => {
 
     expect(created.status).toBe(201);
     expect(created.body.data.photoUrl).toContain('/uploads/');
+
+    const duplicate = await request(app)
+      .post('/v1/moment-logs')
+      .set('Authorization', authHeader)
+      .set('Idempotency-Key', idempotencyKey)
+      .field('createdAt', new Date().toISOString())
+      .field('moodTags', 'fresh')
+      .field('placeName', '중복 요청 장소')
+      .field('trackId', 'seoul-city')
+      .attach('photo', Buffer.from('fake-image'), {
+        filename: 'moment-duplicate.jpg',
+        contentType: 'image/jpeg',
+      });
+    expect(duplicate.status).toBe(201);
+    expect(duplicate.body.data.id).toBe(created.body.data.id);
 
     const list = await request(app)
       .get('/v1/moment-logs')
@@ -213,12 +286,22 @@ describe('Soundlog API', () => {
     expect(list.status).toBe(200);
     expect(list.body.data.length).toBeGreaterThan(0);
 
+    const idempotencyKey = `recap-${Date.now()}`;
     const created = await request(app)
       .post('/v1/recaps')
       .set('Authorization', authHeader)
+      .set('Idempotency-Key', idempotencyKey)
       .send({ templateId: 'album', sessionId: 'seed-session', title: '테스트 리캡' });
     expect(created.status).toBe(201);
     createdRecapId = created.body.data.id;
+
+    const duplicate = await request(app)
+      .post('/v1/recaps')
+      .set('Authorization', authHeader)
+      .set('Idempotency-Key', idempotencyKey)
+      .send({ templateId: 'album', sessionId: 'seed-session', title: '중복 리캡' });
+    expect(duplicate.status).toBe(201);
+    expect(duplicate.body.data.id).toBe(createdRecapId);
 
     const share = await request(app)
       .get(`/v1/recaps/${createdRecapId}/share`)

@@ -16,7 +16,7 @@ import {
   trendController,
 } from '../controllers/api.controllers.js';
 import { asyncHandler } from '../utils/async-handler.js';
-import { authMiddleware } from '../middlewares/auth.middleware.js';
+import { authMiddleware, optionalAuthMiddleware } from '../middlewares/auth.middleware.js';
 import { validate } from '../middlewares/validate.middleware.js';
 import {
   authValidators,
@@ -54,7 +54,13 @@ export function createApiRouter() {
     validate({ body: authValidators.refreshBody }),
     asyncHandler(authController.refresh),
   );
+  router.post(
+    '/v1/auth/logout',
+    validate({ body: authValidators.logoutBody }),
+    asyncHandler(authController.logout),
+  );
 
+  router.get('/v1/me', authMiddleware, asyncHandler(meController.getMe));
   router.get('/v1/me/profile', authMiddleware, asyncHandler(meController.getProfile));
   router.put(
     '/v1/me/profile',
@@ -73,6 +79,12 @@ export function createApiRouter() {
     validate({ body: meValidators.musicPlatformBody }),
     asyncHandler(meController.updateMusicPlatform),
   );
+  router.post(
+    '/v1/me/migrate-local-data',
+    authMiddleware,
+    validate({ body: meValidators.migrationBody }),
+    asyncHandler(meController.migrateLocalData),
+  );
 
   router.get(
     '/v1/tour/nearby-places',
@@ -82,13 +94,13 @@ export function createApiRouter() {
 
   router.get(
     '/v1/home/featured-playlists',
-    authMiddleware,
+    optionalAuthMiddleware,
     validate({ query: homeValidators.featuredQuery }),
     asyncHandler(homeController.getFeaturedPlaylists),
   );
   router.get(
     '/v1/home/mood-recommendations',
-    authMiddleware,
+    optionalAuthMiddleware,
     validate({ query: homeValidators.moodQuery }),
     asyncHandler(homeController.getMoodRecommendations),
   );
@@ -107,7 +119,7 @@ export function createApiRouter() {
   );
   router.get(
     '/v1/playlists/:playlistId',
-    authMiddleware,
+    optionalAuthMiddleware,
     validate({
       params: playlistValidators.detailParams,
       query: playlistValidators.detailQuery,
@@ -207,4 +219,3 @@ export function createApiRouter() {
 
   return router;
 }
-

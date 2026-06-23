@@ -241,6 +241,23 @@ export const mockSoundlogService = {
     return this.getMyMusicPlatform();
   },
 
+  async migrateLocalData(_userId: string, input: {
+    idempotencyKey: string;
+    libraryTrackCount: number;
+    momentLogCount: number;
+    recapDraftCount: number;
+  }) {
+    return {
+      accepted: true,
+      idempotencyKey: input.idempotencyKey,
+      migrated: {
+        libraryTrackCount: input.libraryTrackCount,
+        momentLogCount: input.momentLogCount,
+        recapDraftCount: input.recapDraftCount,
+      },
+    };
+  },
+
   async getNearbyPlaces(params: { lat: number; limit?: number }) {
     const isSouthernContext = params.lat < 36.5;
 
@@ -349,7 +366,7 @@ export const mockSoundlogService = {
   async createContextualPlaylist(_userId: string, input: {
     location?: { lat: number; lng: number };
     placeId?: string;
-  }) {
+  }, _idempotencyKey?: string) {
     const playlistId = getDefaultPlaylistId({
       lat: input.location?.lat,
       placeId: input.placeId,
@@ -363,7 +380,7 @@ export const mockSoundlogService = {
     return playlistToDto(playlist);
   },
 
-  async getPlaylist(_userId: string, playlistId: string, query: { lat?: number; placeId?: string }) {
+  async getPlaylist(_userId: string | undefined, playlistId: string, query: { lat?: number; placeId?: string }) {
     const id = playlistId === 'fallback' ? getDefaultPlaylistId(query) : playlistId;
     const playlist = mockDb.playlists.find((item) => item.id === id);
 
@@ -429,7 +446,7 @@ export const mockSoundlogService = {
   async updateLibraryTrackState(_userId: string, trackId: string, input: {
     action: 'like' | 'save' | 'unlike' | 'unsave';
     playlistId?: string;
-  }) {
+  }, _idempotencyKey?: string) {
     const track = findMockTrack(trackId);
 
     if (!track) {
@@ -498,7 +515,7 @@ export const mockSoundlogService = {
     trackId?: string;
     trackTitle?: string;
     travelMode?: string;
-  }) {
+  }, _idempotencyKey?: string) {
     const track = findMockTrack(input.trackId);
     const log = {
       id: createPublicId('moment'),
@@ -541,7 +558,7 @@ export const mockSoundlogService = {
       type: string;
       value?: string;
     }>;
-  }) {
+  }, _idempotencyKey?: string) {
     input.events.forEach((event) => {
       if (mockDb.recommendationEvents.some((item) => item.id === event.id)) {
         return;
@@ -575,7 +592,7 @@ export const mockSoundlogService = {
     representativeTrackId?: string;
     sessionId?: string;
     title?: string;
-  }) {
+  }, _idempotencyKey?: string) {
     const moments = mockDb.momentLogs.filter((moment) => {
       if (input.momentLogIds?.length) {
         return input.momentLogIds.includes(moment.id);
@@ -630,7 +647,7 @@ export const mockSoundlogService = {
   async createRecapShareEvent(_userId: string, recapId: string, input: {
     createdAt: string;
     type: string;
-  }) {
+  }, _idempotencyKey?: string) {
     if (!mockDb.recaps.some((recap) => recap.id === recapId)) {
       throw notFound('리캡을 찾을 수 없습니다.');
     }

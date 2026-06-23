@@ -23,6 +23,7 @@ model User {
   recaps             Recap[]
   travelSessions     TravelSession[]
   recapShareEvents   RecapShareEvent[]
+  idempotencyRecords IdempotencyRecord[]
 
   @@unique([provider, providerUserId])
 }
@@ -234,4 +235,17 @@ model RegionSoundTrend {
   sampleSize  Int?
 
   @@unique([regionCode, period])
+}
+
+model IdempotencyRecord {
+  id        String   @id @default(cuid())
+  key       String
+  scope     String
+  userId    String
+  response  Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([scope, key, userId])
 }

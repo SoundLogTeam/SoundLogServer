@@ -1,16 +1,16 @@
-import type {
-  LibraryTrackState,
-  MomentLog,
-  MoodRecommendation,
-  Place,
-  Playlist,
-  PlaylistTrack,
+import {
   Prisma,
-  Recap,
-  RegionSoundTrend,
-  Track,
-  TravelSession,
-  UserProfile,
+  type LibraryTrackState,
+  type MomentLog,
+  type MoodRecommendation,
+  type Place,
+  type Playlist,
+  type PlaylistTrack,
+  type Recap,
+  type RegionSoundTrend,
+  type Track,
+  type TravelSession,
+  type UserProfile,
 } from '@prisma/client';
 
 import { env } from '../config/env.js';
@@ -36,10 +36,227 @@ type TrackDto = {
 
 type RecommendationContext = Record<string, unknown>;
 
+type TourApiResponse = {
+  response?: {
+    body?: {
+      items?: {
+        item?: unknown;
+      };
+    };
+    header?: {
+      resultCode?: string;
+    };
+  };
+};
+
 function compact<T extends Record<string, unknown>>(value: T) {
   return Object.fromEntries(
     Object.entries(value).filter(([, item]) => item !== undefined && item !== null),
   ) as Partial<T>;
+}
+
+function toInputJson(value: unknown): Prisma.InputJsonValue {
+  return JSON.parse(JSON.stringify(value ?? { accepted: true })) as Prisma.InputJsonValue;
+}
+
+function wait(ms: number) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function withIdempotency<T>(
+  params: {
+    idempotencyKey?: string;
+    scope: string;
+    userId: string;
+  },
+  action: () => Promise<T>,
+): Promise<T> {
+  if (!params.idempotencyKey) {
+    return action();
+  }
+
+  const where = {
+    scope_key_userId: {
+      key: params.idempotencyKey,
+      scope: params.scope,
+      userId: params.userId,
+    },
+  };
+  const existing = await prisma.idempotencyRecord.findUnique({ where });
+
+  if (existing) {
+    if (existing.response !== null) {
+      return existing.response as T;
+    }
+
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      await wait(50);
+
+      const completed = await prisma.idempotencyRecord.findUnique({ where });
+
+      if (completed && completed.response !== null) {
+        return completed.response as T;
+      }
+    }
+
+    throw badRequest('동일한 요청이 아직 처리 중입니다.');
+  }
+
+  try {
+    await prisma.idempotencyRecord.create({
+      data: {
+        key: params.idempotencyKey,
+        scope: params.scope,
+        userId: params.userId,
+        response: Prisma.JsonNull,
+      },
+    });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        await wait(50);
+
+        const duplicate = await prisma.idempotencyRecord.findUnique({ where });
+
+        if (duplicate && duplicate.response !== null) {
+          return duplicate.response as T;
+        }
+      }
+
+      throw badRequest('동일한 요청이 아직 처리 중입니다.');
+    }
+
+    throw error;
+  }
+
+  try {
+    const response = await action();
+
+    await prisma.idempotencyRecord.update({
+      where,
+      data: {
+        response: toInputJson(response),
+      },
+    });
+
+    return response;
+  } catch (error) {
+    await prisma.idempotencyRecord.delete({ where }).catch(() => undefined);
+    throw error;
+  }
+
+}
+
+function normalizePublicUrl(baseUrl: string, path: string) {
+  return `${baseUrl.replace(/\/$/, '')}/${path.replace(/^\//, '')}`;
+}
+
+function asString(value: unknown) {
+  return typeof value === 'string' ? value : undefined;
+}
+
+function asNumber(value: unknown) {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : undefined;
+  }
+
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+
+  return undefined;
+}
+
+function getEncodedServiceKey(serviceKey: string) {
+  return serviceKey.includes('%') ? serviceKey : encodeURIComponent(serviceKey);
+}
+
+async function fetchTourApiPlaces(params: {
+  contentTypes?: string;
+  lat: number;
+  limit?: number;
+  lng: number;
+  radiusMeters?: number;
+}) {
+  const serviceKey = env.TOUR_API_SERVICE_KEY;
+
+  if (!serviceKey) {
+    return [];
+  }
+
+  const endpoint = `${env.TOUR_API_BASE_URL.replace(/\/$/, '')}/locationBasedList2`;
+  const firstContentType = params.contentTypes
+    ?.split(',')
+    .map((item) => item.trim())
+    .find(Boolean);
+  const query = new URLSearchParams({
+    MobileApp: 'Soundlog',
+    MobileOS: 'ETC',
+    _type: 'json',
+    arrange: 'E',
+    mapX: String(params.lng),
+    mapY: String(params.lat),
+    numOfRows: String(getLimit(params.limit, 10)),
+    pageNo: '1',
+    radius: String(params.radiusMeters ?? 2000),
+  });
+
+  if (firstContentType) {
+    query.set('contentTypeId', firstContentType);
+  }
+
+  try {
+    const response = await fetch(`${endpoint}?serviceKey=${getEncodedServiceKey(serviceKey)}&${query}`);
+
+    if (!response.ok) {
+      return [];
+    }
+
+    const data = (await response.json()) as TourApiResponse;
+
+    if (data.response?.header?.resultCode && data.response.header.resultCode !== '0000') {
+      return [];
+    }
+
+    const rawItems = data.response?.body?.items?.item;
+    const items = Array.isArray(rawItems) ? rawItems : rawItems ? [rawItems] : [];
+
+    return items.flatMap((raw) => {
+      if (!raw || typeof raw !== 'object') {
+        return [];
+      }
+
+      const item = raw as Record<string, unknown>;
+      const id = asString(item.contentid);
+      const title = asString(item.title);
+
+      if (!id || !title) {
+        return [];
+      }
+
+      const lat = asNumber(item.mapy);
+      const lng = asNumber(item.mapx);
+
+      return [
+        compact({
+          id,
+          title,
+          address: asString(item.addr1) ?? asString(item.addr2),
+          category: asString(item.cat3) ?? asString(item.cat2) ?? asString(item.cat1),
+          contentType: asString(item.contenttypeid),
+          distanceMeters: asNumber(item.dist),
+          imageUrl: asString(item.firstimage) ?? asString(item.firstimage2),
+          location: lat !== undefined && lng !== undefined ? { lat, lng } : undefined,
+          source: 'tour-api',
+        }),
+      ];
+    });
+  } catch {
+    return [];
+  }
 }
 
 function trackToDto(
@@ -281,9 +498,18 @@ async function findDefaultPlaylist(params?: { lat?: number; placeId?: string }) 
 
 export const soundlogService = {
   async getHealth() {
+    let database: 'ok' | 'unavailable' = 'ok';
+
+    try {
+      await prisma.$queryRaw`SELECT 1`;
+    } catch {
+      database = 'unavailable';
+    }
+
     return {
-      status: 'ok',
+      status: database === 'ok' ? 'ok' : 'degraded',
       checkedAt: new Date().toISOString(),
+      database,
     };
   },
 
@@ -371,7 +597,36 @@ export const soundlogService = {
     return musicPlatformToDto(platform);
   },
 
-  async getNearbyPlaces(params: { lat: number; lng: number; limit?: number }) {
+  async migrateLocalData(_userId: string, input: {
+    idempotencyKey: string;
+    libraryTrackCount: number;
+    momentLogCount: number;
+    recapDraftCount: number;
+  }) {
+    return {
+      accepted: true,
+      idempotencyKey: input.idempotencyKey,
+      migrated: {
+        libraryTrackCount: input.libraryTrackCount,
+        momentLogCount: input.momentLogCount,
+        recapDraftCount: input.recapDraftCount,
+      },
+    };
+  },
+
+  async getNearbyPlaces(params: {
+    contentTypes?: string;
+    lat: number;
+    limit?: number;
+    lng: number;
+    radiusMeters?: number;
+  }) {
+    const tourPlaces = await fetchTourApiPlaces(params);
+
+    if (tourPlaces.length > 0) {
+      return tourPlaces.slice(0, getLimit(params.limit, 10));
+    }
+
     const isSouthernContext = params.lat < 36.5;
     const places = await prisma.place.findMany({
       orderBy: [{ distanceMeters: 'asc' }, { title: 'asc' }],
@@ -482,40 +737,46 @@ export const soundlogService = {
       placeId?: string;
       travelMode?: string;
     },
+    idempotencyKey?: string,
   ) {
-    const playlistId = await findDefaultPlaylist({
-      lat: input.location?.lat,
-      placeId: input.placeId,
-    });
-    const playlist = await prisma.playlist.findUnique({
-      where: { id: playlistId },
-      include: {
-        tracks: {
-          include: { track: true },
-        },
-      },
-    });
-
-    if (!playlist) {
-      throw notFound();
-    }
-
-    await prisma.playlist.update({
-      where: { id: playlist.id },
-      data: {
-        context: compact({
-          moodTags: input.moodTags,
+    return withIdempotency(
+      { idempotencyKey, scope: 'playlist.contextual.create', userId },
+      async () => {
+        const playlistId = await findDefaultPlaylist({
+          lat: input.location?.lat,
           placeId: input.placeId,
-          travelMode: input.travelMode,
-        }),
-      },
-    });
+        });
+        const playlist = await prisma.playlist.findUnique({
+          where: { id: playlistId },
+          include: {
+            tracks: {
+              include: { track: true },
+            },
+          },
+        });
 
-    return playlistToDto(playlist, userId);
+        if (!playlist) {
+          throw notFound();
+        }
+
+        await prisma.playlist.update({
+          where: { id: playlist.id },
+          data: {
+            context: compact({
+              moodTags: input.moodTags,
+              placeId: input.placeId,
+              travelMode: input.travelMode,
+            }),
+          },
+        });
+
+        return playlistToDto(playlist, userId);
+      },
+    );
   },
 
   async getPlaylist(
-    userId: string,
+    userId: string | undefined,
     playlistId: string,
     query: { lat?: number; placeId?: string },
   ) {
@@ -579,42 +840,48 @@ export const soundlogService = {
       action: 'like' | 'unlike' | 'save' | 'unsave';
       playlistId?: string;
     },
+    idempotencyKey?: string,
   ) {
-    const track = await prisma.track.findUnique({ where: { id: trackId } });
+    return withIdempotency(
+      { idempotencyKey, scope: `library.track.${trackId}`, userId },
+      async () => {
+        const track = await prisma.track.findUnique({ where: { id: trackId } });
 
-    if (!track) {
-      throw notFound('트랙을 찾을 수 없습니다.');
-    }
+        if (!track) {
+          throw notFound('트랙을 찾을 수 없습니다.');
+        }
 
-    const now = new Date();
-    const state = await prisma.libraryTrackState.upsert({
-      where: {
-        userId_trackId: { userId, trackId },
-      },
-      update: {
-        playlistId: input.playlistId,
-        isLiked: input.action === 'like' ? true : input.action === 'unlike' ? false : undefined,
-        isSaved: input.action === 'save' ? true : input.action === 'unsave' ? false : undefined,
-        likedAt: input.action === 'like' ? now : input.action === 'unlike' ? null : undefined,
-        savedAt: input.action === 'save' ? now : input.action === 'unsave' ? null : undefined,
-      },
-      create: {
-        userId,
-        trackId,
-        playlistId: input.playlistId,
-        isLiked: input.action === 'like',
-        isSaved: input.action === 'save',
-        likedAt: input.action === 'like' ? now : undefined,
-        savedAt: input.action === 'save' ? now : undefined,
-      },
-    });
+        const now = new Date();
+        const state = await prisma.libraryTrackState.upsert({
+          where: {
+            userId_trackId: { userId, trackId },
+          },
+          update: {
+            playlistId: input.playlistId,
+            isLiked: input.action === 'like' ? true : input.action === 'unlike' ? false : undefined,
+            isSaved: input.action === 'save' ? true : input.action === 'unsave' ? false : undefined,
+            likedAt: input.action === 'like' ? now : input.action === 'unlike' ? null : undefined,
+            savedAt: input.action === 'save' ? now : input.action === 'unsave' ? null : undefined,
+          },
+          create: {
+            userId,
+            trackId,
+            playlistId: input.playlistId,
+            isLiked: input.action === 'like',
+            isSaved: input.action === 'save',
+            likedAt: input.action === 'like' ? now : undefined,
+            savedAt: input.action === 'save' ? now : undefined,
+          },
+        });
 
-    return {
-      trackId: state.trackId,
-      isLiked: state.isLiked,
-      isSaved: state.isSaved,
-      updatedAt: state.updatedAt.toISOString(),
-    };
+        return {
+          trackId: state.trackId,
+          isLiked: state.isLiked,
+          isSaved: state.isSaved,
+          updatedAt: state.updatedAt.toISOString(),
+        };
+      },
+    );
   },
 
   async getMomentLogs(
@@ -657,42 +924,48 @@ export const soundlogService = {
       trackTitle?: string;
       travelMode?: string;
     },
+    idempotencyKey?: string,
   ) {
-    const track = input.trackId
-      ? await prisma.track.findUnique({ where: { id: input.trackId } })
-      : undefined;
-    const photoUrl = `${env.UPLOAD_PUBLIC_BASE_URL}${input.photoPath}`;
-    const id = createPublicId('moment');
-    const log = await prisma.momentLog.create({
-      data: {
-        id,
-        userId,
-        photoUrl,
-        createdAt: new Date(input.createdAt),
-        sessionId: input.sessionId,
-        lat: input.lat,
-        lng: input.lng,
-        placeCategory: input.placeCategory,
-        placeId: input.placeId,
-        placeName: input.placeName,
-        trackSnapshot:
-          track || input.trackTitle
-            ? {
-                id: track?.id ?? input.trackId ?? createPublicId('track'),
-                title: track?.title ?? input.trackTitle ?? '저장된 순간',
-                artist: track?.artist ?? input.artistName ?? '음악 없음',
-                fallbackColor: track?.fallbackColor,
-                platformUrls: track?.platformUrls,
-              }
-            : undefined,
-        travelMode: input.travelMode,
-        moodTags: input.moodTags,
-        source: 'camera',
-        syncStatus: 'synced',
-      },
-    });
+    return withIdempotency(
+      { idempotencyKey, scope: 'moment-log.create', userId },
+      async () => {
+        const track = input.trackId
+          ? await prisma.track.findUnique({ where: { id: input.trackId } })
+          : undefined;
+        const photoUrl = normalizePublicUrl(env.UPLOAD_PUBLIC_BASE_URL, input.photoPath);
+        const id = createPublicId('moment');
+        const log = await prisma.momentLog.create({
+          data: {
+            id,
+            userId,
+            photoUrl,
+            createdAt: new Date(input.createdAt),
+            sessionId: input.sessionId,
+            lat: input.lat,
+            lng: input.lng,
+            placeCategory: input.placeCategory,
+            placeId: input.placeId,
+            placeName: input.placeName,
+            trackSnapshot:
+              track || input.trackTitle
+                ? {
+                    id: track?.id ?? input.trackId ?? createPublicId('track'),
+                    title: track?.title ?? input.trackTitle ?? '저장된 순간',
+                    artist: track?.artist ?? input.artistName ?? '음악 없음',
+                    fallbackColor: track?.fallbackColor,
+                    platformUrls: track?.platformUrls,
+                  }
+                : undefined,
+            travelMode: input.travelMode,
+            moodTags: input.moodTags,
+            source: 'camera',
+            syncStatus: 'synced',
+          },
+        });
 
-    return momentLogToDto(log);
+        return momentLogToDto(log);
+      },
+    );
   },
 
   async createRecommendationEvents(
@@ -709,21 +982,29 @@ export const soundlogService = {
         value?: string;
       }>;
     },
+    idempotencyKey?: string,
   ) {
-    await prisma.recommendationEvent.createMany({
-      data: input.events.map((event) => ({
-        id: event.id,
-        userId,
-        sessionId: event.sessionId,
-        type: event.type,
-        trackId: event.trackId,
-        playlistId: event.playlistId,
-        value: event.value,
-        context: event.context as Prisma.InputJsonValue,
-        createdAt: new Date(event.createdAt),
-      })),
-      skipDuplicates: true,
-    });
+    await withIdempotency(
+      { idempotencyKey, scope: 'recommendation-events.create', userId },
+      async () => {
+        await prisma.recommendationEvent.createMany({
+          data: input.events.map((event) => ({
+            id: event.id,
+            userId,
+            sessionId: event.sessionId,
+            type: event.type,
+            trackId: event.trackId,
+            playlistId: event.playlistId,
+            value: event.value,
+            context: event.context as Prisma.InputJsonValue,
+            createdAt: new Date(event.createdAt),
+          })),
+          skipDuplicates: true,
+        });
+
+        return { accepted: true };
+      },
+    );
   },
 
   async getRecaps(userId: string, params: { cursor?: string; limit?: number }) {
@@ -753,55 +1034,61 @@ export const soundlogService = {
       templateId: string;
       title?: string;
     },
+    idempotencyKey?: string,
   ) {
-    const moments = await prisma.momentLog.findMany({
-      where: {
-        userId,
-        id: input.momentLogIds?.length ? { in: input.momentLogIds } : undefined,
-        sessionId: input.sessionId,
+    return withIdempotency(
+      { idempotencyKey, scope: 'recap.create', userId },
+      async () => {
+        const moments = await prisma.momentLog.findMany({
+          where: {
+            userId,
+            id: input.momentLogIds?.length ? { in: input.momentLogIds } : undefined,
+            sessionId: input.sessionId,
+          },
+          orderBy: { createdAt: 'asc' },
+        });
+        const representativeTrackId =
+          input.representativeTrackId ??
+          ((moments[0]?.trackSnapshot as TrackDto | null)?.id || 'seoul-city');
+        const track = await prisma.track.findUnique({
+          where: { id: representativeTrackId },
+        });
+
+        if (!track) {
+          throw notFound('대표 트랙을 찾을 수 없습니다.');
+        }
+
+        const firstMoment = moments[0];
+        const recap = await prisma.recap.create({
+          data: {
+            id: createPublicId('recap'),
+            userId,
+            title: input.title ?? `${firstMoment?.placeName ?? '여행'}의 사운드`,
+            placeName: firstMoment?.placeName ?? 'Soundlog',
+            representativeTrackId: track.id,
+            momentCount: moments.length,
+            sessionId: input.sessionId,
+            backgroundImageUrl: firstMoment?.photoUrl,
+            discImageUrl: firstMoment?.photoUrl,
+            recordedAt: firstMoment?.createdAt ?? new Date(),
+            moments: moments.map((moment) => {
+              const momentTrack = (moment.trackSnapshot as TrackDto | null) ?? undefined;
+              return {
+                id: moment.id,
+                imageUrl: moment.photoUrl,
+                placeName: moment.placeName ?? '위치 없음',
+                trackTitle: momentTrack?.title ?? '저장된 순간',
+                artistName: momentTrack?.artist ?? '음악 없음',
+                recordedAt: moment.createdAt.toISOString(),
+              };
+            }) as Prisma.JsonArray,
+          },
+          include: { representativeTrack: true },
+        });
+
+        return recapItemToDto(recap);
       },
-      orderBy: { createdAt: 'asc' },
-    });
-    const representativeTrackId =
-      input.representativeTrackId ??
-      ((moments[0]?.trackSnapshot as TrackDto | null)?.id || 'seoul-city');
-    const track = await prisma.track.findUnique({
-      where: { id: representativeTrackId },
-    });
-
-    if (!track) {
-      throw notFound('대표 트랙을 찾을 수 없습니다.');
-    }
-
-    const firstMoment = moments[0];
-    const recap = await prisma.recap.create({
-      data: {
-        id: createPublicId('recap'),
-        userId,
-        title: input.title ?? `${firstMoment?.placeName ?? '여행'}의 사운드`,
-        placeName: firstMoment?.placeName ?? 'Soundlog',
-        representativeTrackId: track.id,
-        momentCount: moments.length,
-        sessionId: input.sessionId,
-        backgroundImageUrl: firstMoment?.photoUrl,
-        discImageUrl: firstMoment?.photoUrl,
-        recordedAt: firstMoment?.createdAt ?? new Date(),
-        moments: moments.map((moment) => {
-          const momentTrack = (moment.trackSnapshot as TrackDto | null) ?? undefined;
-          return {
-            id: moment.id,
-            imageUrl: moment.photoUrl,
-            placeName: moment.placeName ?? '위치 없음',
-            trackTitle: momentTrack?.title ?? '저장된 순간',
-            artistName: momentTrack?.artist ?? '음악 없음',
-            recordedAt: moment.createdAt.toISOString(),
-          };
-        }) as Prisma.JsonArray,
-      },
-      include: { representativeTrack: true },
-    });
-
-    return recapItemToDto(recap);
+    );
   },
 
   async getRecapShare(userId: string, recapId: string) {
@@ -824,26 +1111,34 @@ export const soundlogService = {
     userId: string,
     recapId: string,
     input: { createdAt: string; type: string },
+    idempotencyKey?: string,
   ) {
-    const recap = await prisma.recap.findFirst({
-      where: {
-        id: recapId,
-        userId,
-      },
-    });
+    await withIdempotency(
+      { idempotencyKey, scope: `recap-share-event.${recapId}`, userId },
+      async () => {
+        const recap = await prisma.recap.findFirst({
+          where: {
+            id: recapId,
+            userId,
+          },
+        });
 
-    if (!recap) {
-      throw notFound('리캡을 찾을 수 없습니다.');
-    }
+        if (!recap) {
+          throw notFound('리캡을 찾을 수 없습니다.');
+        }
 
-    await prisma.recapShareEvent.create({
-      data: {
-        recapId,
-        userId,
-        type: input.type,
-        createdAt: new Date(input.createdAt),
+        await prisma.recapShareEvent.create({
+          data: {
+            recapId,
+            userId,
+            type: input.type,
+            createdAt: new Date(input.createdAt),
+          },
+        });
+
+        return { accepted: true };
       },
-    });
+    );
   },
 
   async createTravelSession(
