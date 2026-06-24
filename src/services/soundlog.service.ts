@@ -1047,12 +1047,30 @@ export const soundlogService = {
           },
           orderBy: { createdAt: 'asc' },
         });
+        const candidateTrackIds = input.representativeTrackId
+          ? [input.representativeTrackId]
+          : Array.from(
+              new Set(
+                [...moments]
+                  .reverse()
+                  .map((moment) => (moment.trackSnapshot as TrackDto | null)?.id)
+                  .filter((trackId): trackId is string => Boolean(trackId)),
+              ),
+            );
+        const candidateTracks = candidateTrackIds.length
+          ? await prisma.track.findMany({ where: { id: { in: candidateTrackIds } } })
+          : [];
         const representativeTrackId =
           input.representativeTrackId ??
-          ((moments[0]?.trackSnapshot as TrackDto | null)?.id || 'seoul-city');
-        const track = await prisma.track.findUnique({
-          where: { id: representativeTrackId },
-        });
+          candidateTrackIds.find((trackId) =>
+            candidateTracks.some((candidateTrack) => candidateTrack.id === trackId),
+          ) ??
+          'seoul-city';
+        const track =
+          candidateTracks.find((candidateTrack) => candidateTrack.id === representativeTrackId) ??
+          (await prisma.track.findUnique({
+            where: { id: representativeTrackId },
+          }));
 
         if (!track) {
           throw notFound('대표 트랙을 찾을 수 없습니다.');

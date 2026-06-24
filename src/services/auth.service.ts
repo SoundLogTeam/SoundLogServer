@@ -24,6 +24,7 @@ type SocialLoginInput = {
   idToken?: string;
   provider: 'kakao' | 'apple' | 'google';
   providerAccessToken?: string;
+  providerDisplayName?: string;
   providerToken?: string;
   redirectUri?: string;
 };
@@ -113,6 +114,25 @@ async function verifyKakaoIdentity(input: SocialLoginInput): Promise<VerifiedSoc
     throw badRequest('Kakao provider access token이 필요합니다.');
   }
 
+  if (!env.KAKAO_APP_ID && env.NODE_ENV === 'production') {
+    throw badRequest('KAKAO_APP_ID 설정이 필요합니다.');
+  }
+
+  const tokenInfo = await fetchJson<{
+    app_id?: number;
+    id?: number;
+  }>('https://kapi.kakao.com/v1/user/access_token_info', {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (!tokenInfo.id) {
+    throw unauthorized('provider 인증 정보가 유효하지 않습니다.');
+  }
+
+  if (env.KAKAO_APP_ID && String(tokenInfo.app_id) !== env.KAKAO_APP_ID) {
+    throw unauthorized('provider 인증 정보가 유효하지 않습니다.');
+  }
+
   const data = await fetchJson<{
     id?: number;
     kakao_account?: {
@@ -181,7 +201,7 @@ async function verifyAppleIdentity(input: SocialLoginInput): Promise<VerifiedSoc
   }
 
   return {
-    displayName: payload.email,
+    displayName: input.providerDisplayName ?? payload.email,
     providerUserId: payload.sub,
   };
 }

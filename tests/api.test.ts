@@ -48,6 +48,16 @@ describe('Soundlog API', () => {
     expect(response.body.data.status).toBe('ok');
   });
 
+  it('allows Expo web dev origins through CORS in non-production', async () => {
+    const response = await request(app)
+      .options('/v1/home/featured-playlists')
+      .set('Origin', 'http://localhost:8082')
+      .set('Access-Control-Request-Method', 'GET');
+
+    expect(response.status).toBe(204);
+    expect(response.headers['access-control-allow-origin']).toBe('http://localhost:8082');
+  });
+
   it('rejects protected endpoints without bearer token', async () => {
     const response = await request(app).get('/v1/me/profile');
 
@@ -294,6 +304,7 @@ describe('Soundlog API', () => {
       .send({ templateId: 'album', sessionId: 'seed-session', title: '테스트 리캡' });
     expect(created.status).toBe(201);
     createdRecapId = created.body.data.id;
+    expect(created.body.data.representativeTrack.id).toBe('seoul-night-track');
 
     const duplicate = await request(app)
       .post('/v1/recaps')
@@ -308,6 +319,8 @@ describe('Soundlog API', () => {
       .set('Authorization', authHeader);
     expect(share.status).toBe(200);
     expect(share.body.data.id).toBe(createdRecapId);
+    expect(share.body.data.trackTitle).toBe(created.body.data.representativeTrack.title);
+    expect(share.body.data.moments.length).toBeGreaterThan(1);
 
     const shareEvent = await request(app)
       .post(`/v1/recaps/${createdRecapId}/share-events`)

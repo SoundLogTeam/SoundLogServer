@@ -195,6 +195,12 @@ function createMockDb() {
       topTrackIds: [...trend.topTrackIds],
     })),
     refreshTokens: [] as MockRefreshToken[],
+    idempotencyRecords: [] as Array<{
+      idempotencyKey: string;
+      response: unknown;
+      scope: string;
+      userId: string;
+    }>,
   };
 }
 

@@ -103,6 +103,7 @@ export const authValidators = {
       idToken: z.string().min(1).optional(),
       provider: z.enum(['kakao', 'apple', 'google']),
       providerAccessToken: z.string().min(1).optional(),
+      providerDisplayName: z.string().min(1).max(120).optional(),
       providerToken: z.string().min(1).optional(),
       redirectUri: z.string().optional(),
     })
@@ -264,6 +265,7 @@ export const recommendationEventValidators = {
             'track_play',
             'track_pause',
             'track_resume',
+            'track_external_open',
             'track_like',
             'track_unlike',
             'track_save',
