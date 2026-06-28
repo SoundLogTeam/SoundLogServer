@@ -15,6 +15,7 @@ import {
 import crypto from 'node:crypto';
 
 import { env } from '../config/env.js';
+import { ERROR_MESSAGES } from '../constants/error.constants.js';
 import { prisma } from '../config/prisma.js';
 import { getLimit, paginateByCursor } from '../utils/pagination.js';
 import { createPublicId } from '../utils/tokens.js';
@@ -121,7 +122,7 @@ async function withIdempotency<T>(
       }
     }
 
-    throw badRequest('동일한 요청이 아직 처리 중입니다.');
+    throw badRequest(ERROR_MESSAGES.IDEMPOTENCY_IN_PROGRESS);
   }
 
   try {
@@ -145,7 +146,7 @@ async function withIdempotency<T>(
         }
       }
 
-      throw badRequest('동일한 요청이 아직 처리 중입니다.');
+      throw badRequest(ERROR_MESSAGES.IDEMPOTENCY_IN_PROGRESS);
     }
 
     throw error;
@@ -1020,7 +1021,7 @@ export const soundlogService = {
     });
 
     if (!playlist) {
-      throw notFound('플레이리스트를 찾을 수 없습니다.');
+      throw notFound(ERROR_MESSAGES.PLAYLIST_NOT_FOUND);
     }
 
     return playlistToDto(playlist, userId);
@@ -1077,7 +1078,7 @@ export const soundlogService = {
         const track = await prisma.track.findUnique({ where: { id: trackId } });
 
         if (!track) {
-          throw notFound('트랙을 찾을 수 없습니다.');
+          throw notFound(ERROR_MESSAGES.TRACK_NOT_FOUND);
         }
 
         const now = new Date();
@@ -1302,7 +1303,7 @@ export const soundlogService = {
           }));
 
         if (!track) {
-          throw notFound('대표 트랙을 찾을 수 없습니다.');
+          throw notFound(ERROR_MESSAGES.REPRESENTATIVE_TRACK_NOT_FOUND);
         }
 
         const firstMoment = moments[0];
@@ -1348,7 +1349,7 @@ export const soundlogService = {
     });
 
     if (!recap) {
-      throw notFound('리캡을 찾을 수 없습니다.');
+      throw notFound(ERROR_MESSAGES.RECAP_NOT_FOUND);
     }
 
     return recapShareToDto(recap);
@@ -1371,7 +1372,7 @@ export const soundlogService = {
         });
 
         if (!recap) {
-          throw notFound('리캡을 찾을 수 없습니다.');
+          throw notFound(ERROR_MESSAGES.RECAP_NOT_FOUND);
         }
 
         await prisma.recapShareEvent.create({
@@ -1428,11 +1429,11 @@ export const soundlogService = {
     });
 
     if (!session) {
-      throw notFound('여행 세션을 찾을 수 없습니다.');
+      throw notFound(ERROR_MESSAGES.TRAVEL_SESSION_NOT_FOUND);
     }
 
     if (session.status === 'ended' && input.status === 'active') {
-      throw badRequest('종료된 여행 세션은 다시 활성화할 수 없습니다.');
+      throw badRequest(ERROR_MESSAGES.ENDED_TRAVEL_SESSION_CANNOT_ACTIVATE);
     }
 
     const updated = await prisma.travelSession.update({
@@ -1464,7 +1465,7 @@ export const soundlogService = {
     });
 
     if (!trend) {
-      throw notFound('지역 사운드 트렌드를 찾을 수 없습니다.');
+      throw notFound(ERROR_MESSAGES.REGION_SOUND_TREND_NOT_FOUND);
     }
 
     return regionTrendToDto(trend);

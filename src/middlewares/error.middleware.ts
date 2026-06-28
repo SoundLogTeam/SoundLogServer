@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import multer from 'multer';
 import { ZodError } from 'zod';
 
+import { ERROR_CODES, ERROR_MESSAGES } from '../constants/error.constants.js';
 import { HttpError } from '../utils/http-error.js';
 
 export const errorMiddleware: ErrorRequestHandler = (error, _req, res, _next) => {
@@ -20,8 +21,8 @@ export const errorMiddleware: ErrorRequestHandler = (error, _req, res, _next) =>
   if (error instanceof ZodError) {
     res.status(400).json({
       error: {
-        code: 'BAD_REQUEST',
-        message: '요청 값이 올바르지 않습니다.',
+        code: ERROR_CODES.BAD_REQUEST,
+        message: ERROR_MESSAGES.INVALID_REQUEST,
         details: { issues: error.issues },
       },
     });
@@ -31,9 +32,9 @@ export const errorMiddleware: ErrorRequestHandler = (error, _req, res, _next) =>
   if (error instanceof multer.MulterError) {
     res.status(400).json({
       error: {
-        code: 'BAD_REQUEST',
-        message: error.message,
-        details: { field: error.field },
+        code: ERROR_CODES.BAD_REQUEST,
+        message: ERROR_MESSAGES.FILE_UPLOAD_INVALID,
+        details: { field: error.field, reason: error.message },
       },
     });
     return;
@@ -42,8 +43,8 @@ export const errorMiddleware: ErrorRequestHandler = (error, _req, res, _next) =>
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
     res.status(400).json({
       error: {
-        code: 'DATABASE_ERROR',
-        message: '데이터 처리 중 오류가 발생했습니다.',
+        code: ERROR_CODES.DATABASE_ERROR,
+        message: ERROR_MESSAGES.DATABASE_ERROR,
         details: { code: error.code },
       },
     });
@@ -53,10 +54,9 @@ export const errorMiddleware: ErrorRequestHandler = (error, _req, res, _next) =>
   console.error(error);
   res.status(500).json({
     error: {
-      code: 'INTERNAL_SERVER_ERROR',
-      message: '서버 오류가 발생했습니다.',
+      code: ERROR_CODES.INTERNAL_SERVER_ERROR,
+      message: ERROR_MESSAGES.INTERNAL_SERVER_ERROR,
       details: {},
     },
   });
 };
-

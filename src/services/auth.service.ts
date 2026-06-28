@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import jwt from 'jsonwebtoken';
 
 import { env } from '../config/env.js';
+import { ERROR_MESSAGES } from '../constants/error.constants.js';
 import { prisma } from '../config/prisma.js';
 import { mockDb } from '../mock/mock-db.js';
 import {
@@ -54,7 +55,7 @@ async function fetchJson<T>(url: string, init?: RequestInit) {
   const response = await fetch(url, init);
 
   if (!response.ok) {
-    throw unauthorized('provider 인증 정보가 유효하지 않습니다.');
+    throw unauthorized(ERROR_MESSAGES.INVALID_PROVIDER_CREDENTIALS);
   }
 
   return (await response.json()) as T;
@@ -63,7 +64,7 @@ async function fetchJson<T>(url: string, init?: RequestInit) {
 async function verifyGoogleIdentity(input: SocialLoginInput): Promise<VerifiedSocialIdentity> {
   if (input.idToken) {
     if (!env.GOOGLE_CLIENT_ID && env.NODE_ENV === 'production') {
-      throw badRequest('GOOGLE_CLIENT_ID 설정이 필요합니다.');
+      throw badRequest(ERROR_MESSAGES.GOOGLE_CLIENT_ID_REQUIRED);
     }
 
     const data = await fetchJson<{
@@ -74,7 +75,7 @@ async function verifyGoogleIdentity(input: SocialLoginInput): Promise<VerifiedSo
     }>(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(input.idToken)}`);
 
     if (!data.sub || (env.GOOGLE_CLIENT_ID && data.aud !== env.GOOGLE_CLIENT_ID)) {
-      throw unauthorized('provider 인증 정보가 유효하지 않습니다.');
+      throw unauthorized(ERROR_MESSAGES.INVALID_PROVIDER_CREDENTIALS);
     }
 
     return {
@@ -86,7 +87,7 @@ async function verifyGoogleIdentity(input: SocialLoginInput): Promise<VerifiedSo
   const accessToken = input.providerAccessToken ?? input.providerToken;
 
   if (!accessToken) {
-    throw badRequest('Google provider token이 필요합니다.');
+    throw badRequest(ERROR_MESSAGES.GOOGLE_PROVIDER_TOKEN_REQUIRED);
   }
 
   const data = await fetchJson<{
@@ -98,7 +99,7 @@ async function verifyGoogleIdentity(input: SocialLoginInput): Promise<VerifiedSo
   });
 
   if (!data.sub) {
-    throw unauthorized('provider 인증 정보가 유효하지 않습니다.');
+    throw unauthorized(ERROR_MESSAGES.INVALID_PROVIDER_CREDENTIALS);
   }
 
   return {
@@ -111,11 +112,11 @@ async function verifyKakaoIdentity(input: SocialLoginInput): Promise<VerifiedSoc
   const accessToken = input.providerAccessToken ?? input.providerToken;
 
   if (!accessToken) {
-    throw badRequest('Kakao provider access token이 필요합니다.');
+    throw badRequest(ERROR_MESSAGES.KAKAO_PROVIDER_ACCESS_TOKEN_REQUIRED);
   }
 
   if (!env.KAKAO_APP_ID && env.NODE_ENV === 'production') {
-    throw badRequest('KAKAO_APP_ID 설정이 필요합니다.');
+    throw badRequest(ERROR_MESSAGES.KAKAO_APP_ID_REQUIRED);
   }
 
   const tokenInfo = await fetchJson<{
@@ -126,11 +127,11 @@ async function verifyKakaoIdentity(input: SocialLoginInput): Promise<VerifiedSoc
   });
 
   if (!tokenInfo.id) {
-    throw unauthorized('provider 인증 정보가 유효하지 않습니다.');
+    throw unauthorized(ERROR_MESSAGES.INVALID_PROVIDER_CREDENTIALS);
   }
 
   if (env.KAKAO_APP_ID && String(tokenInfo.app_id) !== env.KAKAO_APP_ID) {
-    throw unauthorized('provider 인증 정보가 유효하지 않습니다.');
+    throw unauthorized(ERROR_MESSAGES.INVALID_PROVIDER_CREDENTIALS);
   }
 
   const data = await fetchJson<{
@@ -149,7 +150,7 @@ async function verifyKakaoIdentity(input: SocialLoginInput): Promise<VerifiedSoc
   });
 
   if (!data.id) {
-    throw unauthorized('provider 인증 정보가 유효하지 않습니다.');
+    throw unauthorized(ERROR_MESSAGES.INVALID_PROVIDER_CREDENTIALS);
   }
 
   return {
@@ -163,11 +164,11 @@ async function verifyKakaoIdentity(input: SocialLoginInput): Promise<VerifiedSoc
 
 async function verifyAppleIdentity(input: SocialLoginInput): Promise<VerifiedSocialIdentity> {
   if (!input.idToken) {
-    throw badRequest('Apple idToken이 필요합니다.');
+    throw badRequest(ERROR_MESSAGES.APPLE_ID_TOKEN_REQUIRED);
   }
 
   if (!env.APPLE_CLIENT_ID && env.NODE_ENV === 'production') {
-    throw badRequest('APPLE_CLIENT_ID 설정이 필요합니다.');
+    throw badRequest(ERROR_MESSAGES.APPLE_CLIENT_ID_REQUIRED);
   }
 
   const decoded = jwt.decode(input.idToken, { complete: true }) as
@@ -176,14 +177,14 @@ async function verifyAppleIdentity(input: SocialLoginInput): Promise<VerifiedSoc
   const kid = decoded?.header?.kid;
 
   if (!kid) {
-    throw unauthorized('provider 인증 정보가 유효하지 않습니다.');
+    throw unauthorized(ERROR_MESSAGES.INVALID_PROVIDER_CREDENTIALS);
   }
 
   const jwks = await fetchJson<AppleJwksResponse>('https://appleid.apple.com/auth/keys');
   const jwk = jwks.keys?.find((key) => key.kid === kid);
 
   if (!jwk) {
-    throw unauthorized('provider 인증 정보가 유효하지 않습니다.');
+    throw unauthorized(ERROR_MESSAGES.INVALID_PROVIDER_CREDENTIALS);
   }
 
   const publicKey = crypto.createPublicKey({
@@ -197,7 +198,7 @@ async function verifyAppleIdentity(input: SocialLoginInput): Promise<VerifiedSoc
   }) as { email?: string; sub?: string };
 
   if (!payload.sub) {
-    throw unauthorized('provider 인증 정보가 유효하지 않습니다.');
+    throw unauthorized(ERROR_MESSAGES.INVALID_PROVIDER_CREDENTIALS);
   }
 
   return {
@@ -215,7 +216,7 @@ async function verifySocialIdentity(input: SocialLoginInput): Promise<VerifiedSo
     case 'apple':
       return verifyAppleIdentity(input);
     default:
-      throw badRequest('지원하지 않는 provider입니다.');
+      throw badRequest(ERROR_MESSAGES.UNSUPPORTED_PROVIDER);
   }
 }
 
@@ -287,7 +288,7 @@ export const authService = {
       const record = mockDb.refreshTokens.find((item) => item.tokenHash === tokenHash);
 
       if (!record || record.expiresAt < new Date()) {
-        throw unauthorized('refresh token이 유효하지 않습니다.');
+        throw unauthorized(ERROR_MESSAGES.INVALID_REFRESH_TOKEN);
       }
 
       mockDb.refreshTokens = mockDb.refreshTokens.filter(
@@ -303,7 +304,7 @@ export const authService = {
     });
 
     if (!record || record.expiresAt < new Date()) {
-      throw unauthorized('refresh token이 유효하지 않습니다.');
+      throw unauthorized(ERROR_MESSAGES.INVALID_REFRESH_TOKEN);
     }
 
     await prisma.refreshToken.delete({

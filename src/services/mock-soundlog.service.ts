@@ -1,4 +1,5 @@
 import { env } from '../config/env.js';
+import { ERROR_MESSAGES } from '../constants/error.constants.js';
 import { findMockTrack, mockDb } from '../mock/mock-db.js';
 import { badRequest, notFound } from '../utils/http-error.js';
 import { getLimit, paginateByCursor } from '../utils/pagination.js';
@@ -133,7 +134,7 @@ function recapItemToDto(recap: (typeof mockDb.recaps)[number]) {
   const track = findMockTrack(recap.representativeTrackId);
 
   if (!track) {
-    throw notFound('대표 트랙을 찾을 수 없습니다.');
+    throw notFound(ERROR_MESSAGES.REPRESENTATIVE_TRACK_NOT_FOUND);
   }
 
   return compact({
@@ -151,7 +152,7 @@ function recapShareToDto(recap: (typeof mockDb.recaps)[number]) {
   const track = findMockTrack(recap.representativeTrackId);
 
   if (!track) {
-    throw notFound('대표 트랙을 찾을 수 없습니다.');
+    throw notFound(ERROR_MESSAGES.REPRESENTATIVE_TRACK_NOT_FOUND);
   }
 
   return compact({
@@ -374,7 +375,7 @@ export const mockSoundlogService = {
         const track = findMockTrack(recommendation.trackId);
 
         if (!track) {
-          throw notFound('추천 트랙을 찾을 수 없습니다.');
+          throw notFound(ERROR_MESSAGES.RECOMMENDATION_TRACK_NOT_FOUND);
         }
 
         return {
@@ -413,7 +414,7 @@ export const mockSoundlogService = {
     const playlist = mockDb.playlists.find((item) => item.id === playlistId);
 
     if (!playlist) {
-      throw notFound('플레이리스트를 찾을 수 없습니다.');
+      throw notFound(ERROR_MESSAGES.PLAYLIST_NOT_FOUND);
     }
 
     return playlistToDto(playlist);
@@ -424,7 +425,7 @@ export const mockSoundlogService = {
     const playlist = mockDb.playlists.find((item) => item.id === id);
 
     if (!playlist) {
-      throw notFound('플레이리스트를 찾을 수 없습니다.');
+      throw notFound(ERROR_MESSAGES.PLAYLIST_NOT_FOUND);
     }
 
     return playlistToDto(playlist);
@@ -489,7 +490,7 @@ export const mockSoundlogService = {
     const track = findMockTrack(trackId);
 
     if (!track) {
-      throw notFound('트랙을 찾을 수 없습니다.');
+      throw notFound(ERROR_MESSAGES.TRACK_NOT_FOUND);
     }
 
     const now = new Date();
@@ -664,7 +665,7 @@ export const mockSoundlogService = {
           'seoul-city';
 
         if (!findMockTrack(representativeTrackId)) {
-          throw notFound('대표 트랙을 찾을 수 없습니다.');
+          throw notFound(ERROR_MESSAGES.REPRESENTATIVE_TRACK_NOT_FOUND);
         }
 
         const recap = {
@@ -699,7 +700,7 @@ export const mockSoundlogService = {
     const recap = mockDb.recaps.find((item) => item.id === recapId);
 
     if (!recap) {
-      throw notFound('리캡을 찾을 수 없습니다.');
+      throw notFound(ERROR_MESSAGES.RECAP_NOT_FOUND);
     }
 
     return recapShareToDto(recap);
@@ -710,7 +711,7 @@ export const mockSoundlogService = {
     type: string;
   }, _idempotencyKey?: string) {
     if (!mockDb.recaps.some((recap) => recap.id === recapId)) {
-      throw notFound('리캡을 찾을 수 없습니다.');
+      throw notFound(ERROR_MESSAGES.RECAP_NOT_FOUND);
     }
 
     mockDb.recapShareEvents.push({
@@ -753,11 +754,11 @@ export const mockSoundlogService = {
     const session = mockDb.travelSessions.find((item) => item.id === sessionId);
 
     if (!session) {
-      throw notFound('여행 세션을 찾을 수 없습니다.');
+      throw notFound(ERROR_MESSAGES.TRAVEL_SESSION_NOT_FOUND);
     }
 
     if (session.status === 'ended' && input.status === 'active') {
-      throw badRequest('종료된 여행 세션은 다시 활성화할 수 없습니다.');
+      throw badRequest(ERROR_MESSAGES.ENDED_TRAVEL_SESSION_CANNOT_ACTIVATE);
     }
 
     session.status = input.status;
@@ -785,7 +786,7 @@ export const mockSoundlogService = {
     );
 
     if (!trend) {
-      throw notFound('지역 사운드 트렌드를 찾을 수 없습니다.');
+      throw notFound(ERROR_MESSAGES.REGION_SOUND_TREND_NOT_FOUND);
     }
 
     return {

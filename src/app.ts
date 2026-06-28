@@ -4,6 +4,7 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 
 import { env } from './config/env.js';
+import { ERROR_MESSAGES } from './constants/error.constants.js';
 import { errorMiddleware } from './middlewares/error.middleware.js';
 import { createApiRouter } from './routes/index.js';
 import { notFound } from './utils/http-error.js';
@@ -57,7 +58,7 @@ export function createApp() {
   app.use('/uploads', express.static('uploads'));
   app.use(createApiRouter());
   app.use((_req, _res, next) => {
-    next(notFound('요청한 API 경로를 찾을 수 없습니다.'));
+    next(notFound(ERROR_MESSAGES.ROUTE_NOT_FOUND));
   });
   app.use(errorMiddleware);
 

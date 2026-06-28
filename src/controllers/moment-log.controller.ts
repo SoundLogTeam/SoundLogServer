@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express';
 
+import { ERROR_MESSAGES } from '../constants/error.constants.js';
 import { requireUser } from '../middlewares/auth.middleware.js';
 import { apiService } from '../services/api.service.js';
 import { badRequest } from '../utils/http-error.js';
@@ -15,7 +16,7 @@ export const momentLogController = {
     const user = requireUser(req);
 
     if (!req.file) {
-      throw badRequest('photo 파일이 필요합니다.');
+      throw badRequest(ERROR_MESSAGES.PHOTO_REQUIRED);
     }
 
     res.status(201).json(
