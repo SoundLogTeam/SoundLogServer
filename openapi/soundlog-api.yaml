@@ -12,12 +12,12 @@ info:
     MVP 범위는 홈 추천, 관광지 조회, 플레이리스트 상세, 순간 로그, 리캡, 보관함, 추천 피드백 수집을 포함합니다.
     한국관광공사 OpenAPI 원본 응답은 서버에서 Soundlog 도메인 모델로 정규화해서 앱에 전달합니다.
 servers:
+  - url: http://localhost:4000
+    description: Local Docker/API server
   - url: https://api.soundlog.kr
     description: Production
   - url: https://dev-api.soundlog.kr
     description: Development
-  - url: https://local-api.soundlog.test
-    description: Local development placeholder
 tags:
   - name: System
     description: 서버 상태 확인
