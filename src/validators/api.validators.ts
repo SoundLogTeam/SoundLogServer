@@ -70,6 +70,9 @@ export const moodTagSchema = z.enum([
   'local',
 ]);
 
+const mlTravelStateSchema = z.enum(['바다', '드라이브', '산책', '카페', '야경']);
+const mlMoodSchema = z.enum(['잔잔한', '신나는', '시원한', '설레는', '감성적인']);
+
 const geoPointSchema = z.object({
   lat: z.number().min(-90).max(90),
   lng: z.number().min(-180).max(180),
@@ -204,10 +207,12 @@ export const playlistValidators = {
   contextualBody: z.object({
     excludeTrackIds: z.array(z.string()).optional(),
     location: geoPointSchema.optional(),
+    mood: mlMoodSchema.optional(),
     moodTags: z.array(moodTagSchema).optional(),
     placeId: z.string().optional(),
     preferredGenres: z.array(z.string()).optional(),
     preferredMoods: z.array(z.string()).optional(),
+    state: mlTravelStateSchema.optional(),
     travelMode: travelModeSchema.optional(),
   }),
 };

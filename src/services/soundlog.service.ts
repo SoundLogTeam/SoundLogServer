@@ -12,6 +12,7 @@ import {
   type TravelSession,
   type UserProfile,
 } from '@prisma/client';
+import crypto from 'node:crypto';
 
 import { env } from '../config/env.js';
 import { prisma } from '../config/prisma.js';
@@ -47,6 +48,25 @@ type TourApiResponse = {
       resultCode?: string;
     };
   };
+};
+
+type MlTravelState = '바다' | '드라이브' | '산책' | '카페' | '야경';
+type MlMood = '잔잔한' | '신나는' | '시원한' | '설레는' | '감성적인';
+
+type MlRecommendationResponse = {
+  tracks?: unknown;
+};
+
+type ContextualPlaylistInput = {
+  excludeTrackIds?: string[];
+  location?: { lat: number; lng: number };
+  mood?: MlMood;
+  moodTags?: string[];
+  placeId?: string;
+  preferredGenres?: string[];
+  preferredMoods?: string[];
+  state?: MlTravelState;
+  travelMode?: string;
 };
 
 function compact<T extends Record<string, unknown>>(value: T) {
@@ -256,6 +276,214 @@ async function fetchTourApiPlaces(params: {
     });
   } catch {
     return [];
+  }
+}
+
+const mlTrackFallbackColors = [
+  '#192554',
+  '#48A5B4',
+  '#D70D31',
+  '#F3B015',
+  '#526391',
+  '#DA6C51',
+  '#2D6A72',
+  '#334D3F',
+];
+
+const travelModeToMlState: Record<string, MlTravelState> = {
+  cafe: '카페',
+  drive: '드라이브',
+  night: '야경',
+  ocean: '바다',
+  walk: '산책',
+};
+
+const moodTagToMlMood: Record<string, MlMood> = {
+  active: '신나는',
+  calm: '잔잔한',
+  emotional: '감성적인',
+  fresh: '시원한',
+  local: '설레는',
+};
+
+const moodTextToMlMood: Record<string, MlMood> = {
+  감성: '감성적인',
+  감성적인: '감성적인',
+  로컬: '설레는',
+  로컬한: '설레는',
+  설레는: '설레는',
+  시원한: '시원한',
+  신나는: '신나는',
+  잔잔한: '잔잔한',
+  청량한: '시원한',
+  활기찬: '신나는',
+};
+
+function createStableTrackId(artist: string, title: string, index: number) {
+  const digest = crypto
+    .createHash('sha1')
+    .update(`${artist}:${title}:${index}`)
+    .digest('hex')
+    .slice(0, 12);
+
+  return `ml-${digest}`;
+}
+
+function createStablePlaylistId(input: {
+  lat: number;
+  lng: number;
+  mood: MlMood;
+  state: MlTravelState;
+}) {
+  const digest = crypto
+    .createHash('sha1')
+    .update(`${input.state}:${input.mood}:${input.lng.toFixed(4)}:${input.lat.toFixed(4)}`)
+    .digest('hex')
+    .slice(0, 12);
+
+  return `ml-playlist-${digest}`;
+}
+
+function createMusicSearchUrls(artist: string, title: string) {
+  const query = encodeURIComponent(`${artist} ${title}`.trim());
+
+  return {
+    externalUrl: `https://music.youtube.com/search?q=${query}`,
+    platformUrls: {
+      spotify: `https://open.spotify.com/search/${query}`,
+      youtubeMusic: `https://music.youtube.com/search?q=${query}`,
+    },
+  };
+}
+
+function resolveMlTravelState(input: ContextualPlaylistInput): MlTravelState {
+  return input.state ?? travelModeToMlState[input.travelMode ?? ''] ?? '산책';
+}
+
+function resolveMlMood(input: ContextualPlaylistInput): MlMood {
+  if (input.mood) {
+    return input.mood;
+  }
+
+  const moodFromTags = input.moodTags
+    ?.map((tag) => moodTagToMlMood[tag])
+    .find(Boolean);
+
+  if (moodFromTags) {
+    return moodFromTags;
+  }
+
+  const moodFromPreferences = input.preferredMoods
+    ?.map((mood) => moodTextToMlMood[mood])
+    .find(Boolean);
+
+  return moodFromPreferences ?? '잔잔한';
+}
+
+function normalizeMlTracks(rawTracks: unknown): TrackDto[] {
+  const tracks = Array.isArray(rawTracks) ? rawTracks : [];
+
+  return tracks.flatMap((rawTrack, index) => {
+    if (!rawTrack || typeof rawTrack !== 'object') {
+      return [];
+    }
+
+    const item = rawTrack as Record<string, unknown>;
+    const title = asString(item.title) ?? asString(item.name);
+    const artist =
+      asString(item.artist) ??
+      asString(item.artistName) ??
+      asString(item.artist_name) ??
+      asString(item.singer);
+
+    if (!title || !artist) {
+      return [];
+    }
+
+    const { externalUrl, platformUrls } = createMusicSearchUrls(artist, title);
+
+    return [
+      compact({
+        id: createStableTrackId(artist, title, index),
+        title,
+        artist,
+        albumImageUrl: asString(item.albumImageUrl) ?? asString(item.imageUrl),
+        externalUrl,
+        fallbackColor: mlTrackFallbackColors[index % mlTrackFallbackColors.length],
+        platformUrls,
+      }) as TrackDto,
+    ];
+  });
+}
+
+async function fetchMlRecommendationPlaylist(input: ContextualPlaylistInput) {
+  const location = input.location;
+
+  if (!location) {
+    return undefined;
+  }
+
+  const state = resolveMlTravelState(input);
+  const mood = resolveMlMood(input);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), env.ML_RECOMMENDATION_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(env.ML_RECOMMENDATION_API_URL, {
+      body: JSON.stringify({
+        mood,
+        state,
+        x: location.lng,
+        y: location.lat,
+      }),
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      method: 'POST',
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      return undefined;
+    }
+
+    const data = (await response.json().catch(() => undefined)) as
+      | MlRecommendationResponse
+      | undefined;
+    const tracks = normalizeMlTracks(data?.tracks);
+
+    if (tracks.length === 0) {
+      return undefined;
+    }
+
+    return compact({
+      id: createStablePlaylistId({
+        lat: location.lat,
+        lng: location.lng,
+        mood,
+        state,
+      }),
+      regionName: state,
+      placeName: input.placeId,
+      reason: `${state} 중인 지금, ${mood} 무드에 맞춰 추천했어요`,
+      coverImageUrl: undefined,
+      backgroundImageUrl: undefined,
+      trackCount: tracks.length,
+      durationText: `${tracks.length * 4}:00분`,
+      context: {
+        mood,
+        source: 'ml-recommendation',
+        state,
+        x: location.lng,
+        y: location.lat,
+      },
+      tracks,
+    });
+  } catch {
+    return undefined;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -731,17 +959,18 @@ export const soundlogService = {
 
   async createContextualPlaylist(
     userId: string,
-    input: {
-      location?: { lat: number; lng: number };
-      moodTags?: string[];
-      placeId?: string;
-      travelMode?: string;
-    },
+    input: ContextualPlaylistInput,
     idempotencyKey?: string,
   ) {
     return withIdempotency(
       { idempotencyKey, scope: 'playlist.contextual.create', userId },
       async () => {
+        const mlPlaylist = await fetchMlRecommendationPlaylist(input);
+
+        if (mlPlaylist) {
+          return mlPlaylist;
+        }
+
         const playlistId = await findDefaultPlaylist({
           lat: input.location?.lat,
           placeId: input.placeId,

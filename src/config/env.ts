@@ -15,6 +15,11 @@ const envSchema = z.object({
   KAKAO_APP_ID: z.string().optional(),
   JWT_EXPIRES_IN_SECONDS: z.coerce.number().int().positive().default(3600),
   JWT_SECRET: z.string().min(16),
+  ML_RECOMMENDATION_API_URL: z
+    .string()
+    .url()
+    .default('http://211.188.54.204:8000/recommend'),
+  ML_RECOMMENDATION_TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
   NODE_ENV: z.string().default('development'),
   PORT: z.coerce.number().int().positive().default(4000),
   TOUR_API_BASE_URL: z.string().url().default('https://apis.data.go.kr/B551011/KorService2'),

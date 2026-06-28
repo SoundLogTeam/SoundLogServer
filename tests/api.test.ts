@@ -195,7 +195,9 @@ describe('Soundlog API', () => {
       .set('Authorization', authHeader)
       .send({
         location: { lat: 35.1532, lng: 129.1186 },
+        mood: '시원한',
         moodTags: ['fresh'],
+        state: '바다',
         travelMode: 'ocean',
       });
     expect(contextual.status).toBe(201);
