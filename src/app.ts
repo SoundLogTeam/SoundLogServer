@@ -9,6 +9,7 @@ import { corsMiddleware } from './middlewares/cors.middleware.js';
 import { errorMiddleware } from './middlewares/error.middleware.js';
 import { requestLoggerMiddleware } from './middlewares/request-logger.middleware.js';
 import { securityMiddleware } from './middlewares/security.middleware.js';
+import { registerSwaggerDocs } from './middlewares/swagger.middleware.js';
 import {
   uploadedFilesPublicPath,
   uploadedFilesStaticMiddleware,
@@ -25,6 +26,7 @@ export function createApp() {
   app.use(urlencodedBodyParserMiddleware);
   app.use(requestLoggerMiddleware);
   app.use(uploadedFilesPublicPath, uploadedFilesStaticMiddleware);
+  registerSwaggerDocs(app);
   app.use(createApiRouter());
   app.use((_req, _res, next) => {
     next(notFound(ERROR_MESSAGES.ROUTE_NOT_FOUND));

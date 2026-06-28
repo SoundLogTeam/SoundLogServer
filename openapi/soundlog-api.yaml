@@ -1,0 +1,2210 @@
+openapi: 3.1.0
+info:
+  title: Soundlog API
+  version: 0.1.0
+  summary: 위치 기반 관광 음악 추천 및 여행 리캡 API
+  license:
+    name: SoundLogTeam Internal
+    url: https://github.com/SoundLogTeam/api-docs
+  description: |
+    Soundlog React Native 앱과 백엔드 서버를 연결하기 위한 API 명세입니다.
+
+    MVP 범위는 홈 추천, 관광지 조회, 플레이리스트 상세, 순간 로그, 리캡, 보관함, 추천 피드백 수집을 포함합니다.
+    한국관광공사 OpenAPI 원본 응답은 서버에서 Soundlog 도메인 모델로 정규화해서 앱에 전달합니다.
+servers:
+  - url: https://api.soundlog.kr
+    description: Production
+  - url: https://dev-api.soundlog.kr
+    description: Development
+  - url: https://local-api.soundlog.test
+    description: Local development placeholder
+tags:
+  - name: System
+    description: 서버 상태 확인
+  - name: Auth
+    description: 간편 로그인 및 토큰 관리
+  - name: Me
+    description: 사용자 프로필과 음악 플랫폼 설정
+  - name: Tour
+    description: 관광공사 데이터 기반 장소 컨텍스트
+  - name: Home
+    description: 홈 화면 추천 데이터
+  - name: Playlists
+    description: 장소/무드 기반 플레이리스트
+  - name: MomentLogs
+    description: 사진, 장소, 음악, 시간 기반 순간 기록
+  - name: Recaps
+    description: 여행 리캡 리스트와 공유 콘텐츠
+  - name: Library
+    description: 좋아요/저장 음악 보관함
+  - name: RecommendationEvents
+    description: 추천 품질 개선을 위한 행동 로그
+  - name: TravelSessions
+    description: 여행 세션 시작/종료
+  - name: Trends
+    description: 지역 사운드 트렌드
+security:
+  - bearerAuth: []
+paths:
+  /v1/health:
+    get:
+      tags:
+        - System
+      security: []
+      summary: 서버 상태 확인
+      operationId: getHealth
+      responses:
+        "200":
+          description: 서버가 정상 동작 중입니다.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "503":
+          description: 서버가 일시적으로 사용할 수 없는 상태입니다.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /v1/auth/social-login:
+    post:
+      tags:
+        - Auth
+      security: []
+      summary: 간편 로그인
+      description: |
+        Kakao, Apple, Google 등 외부 provider 토큰을 받아 Soundlog access token을 발급합니다.
+        MVP에서 인증을 생략한다면 후순위로 둘 수 있습니다.
+      operationId: socialLogin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SocialLoginRequest"
+      responses:
+        "200":
+          description: 로그인 성공
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthTokenResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/auth/refresh:
+    post:
+      tags:
+        - Auth
+      security: []
+      summary: 토큰 재발급
+      operationId: refreshToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - refreshToken
+              properties:
+                refreshToken:
+                  type: string
+      responses:
+        "200":
+          description: 재발급 성공
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthTokenResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/auth/logout:
+    post:
+      tags:
+        - Auth
+      security: []
+      summary: 로그아웃 및 refresh token 무효화
+      description: |
+        클라이언트가 보관 중인 refresh token을 서버에서 무효화합니다.
+        서버 요청이 실패해도 앱은 로컬 access/refresh token을 삭제해야 합니다.
+      operationId: logout
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LogoutRequest"
+      responses:
+        "202":
+          description: 로그아웃 요청 수락
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcceptedResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /v1/me:
+    get:
+      tags:
+        - Me
+      summary: 내 계정과 프로필 요약 조회
+      operationId: getMe
+      responses:
+        "200":
+          description: 로그인 사용자, 취향 프로필, 음악 플랫폼 설정
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/me/profile:
+    get:
+      tags:
+        - Me
+      summary: 내 온보딩/취향 프로필 조회
+      operationId: getMyProfile
+      responses:
+        "200":
+          description: 사용자 프로필
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserProfileResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    put:
+      tags:
+        - Me
+      summary: 내 온보딩/취향 프로필 저장
+      description: 온보딩 완료 또는 마이페이지 취향 수정 시 호출합니다.
+      operationId: upsertMyProfile
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserProfileInput"
+      responses:
+        "200":
+          description: 저장된 사용자 프로필
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserProfileResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/me/music-platform:
+    get:
+      tags:
+        - Me
+      summary: 음악 플랫폼 연동 상태 조회
+      operationId: getMyMusicPlatform
+      responses:
+        "200":
+          description: 음악 플랫폼 설정
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MusicPlatformResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    put:
+      tags:
+        - Me
+      summary: 음악 플랫폼 선택/연동 상태 저장
+      description: |
+        앱이 실제 스트리밍 토큰을 직접 관리한다면 서버에는 선택 상태만 저장합니다.
+        서버가 OAuth를 대행한다면 provider access token은 별도 암호화 저장 정책이 필요합니다.
+      operationId: updateMyMusicPlatform
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MusicPlatformInput"
+      responses:
+        "200":
+          description: 저장된 음악 플랫폼 설정
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MusicPlatformResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/me/migrate-local-data:
+    post:
+      tags:
+        - Me
+      summary: 게스트 로컬 데이터 계정 이관
+      description: |
+        로그인 전 이 기기에 저장된 순간 로그, 좋아요/저장 음악, Recap 초안을 로그인 계정으로 이관합니다.
+        동일한 `Idempotency-Key`로 재시도해도 중복 저장되지 않아야 합니다.
+      operationId: migrateLocalData
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LocalDataMigrationRequest"
+      responses:
+        "200":
+          description: 이관 처리 결과
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LocalDataMigrationResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/tour/nearby-places:
+    get:
+      tags:
+        - Tour
+      security: []
+      summary: 현재 좌표 주변 관광지 조회
+      description: |
+        한국관광공사 위치 기반 관광정보를 Soundlog `PlaceContext`로 정규화해서 반환합니다.
+        서비스 키와 TourAPI 호출은 서버에서 관리하는 것을 권장합니다.
+      operationId: getNearbyPlaces
+      parameters:
+        - $ref: "#/components/parameters/Lat"
+        - $ref: "#/components/parameters/Lng"
+        - name: radiusMeters
+          in: query
+          description: 검색 반경. 기본값 2000m.
+          schema:
+            type: integer
+            minimum: 100
+            maximum: 20000
+            default: 2000
+        - name: contentTypes
+          in: query
+          description: 관광공사 content type 필터. 쉼표 구분.
+          schema:
+            type: string
+            example: "12,15,39"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: 주변 관광지 목록
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlaceContextListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /v1/home/featured-playlists:
+    get:
+      tags:
+        - Home
+      summary: 홈 대표 플레이리스트 조회
+      description: 홈 상단 가로 캐러셀에 노출할 지역/장소 기반 추천 플레이리스트입니다.
+      operationId: getFeaturedPlaylists
+      parameters:
+        - name: locationRecommendationEnabled
+          in: query
+          required: true
+          schema:
+            type: boolean
+          example: true
+        - name: recommendationMode
+          in: query
+          required: true
+          description: 홈 상단 토글에서 선택한 추천 모드. 일상 모드는 취향 중심, 여행 모드는 장소/관광 맥락 중심으로 정렬합니다.
+          schema:
+            $ref: "#/components/schemas/MusicRecommendationMode"
+          example: travel
+        - $ref: "#/components/parameters/OptionalLat"
+        - $ref: "#/components/parameters/OptionalLng"
+        - name: placeId
+          in: query
+          description: 현재 선택된 관광지 ID.
+          schema:
+            type: string
+        - name: travelMode
+          in: query
+          schema:
+            $ref: "#/components/schemas/TravelMode"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: 대표 플레이리스트 목록
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FeaturedPlaylistListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/home/mood-recommendations:
+    get:
+      tags:
+        - Home
+      summary: 홈 무드 추천 카드 조회
+      description: 선택된 상단 필터, 무드 필터, 온보딩 취향을 기반으로 추천 카드를 정렬합니다.
+      operationId: getMoodRecommendations
+      parameters:
+        - name: topFilter
+          in: query
+          required: true
+          schema:
+            type: string
+            default: 전체
+          example: 청량한
+        - name: moodFilter
+          in: query
+          required: true
+          schema:
+            type: string
+            default: 전체
+          example: 청량한
+        - name: recommendationMode
+          in: query
+          required: true
+          description: 홈 상단 토글에서 선택한 추천 모드.
+          schema:
+            $ref: "#/components/schemas/MusicRecommendationMode"
+          example: everyday
+        - name: preferredGenres
+          in: query
+          description: 온보딩 선호 장르. 쉼표 구분.
+          schema:
+            type: string
+          example: "K-POP,인디,팝"
+        - name: preferredMoods
+          in: query
+          description: 온보딩 선호 무드. 쉼표 구분.
+          schema:
+            type: string
+          example: "청량한,잔잔한"
+        - name: travelStyles
+          in: query
+          description: 여행 스타일. 쉼표 구분.
+          schema:
+            type: string
+          example: "산책,카페 투어"
+        - name: travelMode
+          in: query
+          schema:
+            $ref: "#/components/schemas/TravelMode"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: 무드 추천 목록
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MoodRecommendationListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/home/recent-music-logs:
+    get:
+      tags:
+        - Home
+      summary: 최근 Music Log 조회
+      description: 홈의 Music Log 영역에 표시할 최근 순간 기록 또는 음악 기록입니다.
+      operationId: getRecentMusicLogs
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: 최근 Music Log
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MusicLogItemListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/playlists/contextual:
+    post:
+      tags:
+        - Playlists
+      summary: 현재 관광 맥락 기반 플레이리스트 생성
+      description: |
+        좌표, 장소, 여행 모드, 무드 태그, 사용자 취향을 받아 즉시 플레이리스트를 생성하거나 기존 플레이리스트를 추천합니다.
+        MVP에서는 `GET /v1/playlists/{playlistId}`보다 후순위로 둘 수 있습니다.
+      operationId: createContextualPlaylist
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ContextualPlaylistRequest"
+      responses:
+        "201":
+          description: 생성된 플레이리스트
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlaylistCurationResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/playlists/{playlistId}:
+    get:
+      tags:
+        - Playlists
+      summary: 플레이리스트 상세 조회
+      description: 음악 큐레이션 페이지에서 배경 이미지, 추천 사유, 트랙 리스트를 표시합니다.
+      operationId: getPlaylist
+      parameters:
+        - name: playlistId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: busan-ocean-walk
+        - $ref: "#/components/parameters/OptionalLat"
+        - $ref: "#/components/parameters/OptionalLng"
+        - name: placeId
+          in: query
+          schema:
+            type: string
+        - name: travelMode
+          in: query
+          schema:
+            $ref: "#/components/schemas/TravelMode"
+        - name: moodTags
+          in: query
+          description: 무드 태그. 쉼표 구분.
+          schema:
+            type: string
+          example: "fresh,calm"
+      responses:
+        "200":
+          description: 플레이리스트 상세
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlaylistCurationResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/library/tracks:
+    get:
+      tags:
+        - Library
+      summary: 좋아요/저장 트랙 목록 조회
+      operationId: getLibraryTracks
+      parameters:
+        - name: kind
+          in: query
+          description: 조회할 보관함 종류.
+          schema:
+            type: string
+            enum:
+              - liked
+              - saved
+              - all
+            default: all
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: 보관함 트랙 목록
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LibraryTrackListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/library/tracks/{trackId}:
+    put:
+      tags:
+        - Library
+      summary: 트랙 좋아요/저장 상태 변경
+      description: 플레이리스트 상세에서 좋아요/저장 버튼을 누를 때 호출합니다.
+      operationId: updateLibraryTrackState
+      parameters:
+        - name: trackId
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LibraryTrackUpdateRequest"
+      responses:
+        "200":
+          description: 변경 후 트랙 상태
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LibraryTrackStateResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/moment-logs:
+    get:
+      tags:
+        - MomentLogs
+      summary: 순간 로그 목록 조회
+      operationId: getMomentLogs
+      parameters:
+        - name: sessionId
+          in: query
+          schema:
+            type: string
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: 순간 로그 목록
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MomentLogListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags:
+        - MomentLogs
+      summary: 순간 로그 생성
+      description: |
+        카메라 버튼으로 촬영한 사진, 현재 위치, 현재 장소, 재생 중인 음악, 무드 태그를 하나의 기록으로 저장합니다.
+        사진 업로드는 `multipart/form-data`를 기본으로 정의합니다.
+      operationId: createMomentLog
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/MomentLogCreateForm"
+      responses:
+        "201":
+          description: 생성된 순간 로그
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MomentLogResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/recommendation-events:
+    post:
+      tags:
+        - RecommendationEvents
+      summary: 추천 행동 로그 적재
+      description: |
+        재생, 일시정지, 좋아요, 저장, 무드 변경 등 추천 품질 개선에 필요한 이벤트를 배치로 전송합니다.
+      operationId: createRecommendationEvents
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecommendationEventsRequest"
+      responses:
+        "202":
+          description: 이벤트 적재 요청 수락
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcceptedResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/recaps:
+    get:
+      tags:
+        - Recaps
+      summary: 리캡 리스트 조회
+      description: Recap 탭에서 여행별 리캡을 리스트 형태로 보여줍니다.
+      operationId: getRecaps
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: 리캡 리스트
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecapItemListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags:
+        - Recaps
+      summary: 리캡 생성
+      description: 여행 세션 또는 순간 로그 묶음을 기반으로 앨범/LP/필름형 리캡을 생성합니다.
+      operationId: createRecap
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecapCreateRequest"
+      responses:
+        "201":
+          description: 생성된 리캡
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecapItemResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/recaps/{recapId}/share:
+    get:
+      tags:
+        - Recaps
+      summary: 공유용 리캡 상세 조회
+      operationId: getRecapShare
+      parameters:
+        - name: recapId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 공유용 리캡 상세
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecapShareResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/recaps/{recapId}/share-events:
+    post:
+      tags:
+        - Recaps
+      summary: 리캡 저장/공유 이벤트 적재
+      operationId: createRecapShareEvent
+      parameters:
+        - name: recapId
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecapShareEventRequest"
+      responses:
+        "202":
+          description: 이벤트 적재 요청 수락
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcceptedResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/travel-sessions:
+    post:
+      tags:
+        - TravelSessions
+      summary: 여행 세션 시작
+      operationId: createTravelSession
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TravelSessionCreateRequest"
+      responses:
+        "201":
+          description: 시작된 여행 세션
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TravelSessionResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/travel-sessions/{sessionId}:
+    patch:
+      tags:
+        - TravelSessions
+      summary: 여행 세션 상태 변경
+      operationId: updateTravelSession
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TravelSessionUpdateRequest"
+      responses:
+        "200":
+          description: 변경된 여행 세션
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TravelSessionResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/trends/regions/{regionCode}/sound:
+    get:
+      tags:
+        - Trends
+      security: []
+      summary: 지역 사운드 트렌드 조회
+      description: 초기 사용자 또는 비로그인 사용자에게 제공할 지역 기반 인기 음악/무드 집계입니다.
+      operationId: getRegionSoundTrend
+      parameters:
+        - name: regionCode
+          in: path
+          required: true
+          description: 행정구역 또는 서비스 내부 지역 코드.
+          schema:
+            type: string
+          example: KR-26
+        - name: period
+          in: query
+          schema:
+            type: string
+            enum:
+              - daily
+              - weekly
+              - monthly
+            default: weekly
+      responses:
+        "200":
+          description: 지역 사운드 트렌드
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegionSoundTrendResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    Lat:
+      name: lat
+      in: query
+      required: true
+      description: 위도
+      schema:
+        type: number
+        format: double
+        minimum: -90
+        maximum: 90
+      example: 35.1532
+    Lng:
+      name: lng
+      in: query
+      required: true
+      description: 경도
+      schema:
+        type: number
+        format: double
+        minimum: -180
+        maximum: 180
+      example: 129.1186
+    OptionalLat:
+      name: lat
+      in: query
+      required: false
+      description: 위도
+      schema:
+        type: number
+        format: double
+        minimum: -90
+        maximum: 90
+    OptionalLng:
+      name: lng
+      in: query
+      required: false
+      description: 경도
+      schema:
+        type: number
+        format: double
+        minimum: -180
+        maximum: 180
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: 다음 페이지 조회용 커서
+      schema:
+        type: string
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: 조회 개수
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 50
+        default: 20
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: 중복 요청 방지를 위한 클라이언트 생성 키
+      schema:
+        type: string
+        maxLength: 128
+
+  responses:
+    BadRequest:
+      description: 잘못된 요청
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Unauthorized:
+      description: 인증 실패 또는 토큰 만료
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotFound:
+      description: 리소스를 찾을 수 없음
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+  schemas:
+    HealthResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          type: object
+          required:
+            - status
+            - checkedAt
+          properties:
+            status:
+              type: string
+              enum:
+                - ok
+            checkedAt:
+              type: string
+              format: date-time
+
+    AcceptedResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          type: object
+          required:
+            - accepted
+          properties:
+            accepted:
+              type: boolean
+              example: true
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+          properties:
+            code:
+              type: string
+              example: NOT_FOUND
+            message:
+              type: string
+              example: 요청한 리소스를 찾을 수 없습니다.
+            details:
+              type: object
+              additionalProperties: true
+
+    PageInfo:
+      type: object
+      required:
+        - limit
+      properties:
+        limit:
+          type: integer
+          example: 20
+        nextCursor:
+          type:
+            - string
+            - "null"
+          example: cursor_2026_05_26
+
+    GeoPoint:
+      type: object
+      required:
+        - lat
+        - lng
+      properties:
+        lat:
+          type: number
+          format: double
+          example: 35.1532
+        lng:
+          type: number
+          format: double
+          example: 129.1186
+
+    TravelMode:
+      type: string
+      description: 여행 상황 모드
+      enum:
+        - walk
+        - drive
+        - cafe
+        - ocean
+        - festival
+        - night
+
+    MusicRecommendationMode:
+      type: string
+      description: 홈 추천 토글 모드. `everyday`는 평소 취향, `travel`은 관광 장소 맥락을 우선합니다.
+      enum:
+        - everyday
+        - travel
+
+    MoodTag:
+      type: string
+      description: 추천/기록에 사용하는 무드 태그
+      enum:
+        - calm
+        - fresh
+        - emotional
+        - active
+        - local
+
+    MusicPlatformId:
+      type: string
+      enum:
+        - none
+        - spotify
+        - melon
+        - youtubeMusic
+
+    PlaceContext:
+      type: object
+      required:
+        - id
+        - source
+        - title
+      properties:
+        id:
+          type: string
+          description: 한국관광공사 contentid 또는 Soundlog 내부 장소 ID
+          example: "126078"
+        title:
+          type: string
+          example: 광안리해수욕장
+        address:
+          type: string
+          example: 부산광역시 수영구 광안해변로 219
+        category:
+          type: string
+          description: 관광공사 카테고리 또는 Soundlog 정규화 카테고리
+          example: 해변
+        contentType:
+          type: string
+          example: 관광지
+        distanceMeters:
+          type: integer
+          example: 430
+        imageUrl:
+          type: string
+          format: uri
+        location:
+          $ref: "#/components/schemas/GeoPoint"
+        overview:
+          type: string
+          example: 부산을 대표하는 도심 해변 관광지입니다.
+        source:
+          type: string
+          enum:
+            - tour-api
+            - mock
+            - user
+
+    Track:
+      type: object
+      required:
+        - id
+        - title
+        - artist
+      properties:
+        id:
+          type: string
+          example: track_001
+        title:
+          type: string
+          example: Ocean Drive
+        artist:
+          type: string
+          example: Soundlog Curator
+        fallbackColor:
+          type: string
+          example: "#31206D"
+        albumImageUrl:
+          type: string
+          format: uri
+        previewUrl:
+          type: string
+          format: uri
+        externalUrl:
+          type: string
+          format: uri
+        platformUrls:
+          type: object
+          properties:
+            spotify:
+              type: string
+              format: uri
+            melon:
+              type: string
+              format: uri
+            youtubeMusic:
+              type: string
+              format: uri
+        isLiked:
+          type: boolean
+        isSaved:
+          type: boolean
+
+    FeaturedPlaylist:
+      type: object
+      required:
+        - id
+        - regionName
+        - description
+        - trackCount
+        - durationText
+      properties:
+        id:
+          type: string
+          example: busan-ocean-walk
+        regionName:
+          type: string
+          example: 부산
+        description:
+          type: string
+          example: 부산광역시에 어울리는 노래를 추천해드립니다.
+        trackCount:
+          type: integer
+          example: 12
+        durationText:
+          type: string
+          example: 40:00분
+        source:
+          type: string
+          enum:
+            - location
+            - trend
+            - personalized
+          example: location
+
+    MoodRecommendation:
+      type: object
+      required:
+        - id
+        - title
+        - color
+        - track
+      properties:
+        id:
+          type: string
+          example: fresh-drive-pop
+        title:
+          type: string
+          example: Music Genre
+        subtitle:
+          type: string
+          example: 드라이브에 어울리는 청량한 팝
+        color:
+          type: string
+          example: "#31206D"
+        genres:
+          type: array
+          items:
+            type: string
+          example:
+            - 팝
+            - K-POP
+        moods:
+          type: array
+          items:
+            type: string
+          example:
+            - 청량한
+            - 신나는
+        travelStyles:
+          type: array
+          items:
+            type: string
+          example:
+            - 드라이브
+        playlistId:
+          type: string
+          description: 추천 카드 선택 시 바로 열 수 있는 플레이리스트 ID. 없으면 앱은 트랙 미리 재생으로 폴백합니다.
+          example: drive
+        track:
+          $ref: "#/components/schemas/Track"
+
+    PlaylistCuration:
+      type: object
+      required:
+        - id
+        - regionName
+        - reason
+        - trackCount
+        - durationText
+        - tracks
+      properties:
+        id:
+          type: string
+          example: busan-ocean-walk
+        regionName:
+          type: string
+          example: 부산
+        placeName:
+          type: string
+          example: 광안리해수욕장
+        reason:
+          type: string
+          example: 광안리 해변 산책과 어울리는 청량한 플레이리스트예요.
+        coverImageUrl:
+          type: string
+          format: uri
+        backgroundImageUrl:
+          type: string
+          format: uri
+        trackCount:
+          type: integer
+          example: 12
+        durationText:
+          type: string
+          example: 40:00분
+        tracks:
+          type: array
+          items:
+            $ref: "#/components/schemas/Track"
+        context:
+          $ref: "#/components/schemas/RecommendationContext"
+
+    MusicLogItem:
+      type: object
+      required:
+        - id
+        - placeName
+        - trackTitle
+        - artistName
+        - createdAt
+      properties:
+        id:
+          type: string
+          example: log_001
+        placeName:
+          type: string
+          example: 광안리해수욕장
+        trackTitle:
+          type: string
+          example: Ocean Drive
+        artistName:
+          type: string
+          example: Soundlog Curator
+        createdAt:
+          type: string
+          format: date-time
+        imageUrl:
+          type: string
+          format: uri
+        recapShareId:
+          type: string
+          example: recap_001
+
+    UserProfileInput:
+      type: object
+      required:
+        - locationRecommendationEnabled
+        - preferredGenres
+        - preferredMoods
+        - travelStyles
+      properties:
+        companionType:
+          type: string
+          enum:
+            - solo
+            - friends
+            - couple
+            - family
+          example: friends
+        locationRecommendationEnabled:
+          type: boolean
+          example: true
+        preferredGenres:
+          type: array
+          items:
+            type: string
+          example:
+            - K-POP
+            - 인디
+        preferredMoods:
+          type: array
+          items:
+            type: string
+          example:
+            - 청량한
+            - 잔잔한
+        travelStyles:
+          type: array
+          items:
+            type: string
+          example:
+            - 산책
+            - 카페 투어
+        dislikedArtists:
+          type: array
+          items:
+            type: string
+        birthYear:
+          type: integer
+          minimum: 1900
+          maximum: 2026
+        gender:
+          type: string
+          enum:
+            - female
+            - male
+            - non_binary
+            - undisclosed
+
+    UserProfile:
+      allOf:
+        - $ref: "#/components/schemas/UserProfileInput"
+        - type: object
+          required:
+            - completedOnboarding
+          properties:
+            completedOnboarding:
+              type: boolean
+              example: true
+            updatedAt:
+              type: string
+              format: date-time
+
+    MusicPlatformInput:
+      type: object
+      required:
+        - selectedPlatformId
+      properties:
+        selectedPlatformId:
+          $ref: "#/components/schemas/MusicPlatformId"
+        connected:
+          type: boolean
+          default: false
+        providerUserId:
+          type: string
+          description: 외부 음악 플랫폼 사용자 ID. 저장하지 않을 경우 생략 가능.
+
+    MusicPlatform:
+      allOf:
+        - $ref: "#/components/schemas/MusicPlatformInput"
+        - type: object
+          properties:
+            updatedAt:
+              type: string
+              format: date-time
+
+    RecommendationContext:
+      type: object
+      properties:
+        moodFilter:
+          type: string
+          example: 청량한
+        recommendationMode:
+          $ref: "#/components/schemas/MusicRecommendationMode"
+        placeCategory:
+          type: string
+          example: 해변
+        placeId:
+          type: string
+          example: "126078"
+        placeName:
+          type: string
+          example: 광안리해수욕장
+        topFilter:
+          type: string
+          example: 전체
+        travelMode:
+          $ref: "#/components/schemas/TravelMode"
+
+    ContextualPlaylistRequest:
+      type: object
+      properties:
+        location:
+          $ref: "#/components/schemas/GeoPoint"
+        placeId:
+          type: string
+        travelMode:
+          $ref: "#/components/schemas/TravelMode"
+        moodTags:
+          type: array
+          items:
+            $ref: "#/components/schemas/MoodTag"
+        preferredGenres:
+          type: array
+          items:
+            type: string
+        preferredMoods:
+          type: array
+          items:
+            type: string
+        excludeTrackIds:
+          type: array
+          items:
+            type: string
+
+    LibraryTrackUpdateRequest:
+      type: object
+      required:
+        - action
+      properties:
+        action:
+          type: string
+          enum:
+            - like
+            - unlike
+            - save
+            - unsave
+        playlistId:
+          type: string
+        context:
+          $ref: "#/components/schemas/RecommendationContext"
+
+    LibraryTrackState:
+      type: object
+      required:
+        - trackId
+        - isLiked
+        - isSaved
+      properties:
+        trackId:
+          type: string
+        isLiked:
+          type: boolean
+        isSaved:
+          type: boolean
+        updatedAt:
+          type: string
+          format: date-time
+
+    LibraryTrackRecord:
+      type: object
+      required:
+        - createdAt
+        - track
+      properties:
+        createdAt:
+          type: string
+          format: date-time
+        playlistId:
+          type: string
+        kind:
+          type: string
+          enum:
+            - liked
+            - saved
+        track:
+          $ref: "#/components/schemas/Track"
+
+    MomentLogCreateForm:
+      type: object
+      required:
+        - photo
+        - createdAt
+        - moodTags
+      properties:
+        photo:
+          type: string
+          format: binary
+          description: 카메라 촬영 이미지 파일
+        createdAt:
+          type: string
+          format: date-time
+        sessionId:
+          type: string
+        lat:
+          type: number
+          format: double
+        lng:
+          type: number
+          format: double
+        placeId:
+          type: string
+        placeName:
+          type: string
+        placeCategory:
+          type: string
+        trackId:
+          type: string
+        trackTitle:
+          type: string
+        artistName:
+          type: string
+        travelMode:
+          $ref: "#/components/schemas/TravelMode"
+        moodTags:
+          type: array
+          items:
+            $ref: "#/components/schemas/MoodTag"
+
+    MomentLog:
+      type: object
+      required:
+        - id
+        - photoUrl
+        - createdAt
+        - moodTags
+        - syncStatus
+      properties:
+        id:
+          type: string
+          example: moment_001
+        photoUrl:
+          type: string
+          format: uri
+        createdAt:
+          type: string
+          format: date-time
+        sessionId:
+          type: string
+        location:
+          $ref: "#/components/schemas/GeoPoint"
+        placeCategory:
+          type: string
+        placeId:
+          type: string
+        placeName:
+          type: string
+        track:
+          $ref: "#/components/schemas/Track"
+        travelMode:
+          $ref: "#/components/schemas/TravelMode"
+        moodTags:
+          type: array
+          items:
+            $ref: "#/components/schemas/MoodTag"
+        source:
+          type: string
+          enum:
+            - camera
+        syncStatus:
+          type: string
+          enum:
+            - pending
+            - synced
+            - failed
+          example: synced
+
+    RecommendationEventType:
+      type: string
+      enum:
+        - track_play
+        - track_pause
+        - track_resume
+        - track_like
+        - track_unlike
+        - track_save
+        - track_unsave
+        - playlist_open
+        - mood_filter_change
+        - recommendation_mode_change
+        - top_filter_change
+        - track_skip
+        - recap_representative_track_select
+
+    RecommendationEvent:
+      type: object
+      required:
+        - id
+        - sessionId
+        - type
+        - context
+        - createdAt
+      properties:
+        id:
+          type: string
+          description: 클라이언트가 생성한 이벤트 ID
+          example: event_001
+        sessionId:
+          type: string
+          example: session_001
+        type:
+          $ref: "#/components/schemas/RecommendationEventType"
+        trackId:
+          type: string
+        playlistId:
+          type: string
+        value:
+          type: string
+          example: 더 신나게
+        context:
+          $ref: "#/components/schemas/RecommendationContext"
+        createdAt:
+          type: string
+          format: date-time
+
+    RecommendationEventsRequest:
+      type: object
+      required:
+        - events
+      properties:
+        events:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/RecommendationEvent"
+
+    RecapItem:
+      type: object
+      required:
+        - id
+        - title
+        - placeName
+        - representativeTrack
+        - createdAt
+      properties:
+        id:
+          type: string
+          example: recap_001
+        title:
+          type: string
+          example: 부산의 밤을 담은 사운드
+        placeName:
+          type: string
+          example: 광안리해수욕장
+        representativeTrack:
+          $ref: "#/components/schemas/Track"
+        createdAt:
+          type: string
+          format: date-time
+        momentCount:
+          type: integer
+          example: 8
+        sessionId:
+          type: string
+
+    RecapTemplateId:
+      type: string
+      enum:
+        - album
+        - film
+        - lp
+        - video
+
+    RecapCreateRequest:
+      type: object
+      required:
+        - templateId
+      properties:
+        sessionId:
+          type: string
+        momentLogIds:
+          type: array
+          items:
+            type: string
+        templateId:
+          $ref: "#/components/schemas/RecapTemplateId"
+        title:
+          type: string
+        representativeTrackId:
+          type: string
+
+    RecapShareMoment:
+      type: object
+      required:
+        - id
+        - placeName
+        - trackTitle
+        - artistName
+        - recordedAt
+      properties:
+        id:
+          type: string
+        imageUrl:
+          type: string
+          format: uri
+        placeName:
+          type: string
+          example: 광안리해수욕장
+        trackTitle:
+          type: string
+          example: Ocean Drive
+        artistName:
+          type: string
+          example: Soundlog Curator
+        recordedAt:
+          type: string
+          format: date-time
+
+    RecapShare:
+      type: object
+      required:
+        - id
+        - placeName
+        - trackTitle
+        - artistName
+        - recordedAt
+      properties:
+        id:
+          type: string
+        placeName:
+          type: string
+        trackTitle:
+          type: string
+        artistName:
+          type: string
+        backgroundImageUrl:
+          type: string
+          format: uri
+        discImageUrl:
+          type: string
+          format: uri
+        moments:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecapShareMoment"
+        recordedAt:
+          type: string
+          format: date-time
+        shareImageUrl:
+          type: string
+          format: uri
+
+    RecapShareEventRequest:
+      type: object
+      required:
+        - type
+        - createdAt
+      properties:
+        type:
+          type: string
+          enum:
+            - save_image
+            - os_share
+            - instagram
+            - snapchat
+            - messages
+        createdAt:
+          type: string
+          format: date-time
+
+    TravelSessionCreateRequest:
+      type: object
+      properties:
+        startedAt:
+          type: string
+          format: date-time
+        location:
+          $ref: "#/components/schemas/GeoPoint"
+        travelMode:
+          $ref: "#/components/schemas/TravelMode"
+
+    TravelSessionUpdateRequest:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          enum:
+            - active
+            - ended
+        endedAt:
+          type: string
+          format: date-time
+        location:
+          $ref: "#/components/schemas/GeoPoint"
+
+    TravelSession:
+      type: object
+      required:
+        - id
+        - status
+      properties:
+        id:
+          type: string
+          example: session_001
+        status:
+          type: string
+          enum:
+            - idle
+            - active
+            - ended
+        startedAt:
+          type: string
+          format: date-time
+        endedAt:
+          type: string
+          format: date-time
+        travelMode:
+          $ref: "#/components/schemas/TravelMode"
+
+    RegionSoundTrend:
+      type: object
+      required:
+        - regionCode
+        - regionName
+        - period
+        - topMoodTags
+        - topTracks
+      properties:
+        regionCode:
+          type: string
+          example: KR-26
+        regionName:
+          type: string
+          example: 부산
+        period:
+          type: string
+          example: weekly
+        topMoodTags:
+          type: array
+          items:
+            type: string
+          example:
+            - 청량한
+            - 신나는
+        topTracks:
+          type: array
+          items:
+            $ref: "#/components/schemas/Track"
+        sampleSize:
+          type: integer
+          description: 익명 집계에 사용된 이벤트 수
+          example: 1520
+
+    SocialLoginRequest:
+      type: object
+      required:
+        - provider
+      properties:
+        provider:
+          type: string
+          enum:
+            - kakao
+            - apple
+            - google
+        authorizationCode:
+          type: string
+          description: Authorization Code + PKCE 방식 provider에서 전달하는 code
+        idToken:
+          type: string
+          description: Apple/Google 등에서 받은 ID token
+        providerAccessToken:
+          type: string
+          description: Kakao 등 access token 검증 방식 provider에서 전달하는 token
+        providerToken:
+          type: string
+          deprecated: true
+          description: 기존 mock/레거시 클라이언트 호환용 provider token
+        codeVerifier:
+          type: string
+          description: PKCE code verifier
+        redirectUri:
+          type: string
+          example: soundlog://auth/callback
+        deviceId:
+          type: string
+          deprecated: true
+          description: 기존 mock 로그인 호환용 device id
+        device:
+          $ref: "#/components/schemas/AuthDeviceInfo"
+
+    AuthDeviceInfo:
+      type: object
+      required:
+        - platform
+      properties:
+        platform:
+          type: string
+          enum:
+            - ios
+            - android
+            - web
+        appVersion:
+          type: string
+          example: 1.0.0
+        deviceId:
+          type: string
+          example: ios-device-uuid
+
+    AuthUser:
+      type: object
+      required:
+        - id
+        - provider
+        - displayName
+      properties:
+        id:
+          type: string
+          example: user_123
+        provider:
+          type: string
+          enum:
+            - kakao
+            - apple
+            - google
+        displayName:
+          type: string
+          example: Soundlog User
+        email:
+          type: string
+          format: email
+        profileImageUrl:
+          type: string
+          format: uri
+
+    LogoutRequest:
+      type: object
+      properties:
+        refreshToken:
+          type: string
+          description: 무효화할 refresh token. 없으면 클라이언트 로컬 세션만 정리합니다.
+
+    LocalDataMigrationRequest:
+      type: object
+      required:
+        - idempotencyKey
+      properties:
+        idempotencyKey:
+          type: string
+          maxLength: 128
+          description: 중복 이관 방지용 클라이언트 생성 키
+        momentLogCount:
+          type: integer
+          minimum: 0
+          default: 0
+        libraryTrackCount:
+          type: integer
+          minimum: 0
+          default: 0
+        recapDraftCount:
+          type: integer
+          minimum: 0
+          default: 0
+
+    LocalDataMigrationResult:
+      type: object
+      required:
+        - accepted
+        - migrated
+      properties:
+        accepted:
+          type: boolean
+          example: true
+        migrated:
+          type: object
+          required:
+            - momentLogCount
+            - libraryTrackCount
+            - recapDraftCount
+          properties:
+            momentLogCount:
+              type: integer
+              example: 3
+            libraryTrackCount:
+              type: integer
+              example: 6
+            recapDraftCount:
+              type: integer
+              example: 1
+
+    AuthToken:
+      type: object
+      required:
+        - accessToken
+        - refreshToken
+        - expiresIn
+        - user
+        - isNewUser
+      properties:
+        accessToken:
+          type: string
+        refreshToken:
+          type: string
+        expiresIn:
+          type: integer
+          description: access token 만료까지 남은 초
+          example: 3600
+        user:
+          $ref: "#/components/schemas/AuthUser"
+        profile:
+          $ref: "#/components/schemas/UserProfile"
+        isNewUser:
+          type: boolean
+          example: false
+
+    PlaceContextListResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/PlaceContext"
+
+    FeaturedPlaylistListResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/FeaturedPlaylist"
+
+    MoodRecommendationListResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/MoodRecommendation"
+
+    MusicLogItemListResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/MusicLogItem"
+
+    PlaylistCurationResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          $ref: "#/components/schemas/PlaylistCuration"
+
+    UserProfileResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          $ref: "#/components/schemas/UserProfile"
+
+    MusicPlatformResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          $ref: "#/components/schemas/MusicPlatform"
+
+    MeResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          type: object
+          required:
+            - user
+          properties:
+            user:
+              $ref: "#/components/schemas/AuthUser"
+            profile:
+              $ref: "#/components/schemas/UserProfile"
+            musicPlatform:
+              $ref: "#/components/schemas/MusicPlatform"
+
+    LocalDataMigrationResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          $ref: "#/components/schemas/LocalDataMigrationResult"
+
+    LibraryTrackListResponse:
+      type: object
+      required:
+        - data
+        - page
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/LibraryTrackRecord"
+        page:
+          $ref: "#/components/schemas/PageInfo"
+
+    LibraryTrackStateResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          $ref: "#/components/schemas/LibraryTrackState"
+
+    MomentLogResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          $ref: "#/components/schemas/MomentLog"
+
+    MomentLogListResponse:
+      type: object
+      required:
+        - data
+        - page
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/MomentLog"
+        page:
+          $ref: "#/components/schemas/PageInfo"
+
+    RecapItemResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          $ref: "#/components/schemas/RecapItem"
+
+    RecapItemListResponse:
+      type: object
+      required:
+        - data
+        - page
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecapItem"
+        page:
+          $ref: "#/components/schemas/PageInfo"
+
+    RecapShareResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          $ref: "#/components/schemas/RecapShare"
+
+    TravelSessionResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          $ref: "#/components/schemas/TravelSession"
+
+    RegionSoundTrendResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          $ref: "#/components/schemas/RegionSoundTrend"
+
+    AuthTokenResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          $ref: "#/components/schemas/AuthToken"

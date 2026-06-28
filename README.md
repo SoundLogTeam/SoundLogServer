@@ -59,6 +59,13 @@ EXPO_PUBLIC_SOUNDLOG_API_BASE_URL=http://localhost:4000 npm run web
 
 웹 기본 주소는 `http://localhost:8081`입니다.
 
+## API Docs
+
+서버 실행 후 Swagger UI와 OpenAPI 원본을 확인할 수 있습니다.
+
+- Swagger UI: `http://localhost:4000/docs`
+- OpenAPI YAML: `http://localhost:4000/openapi.yaml`
+
 ## Production hardening
 
 실제 사용자 배포 전에는 아래 조건을 맞춰야 합니다.
