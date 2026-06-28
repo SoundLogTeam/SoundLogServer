@@ -1,0 +1,12 @@
+export { authController } from './auth.controller.js';
+export { homeController } from './home.controller.js';
+export { libraryController } from './library.controller.js';
+export { meController } from './me.controller.js';
+export { momentLogController } from './moment-log.controller.js';
+export { playlistController } from './playlist.controller.js';
+export { recapController } from './recap.controller.js';
+export { recommendationEventController } from './recommendation-event.controller.js';
+export { systemController } from './system.controller.js';
+export { tourController } from './tour.controller.js';
+export { travelSessionController } from './travel-session.controller.js';
+export { trendController } from './trend.controller.js';

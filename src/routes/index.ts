@@ -14,7 +14,7 @@ import {
   tourController,
   travelSessionController,
   trendController,
-} from '../controllers/api.controllers.js';
+} from '../controllers/index.js';
 import { asyncHandler } from '../utils/async-handler.js';
 import { authMiddleware, optionalAuthMiddleware } from '../middlewares/auth.middleware.js';
 import { validate } from '../middlewares/validate.middleware.js';
