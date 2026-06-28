@@ -2,6 +2,7 @@ import type { Request, Response } from 'express';
 
 import { ERROR_MESSAGES } from '../constants/error.constants.js';
 import { requireUser } from '../middlewares/auth.middleware.js';
+import { createUploadedFilePublicPath } from '../middlewares/upload.middleware.js';
 import { apiService } from '../services/api.service.js';
 import { badRequest } from '../utils/http-error.js';
 import { dataResponse } from '../utils/response.js';
@@ -25,7 +26,7 @@ export const momentLogController = {
           user.id,
           {
             ...req.body,
-            photoPath: `/uploads/${req.file.filename}`,
+            photoPath: createUploadedFilePublicPath(req.file.filename),
           },
           req.header('Idempotency-Key'),
         ),
