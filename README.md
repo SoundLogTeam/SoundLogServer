@@ -106,5 +106,6 @@ pnpm db:seed     # 로컬 seed 데이터 적재
   - `GET /v1/home/featured-playlists`
   - `GET /v1/home/mood-recommendations`
   - `GET /v1/home/recent-music-logs`
+  - `POST /v1/playlists/contextual` -> ML 추천 서버 `ML_RECOMMENDATION_API_URL`
   - `GET /v1/playlists/busan-ocean`
   - `GET /v1/recaps/log-1/share`

@@ -399,7 +399,12 @@ export const mockSoundlogService = {
 
   async createContextualPlaylist(_userId: string, input: {
     location?: { lat: number; lng: number };
+    mood?: string;
+    moodTags?: string[];
     placeId?: string;
+    preferredMoods?: string[];
+    state?: string;
+    travelMode?: string;
   }, _idempotencyKey?: string) {
     const playlistId = getDefaultPlaylistId({
       lat: input.location?.lat,
