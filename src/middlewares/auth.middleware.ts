@@ -71,6 +71,20 @@ export async function authMiddleware(req: Request, _res: Response, next: NextFun
   }
 }
 
+export async function optionalAuthMiddleware(req: Request, res: Response, next: NextFunction) {
+  const authorization = req.header('authorization');
+  const token = authorization?.startsWith('Bearer ')
+    ? authorization.slice('Bearer '.length)
+    : undefined;
+
+  if (!token) {
+    next();
+    return;
+  }
+
+  await authMiddleware(req, res, next);
+}
+
 export function requireUser(req: Request) {
   if (!req.user) {
     throw unauthorized();

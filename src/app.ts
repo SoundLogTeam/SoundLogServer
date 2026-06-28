@@ -6,13 +6,47 @@ import morgan from 'morgan';
 import { env } from './config/env.js';
 import { errorMiddleware } from './middlewares/error.middleware.js';
 import { createApiRouter } from './routes/index.js';
+import { notFound } from './utils/http-error.js';
+
+const developmentLocalhostOriginPattern = /^http:\/\/(localhost|127\.0\.0\.1):\d+$/;
+
+function getAllowedOrigins() {
+  const configuredOrigins = (env.CLIENT_URLS ?? env.CLIENT_URL)
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
+  return new Set(configuredOrigins);
+}
+
+function resolveCorsOrigin(
+  origin: string | undefined,
+  callback: (error: Error | null, allow?: boolean | string) => void,
+) {
+  if (!origin) {
+    callback(null, true);
+    return;
+  }
+
+  const allowedOrigins = getAllowedOrigins();
+
+  if (
+    allowedOrigins.has(origin) ||
+    (env.NODE_ENV !== 'production' && developmentLocalhostOriginPattern.test(origin))
+  ) {
+    callback(null, origin);
+    return;
+  }
+
+  callback(null, false);
+}
 
 export function createApp() {
   const app = express();
 
   app.use(
     cors({
-      origin: env.CLIENT_URL,
+      origin: resolveCorsOrigin,
       credentials: true,
     }),
   );
@@ -22,8 +56,10 @@ export function createApp() {
   app.use(morgan(env.NODE_ENV === 'test' ? 'tiny' : 'dev'));
   app.use('/uploads', express.static('uploads'));
   app.use(createApiRouter());
+  app.use((_req, _res, next) => {
+    next(notFound('요청한 API 경로를 찾을 수 없습니다.'));
+  });
   app.use(errorMiddleware);
 
   return app;
 }
-

@@ -20,9 +20,19 @@ export const authController = {
   async refresh(req: Request, res: Response) {
     res.json(dataResponse(await authService.refresh(req.body.refreshToken)));
   },
+
+  async logout(req: Request, res: Response) {
+    await authService.logout(req.body.refreshToken);
+    res.status(202).json(acceptedResponse());
+  },
 };
 
 export const meController = {
+  async getMe(req: Request, res: Response) {
+    const user = requireUser(req);
+    res.json(dataResponse(await authService.getMe(user.id)));
+  },
+
   async getProfile(req: Request, res: Response) {
     const user = requireUser(req);
     res.json(dataResponse(await apiService.getMyProfile(user.id)));
@@ -41,6 +51,11 @@ export const meController = {
   async updateMusicPlatform(req: Request, res: Response) {
     const user = requireUser(req);
     res.json(dataResponse(await apiService.updateMyMusicPlatform(user.id, req.body)));
+  },
+
+  async migrateLocalData(req: Request, res: Response) {
+    const user = requireUser(req);
+    res.json(dataResponse(await apiService.migrateLocalData(user.id, req.body)));
   },
 };
 
@@ -72,15 +87,22 @@ export const homeController = {
 export const playlistController = {
   async createContextualPlaylist(req: Request, res: Response) {
     const user = requireUser(req);
-    res.status(201).json(dataResponse(await apiService.createContextualPlaylist(user.id, req.body)));
+    res.status(201).json(
+      dataResponse(
+        await apiService.createContextualPlaylist(
+          user.id,
+          req.body,
+          req.header('Idempotency-Key'),
+        ),
+      ),
+    );
   },
 
   async getPlaylist(req: Request, res: Response) {
-    const user = requireUser(req);
     res.json(
       dataResponse(
         await apiService.getPlaylist(
-          user.id,
+          req.user?.id,
           String(req.params.playlistId),
           req.query as never,
         ),
@@ -103,6 +125,7 @@ export const libraryController = {
           user.id,
           String(req.params.trackId),
           req.body,
+          req.header('Idempotency-Key'),
         ),
       ),
     );
@@ -127,7 +150,7 @@ export const momentLogController = {
         await apiService.createMomentLog(user.id, {
           ...req.body,
           photoPath: `/uploads/${req.file.filename}`,
-        }),
+        }, req.header('Idempotency-Key')),
       ),
     );
   },
@@ -136,7 +159,7 @@ export const momentLogController = {
 export const recommendationEventController = {
   async createEvents(req: Request, res: Response) {
     const user = requireUser(req);
-    await apiService.createRecommendationEvents(user.id, req.body);
+    await apiService.createRecommendationEvents(user.id, req.body, req.header('Idempotency-Key'));
     res.status(202).json(acceptedResponse());
   },
 };
@@ -149,7 +172,9 @@ export const recapController = {
 
   async createRecap(req: Request, res: Response) {
     const user = requireUser(req);
-    res.status(201).json(dataResponse(await apiService.createRecap(user.id, req.body)));
+    res.status(201).json(
+      dataResponse(await apiService.createRecap(user.id, req.body, req.header('Idempotency-Key'))),
+    );
   },
 
   async getRecapShare(req: Request, res: Response) {
@@ -159,7 +184,12 @@ export const recapController = {
 
   async createShareEvent(req: Request, res: Response) {
     const user = requireUser(req);
-    await apiService.createRecapShareEvent(user.id, String(req.params.recapId), req.body);
+    await apiService.createRecapShareEvent(
+      user.id,
+      String(req.params.recapId),
+      req.body,
+      req.header('Idempotency-Key'),
+    );
     res.status(202).json(acceptedResponse());
   },
 };

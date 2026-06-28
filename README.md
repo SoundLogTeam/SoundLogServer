@@ -46,6 +46,28 @@ EXPO_PUBLIC_SOUNDLOG_API_BASE_URL=http://localhost:4000 npm run web
 
 웹 기본 주소는 `http://localhost:8081`입니다.
 
+## Production hardening
+
+실제 사용자 배포 전에는 아래 조건을 맞춰야 합니다.
+
+- `NODE_ENV=production`
+- `USE_MOCK_DB=false`
+- `ALLOW_DEV_AUTH_FALLBACK=false`
+- `APPLE_CLIENT_ID`, `KAKAO_APP_ID` 등 실제 OAuth provider 설정 완료
+- iOS Apple 로그인은 native app audience로 `APPLE_CLIENT_ID=com.mannomi.soundlog` 사용
+- Kakao 로그인은 Kakao token info의 `app_id`가 `KAKAO_APP_ID`와 일치해야 통과
+- 프론트 앱은 mock provider token 대신 실제 provider token/idToken을 서버로 교환
+- `CLIENT_URLS`, `UPLOAD_PUBLIC_BASE_URL`, 앱의 `EXPO_PUBLIC_SOUNDLOG_API_BASE_URL`은 HTTPS 도메인 사용
+- iOS 앱 설정에 전체 ATS 예외를 넣지 않기
+
+서버 코드는 `NODE_ENV=production`에서 `ALLOW_DEV_AUTH_FALLBACK=true`가 잘못 설정되어도 dev social-login fallback을 사용하지 않습니다.
+
+운영 배포 전 환경변수는 아래 명령으로 확인합니다.
+
+```bash
+NODE_ENV=production npm run check:production-env
+```
+
 ## Scripts
 
 ```bash
@@ -53,6 +75,7 @@ pnpm dev         # 개발 서버
 pnpm build       # TypeScript build
 pnpm typecheck   # 타입 검사
 pnpm test:api    # API 테스트
+pnpm check:production-env # 운영 환경변수 점검
 pnpm db:migrate  # Prisma migration
 pnpm db:seed     # 로컬 seed 데이터 적재
 ```

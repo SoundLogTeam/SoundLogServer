@@ -42,6 +42,40 @@ function isDefined<T>(value: T | undefined): value is T {
   return value !== undefined;
 }
 
+async function withMockIdempotency<T>(
+  input: {
+    idempotencyKey?: string;
+    scope: string;
+    userId: string;
+  },
+  handler: () => Promise<T> | T,
+) {
+  if (!input.idempotencyKey) {
+    return handler();
+  }
+
+  const existingRecord = mockDb.idempotencyRecords.find(
+    (record) =>
+      record.idempotencyKey === input.idempotencyKey &&
+      record.scope === input.scope &&
+      record.userId === input.userId,
+  );
+
+  if (existingRecord) {
+    return existingRecord.response as T;
+  }
+
+  const response = await handler();
+  mockDb.idempotencyRecords.push({
+    idempotencyKey: input.idempotencyKey,
+    response,
+    scope: input.scope,
+    userId: input.userId,
+  });
+
+  return response;
+}
+
 function playlistToDto(playlist: (typeof mockDb.playlists)[number]) {
   return compact({
     id: playlist.id,
@@ -241,6 +275,23 @@ export const mockSoundlogService = {
     return this.getMyMusicPlatform();
   },
 
+  async migrateLocalData(_userId: string, input: {
+    idempotencyKey: string;
+    libraryTrackCount: number;
+    momentLogCount: number;
+    recapDraftCount: number;
+  }) {
+    return {
+      accepted: true,
+      idempotencyKey: input.idempotencyKey,
+      migrated: {
+        libraryTrackCount: input.libraryTrackCount,
+        momentLogCount: input.momentLogCount,
+        recapDraftCount: input.recapDraftCount,
+      },
+    };
+  },
+
   async getNearbyPlaces(params: { lat: number; limit?: number }) {
     const isSouthernContext = params.lat < 36.5;
 
@@ -349,7 +400,7 @@ export const mockSoundlogService = {
   async createContextualPlaylist(_userId: string, input: {
     location?: { lat: number; lng: number };
     placeId?: string;
-  }) {
+  }, _idempotencyKey?: string) {
     const playlistId = getDefaultPlaylistId({
       lat: input.location?.lat,
       placeId: input.placeId,
@@ -363,7 +414,7 @@ export const mockSoundlogService = {
     return playlistToDto(playlist);
   },
 
-  async getPlaylist(_userId: string, playlistId: string, query: { lat?: number; placeId?: string }) {
+  async getPlaylist(_userId: string | undefined, playlistId: string, query: { lat?: number; placeId?: string }) {
     const id = playlistId === 'fallback' ? getDefaultPlaylistId(query) : playlistId;
     const playlist = mockDb.playlists.find((item) => item.id === id);
 
@@ -429,7 +480,7 @@ export const mockSoundlogService = {
   async updateLibraryTrackState(_userId: string, trackId: string, input: {
     action: 'like' | 'save' | 'unlike' | 'unsave';
     playlistId?: string;
-  }) {
+  }, _idempotencyKey?: string) {
     const track = findMockTrack(trackId);
 
     if (!track) {
@@ -484,7 +535,7 @@ export const mockSoundlogService = {
     };
   },
 
-  async createMomentLog(_userId: string, input: {
+  async createMomentLog(userId: string, input: {
     artistName?: string;
     createdAt: string;
     lat?: number;
@@ -498,36 +549,41 @@ export const mockSoundlogService = {
     trackId?: string;
     trackTitle?: string;
     travelMode?: string;
-  }) {
-    const track = findMockTrack(input.trackId);
-    const log = {
-      id: createPublicId('moment'),
-      photoUrl: `${env.UPLOAD_PUBLIC_BASE_URL}${input.photoPath}`,
-      createdAt: new Date(input.createdAt),
-      sessionId: input.sessionId,
-      lat: input.lat,
-      lng: input.lng,
-      placeCategory: input.placeCategory,
-      placeId: input.placeId,
-      placeName: input.placeName,
-      trackSnapshot:
-        track ??
-        (input.trackTitle
-          ? {
-              id: input.trackId ?? createPublicId('track'),
-              title: input.trackTitle,
-              artist: input.artistName ?? '음악 없음',
-            }
-          : undefined),
-      travelMode: input.travelMode,
-      moodTags: input.moodTags,
-      source: 'camera' as const,
-      syncStatus: 'synced' as const,
-    };
+  }, idempotencyKey?: string) {
+    return withMockIdempotency(
+      { idempotencyKey, scope: 'moment-log.create', userId },
+      () => {
+        const track = findMockTrack(input.trackId);
+        const log = {
+          id: createPublicId('moment'),
+          photoUrl: `${env.UPLOAD_PUBLIC_BASE_URL}${input.photoPath}`,
+          createdAt: new Date(input.createdAt),
+          sessionId: input.sessionId,
+          lat: input.lat,
+          lng: input.lng,
+          placeCategory: input.placeCategory,
+          placeId: input.placeId,
+          placeName: input.placeName,
+          trackSnapshot:
+            track ??
+            (input.trackTitle
+              ? {
+                  id: input.trackId ?? createPublicId('track'),
+                  title: input.trackTitle,
+                  artist: input.artistName ?? '음악 없음',
+                }
+              : undefined),
+          travelMode: input.travelMode,
+          moodTags: input.moodTags,
+          source: 'camera' as const,
+          syncStatus: 'synced' as const,
+        };
 
-    mockDb.momentLogs.unshift(log);
+        mockDb.momentLogs.unshift(log);
 
-    return momentLogToDto(log);
+        return momentLogToDto(log);
+      },
+    );
   },
 
   async createRecommendationEvents(_userId: string, input: {
@@ -541,7 +597,7 @@ export const mockSoundlogService = {
       type: string;
       value?: string;
     }>;
-  }) {
+  }, _idempotencyKey?: string) {
     input.events.forEach((event) => {
       if (mockDb.recommendationEvents.some((item) => item.id === event.id)) {
         return;
@@ -570,51 +626,68 @@ export const mockSoundlogService = {
     };
   },
 
-  async createRecap(_userId: string, input: {
+  async createRecap(userId: string, input: {
     momentLogIds?: string[];
     representativeTrackId?: string;
     sessionId?: string;
     title?: string;
-  }) {
-    const moments = mockDb.momentLogs.filter((moment) => {
-      if (input.momentLogIds?.length) {
-        return input.momentLogIds.includes(moment.id);
-      }
+  }, idempotencyKey?: string) {
+    return withMockIdempotency(
+      { idempotencyKey, scope: 'recap.create', userId },
+      () => {
+        const moments = mockDb.momentLogs.filter((moment) => {
+          if (input.momentLogIds?.length) {
+            return input.momentLogIds.includes(moment.id);
+          }
 
-      return input.sessionId ? moment.sessionId === input.sessionId : true;
-    });
-    const firstMoment = moments[0];
-    const representativeTrackId =
-      input.representativeTrackId ?? firstMoment?.trackSnapshot?.id ?? 'seoul-city';
+          return input.sessionId ? moment.sessionId === input.sessionId : true;
+        });
+        const firstMoment = moments[0];
+        const candidateTrackIds = input.representativeTrackId
+          ? [input.representativeTrackId]
+          : Array.from(
+              new Set(
+                [...moments]
+                  .reverse()
+                  .map((moment) => moment.trackSnapshot?.id)
+                  .filter((trackId): trackId is string => Boolean(trackId)),
+              ),
+            );
+        const representativeTrackId =
+          input.representativeTrackId ??
+          candidateTrackIds.find((trackId) => Boolean(findMockTrack(trackId))) ??
+          'seoul-city';
 
-    if (!findMockTrack(representativeTrackId)) {
-      throw notFound('대표 트랙을 찾을 수 없습니다.');
-    }
+        if (!findMockTrack(representativeTrackId)) {
+          throw notFound('대표 트랙을 찾을 수 없습니다.');
+        }
 
-    const recap = {
-      id: createPublicId('recap'),
-      title: input.title ?? `${firstMoment?.placeName ?? '여행'}의 사운드`,
-      placeName: firstMoment?.placeName ?? 'Soundlog',
-      representativeTrackId,
-      createdAt: new Date(),
-      momentCount: moments.length,
-      sessionId: input.sessionId,
-      backgroundImageUrl: firstMoment?.photoUrl,
-      discImageUrl: firstMoment?.photoUrl,
-      recordedAt: firstMoment?.createdAt ?? new Date(),
-      moments: moments.map((moment) => ({
-        id: moment.id,
-        imageUrl: moment.photoUrl,
-        placeName: moment.placeName ?? '위치 없음',
-        trackTitle: moment.trackSnapshot?.title ?? '저장된 순간',
-        artistName: moment.trackSnapshot?.artist ?? '음악 없음',
-        recordedAt: moment.createdAt.toISOString(),
-      })),
-    };
+        const recap = {
+          id: createPublicId('recap'),
+          title: input.title ?? `${firstMoment?.placeName ?? '여행'}의 사운드`,
+          placeName: firstMoment?.placeName ?? 'Soundlog',
+          representativeTrackId,
+          createdAt: new Date(),
+          momentCount: moments.length,
+          sessionId: input.sessionId,
+          backgroundImageUrl: firstMoment?.photoUrl,
+          discImageUrl: firstMoment?.photoUrl,
+          recordedAt: firstMoment?.createdAt ?? new Date(),
+          moments: moments.map((moment) => ({
+            id: moment.id,
+            imageUrl: moment.photoUrl,
+            placeName: moment.placeName ?? '위치 없음',
+            trackTitle: moment.trackSnapshot?.title ?? '저장된 순간',
+            artistName: moment.trackSnapshot?.artist ?? '음악 없음',
+            recordedAt: moment.createdAt.toISOString(),
+          })),
+        };
 
-    mockDb.recaps.unshift(recap);
+        mockDb.recaps.unshift(recap);
 
-    return recapItemToDto(recap);
+        return recapItemToDto(recap);
+      },
+    );
   },
 
   async getRecapShare(_userId: string, recapId: string) {
@@ -630,7 +703,7 @@ export const mockSoundlogService = {
   async createRecapShareEvent(_userId: string, recapId: string, input: {
     createdAt: string;
     type: string;
-  }) {
+  }, _idempotencyKey?: string) {
     if (!mockDb.recaps.some((recap) => recap.id === recapId)) {
       throw notFound('리캡을 찾을 수 없습니다.');
     }

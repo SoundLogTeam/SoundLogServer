@@ -88,11 +88,44 @@ const recommendationContextSchema = z
   .default({});
 
 export const authValidators = {
-  socialLoginBody: z.object({
-    deviceId: z.string().optional(),
-    provider: z.enum(['kakao', 'apple', 'google']),
-    providerToken: z.string().min(1),
-  }),
+  socialLoginBody: z
+    .object({
+      authorizationCode: z.string().min(1).optional(),
+      codeVerifier: z.string().min(1).optional(),
+      device: z
+        .object({
+          appVersion: z.string().optional(),
+          deviceId: z.string().optional(),
+          platform: z.enum(['ios', 'android', 'web']),
+        })
+        .optional(),
+      deviceId: z.string().optional(),
+      idToken: z.string().min(1).optional(),
+      provider: z.enum(['kakao', 'apple', 'google']),
+      providerAccessToken: z.string().min(1).optional(),
+      providerDisplayName: z.string().min(1).max(120).optional(),
+      providerToken: z.string().min(1).optional(),
+      redirectUri: z.string().optional(),
+    })
+    .refine(
+      (value) =>
+        Boolean(
+          value.authorizationCode ||
+            value.idToken ||
+            value.providerAccessToken ||
+            value.providerToken ||
+            value.device?.deviceId ||
+            value.deviceId,
+        ),
+      {
+        message: 'provider 인증 정보가 필요합니다.',
+      },
+    ),
+  logoutBody: z
+    .object({
+      refreshToken: z.string().min(1).optional(),
+    })
+    .default({}),
   refreshBody: z.object({
     refreshToken: z.string().min(1),
   }),
@@ -113,6 +146,12 @@ export const meValidators = {
     connected: z.boolean().optional().default(false),
     providerUserId: z.string().optional(),
     selectedPlatformId: z.enum(['none', 'spotify', 'melon', 'youtubeMusic']),
+  }),
+  migrationBody: z.object({
+    idempotencyKey: z.string().min(1).max(128),
+    libraryTrackCount: z.number().int().min(0).optional().default(0),
+    momentLogCount: z.number().int().min(0).optional().default(0),
+    recapDraftCount: z.number().int().min(0).optional().default(0),
   }),
 };
 
@@ -226,6 +265,7 @@ export const recommendationEventValidators = {
             'track_play',
             'track_pause',
             'track_resume',
+            'track_external_open',
             'track_like',
             'track_unlike',
             'track_save',
