@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { ERROR_MESSAGES } from '../constants/error.constants.js';
+
 const optionalCsvArray = z.preprocess((value) => {
   if (Array.isArray(value)) {
     return value.flatMap((item) => String(item).split(','));
@@ -121,7 +123,7 @@ export const authValidators = {
             value.deviceId,
         ),
       {
-        message: 'provider 인증 정보가 필요합니다.',
+        message: ERROR_MESSAGES.PROVIDER_CREDENTIALS_REQUIRED,
       },
     ),
   logoutBody: z

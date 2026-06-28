@@ -48,6 +48,17 @@ describe('Soundlog API', () => {
     expect(response.body.data.status).toBe('ok');
   });
 
+  it('serves Swagger UI and OpenAPI YAML', async () => {
+    const spec = await request(app).get('/openapi.yaml');
+    const docs = await request(app).get('/docs/');
+
+    expect(spec.status).toBe(200);
+    expect(spec.headers['content-type']).toContain('application/yaml');
+    expect(spec.text).toContain('openapi: 3.1.0');
+    expect(docs.status).toBe(200);
+    expect(docs.text).toContain('Soundlog API Docs');
+  });
+
   it('allows Expo web dev origins through CORS in non-production', async () => {
     const response = await request(app)
       .options('/v1/home/featured-playlists')

@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from 'express';
 import type { ZodTypeAny } from 'zod';
 
+import { ERROR_MESSAGES } from '../constants/error.constants.js';
 import { badRequest } from '../utils/http-error.js';
 
 type ValidationSchemas = {
@@ -21,7 +22,7 @@ export function validate(schemas: ValidationSchemas) {
       const result = schema.safeParse(req[key]);
 
       if (!result.success) {
-        throw badRequest('요청 값이 올바르지 않습니다.', {
+        throw badRequest(ERROR_MESSAGES.INVALID_REQUEST, {
           issues: result.error.issues,
         });
       }
@@ -35,4 +36,3 @@ export function validate(schemas: ValidationSchemas) {
     next();
   };
 }
-

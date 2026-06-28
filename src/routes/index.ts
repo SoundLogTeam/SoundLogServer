@@ -1,5 +1,4 @@
 import { Router } from 'express';
-import multer from 'multer';
 
 import {
   authController,
@@ -14,9 +13,10 @@ import {
   tourController,
   travelSessionController,
   trendController,
-} from '../controllers/api.controllers.js';
+} from '../controllers/index.js';
 import { asyncHandler } from '../utils/async-handler.js';
 import { authMiddleware, optionalAuthMiddleware } from '../middlewares/auth.middleware.js';
+import { momentPhotoUpload } from '../middlewares/upload.middleware.js';
 import { validate } from '../middlewares/validate.middleware.js';
 import {
   authValidators,
@@ -31,13 +31,6 @@ import {
   travelSessionValidators,
   trendValidators,
 } from '../validators/api.validators.js';
-
-const upload = multer({
-  dest: 'uploads/',
-  limits: {
-    fileSize: 10 * 1024 * 1024,
-  },
-});
 
 export function createApiRouter() {
   const router = Router();
@@ -152,7 +145,7 @@ export function createApiRouter() {
   router.post(
     '/v1/moment-logs',
     authMiddleware,
-    upload.single('photo'),
+    momentPhotoUpload.single('photo'),
     validate({ body: momentLogValidators.createBody }),
     asyncHandler(momentLogController.createMomentLog),
   );

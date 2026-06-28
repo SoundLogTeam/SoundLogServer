@@ -36,6 +36,19 @@ USE_MOCK_DB=true pnpm dev
 
 mockDB 모드는 메모리 안의 샘플 데이터로 같은 API 응답을 내려주며, 쓰기 API도 실행 중인 프로세스 안에서 상태가 반영됩니다.
 
+## Docker Compose
+
+PostgreSQL과 API 서버를 함께 실행할 수 있습니다.
+
+```bash
+cp .env.example .env
+docker compose up --build -d
+docker compose --profile seed run --rm seed
+curl http://localhost:4000/v1/health
+```
+
+API 컨테이너는 시작 시 `prisma migrate deploy`를 먼저 실행합니다. seed는 기존 사용자 데이터를 초기화할 수 있으므로 필요할 때만 별도 프로필로 실행합니다.
+
 ## Frontend Integration
 
 SoundLog 프론트엔드에서 아래 환경변수를 설정하면 로컬 서버를 바라봅니다.
@@ -45,6 +58,13 @@ EXPO_PUBLIC_SOUNDLOG_API_BASE_URL=http://localhost:4000 npm run web
 ```
 
 웹 기본 주소는 `http://localhost:8081`입니다.
+
+## API Docs
+
+서버 실행 후 Swagger UI와 OpenAPI 원본을 확인할 수 있습니다.
+
+- Swagger UI: `http://localhost:4000/docs`
+- OpenAPI YAML: `http://localhost:4000/openapi.yaml`
 
 ## Production hardening
 
@@ -58,6 +78,7 @@ EXPO_PUBLIC_SOUNDLOG_API_BASE_URL=http://localhost:4000 npm run web
 - Kakao 로그인은 Kakao token info의 `app_id`가 `KAKAO_APP_ID`와 일치해야 통과
 - 프론트 앱은 mock provider token 대신 실제 provider token/idToken을 서버로 교환
 - `CLIENT_URLS`, `UPLOAD_PUBLIC_BASE_URL`, 앱의 `EXPO_PUBLIC_SOUNDLOG_API_BASE_URL`은 HTTPS 도메인 사용
+- `REQUEST_BODY_LIMIT`, `MOMENT_PHOTO_MAX_FILE_SIZE_MB`, `UPLOAD_DIRECTORY`, `UPLOAD_PUBLIC_PATH`는 운영 파일 업로드 정책에 맞게 조정
 - iOS 앱 설정에 전체 ATS 예외를 넣지 않기
 
 서버 코드는 `NODE_ENV=production`에서 `ALLOW_DEV_AUTH_FALLBACK=true`가 잘못 설정되어도 dev social-login fallback을 사용하지 않습니다.

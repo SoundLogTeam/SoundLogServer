@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from 'express';
 
 import { env } from '../config/env.js';
+import { ERROR_MESSAGES } from '../constants/error.constants.js';
 import { prisma } from '../config/prisma.js';
 import { defaultUser } from '../data/seed-data.js';
 import { mockDb } from '../mock/mock-db.js';
@@ -43,7 +44,7 @@ export async function authMiddleware(req: Request, _res: Response, next: NextFun
 
     if (env.USE_MOCK_DB) {
       if (userId !== mockDb.user.id) {
-        throw unauthorized('유효하지 않은 토큰입니다.');
+        throw unauthorized(ERROR_MESSAGES.INVALID_TOKEN);
       }
 
       req.user = mockDb.user;
@@ -61,13 +62,13 @@ export async function authMiddleware(req: Request, _res: Response, next: NextFun
     });
 
     if (!user) {
-      throw unauthorized('유효하지 않은 토큰입니다.');
+      throw unauthorized(ERROR_MESSAGES.INVALID_TOKEN);
     }
 
     req.user = user;
     next();
   } catch {
-    throw unauthorized('유효하지 않은 토큰입니다.');
+    throw unauthorized(ERROR_MESSAGES.INVALID_TOKEN);
   }
 }
 

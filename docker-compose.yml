@@ -1,0 +1,85 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-soundlog}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-soundlog_password}
+      POSTGRES_DB: ${POSTGRES_DB:-soundlog}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      PORT: 4000
+      CLIENT_URL: ${CLIENT_URL:-http://localhost:8081}
+      CLIENT_URLS: ${CLIENT_URLS:-http://localhost:8081,http://localhost:8082}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-soundlog}:${POSTGRES_PASSWORD:-soundlog_password}@db:5432/${POSTGRES_DB:-soundlog}?schema=public
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-local-development}
+      JWT_EXPIRES_IN_SECONDS: ${JWT_EXPIRES_IN_SECONDS:-3600}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      APPLE_CLIENT_ID: ${APPLE_CLIENT_ID:-}
+      KAKAO_APP_ID: ${KAKAO_APP_ID:-}
+      ML_RECOMMENDATION_API_URL: ${ML_RECOMMENDATION_API_URL:-http://211.188.54.204:8000/recommend}
+      ML_RECOMMENDATION_TIMEOUT_MS: ${ML_RECOMMENDATION_TIMEOUT_MS:-5000}
+      REQUEST_BODY_LIMIT: ${REQUEST_BODY_LIMIT:-1mb}
+      MOMENT_PHOTO_MAX_FILE_SIZE_MB: ${MOMENT_PHOTO_MAX_FILE_SIZE_MB:-10}
+      TOUR_API_BASE_URL: ${TOUR_API_BASE_URL:-https://apis.data.go.kr/B551011/KorService2}
+      TOUR_API_SERVICE_KEY: ${TOUR_API_SERVICE_KEY:-}
+      ALLOW_DEV_AUTH_FALLBACK: ${ALLOW_DEV_AUTH_FALLBACK:-false}
+      UPLOAD_DIRECTORY: /app/uploads
+      UPLOAD_PUBLIC_BASE_URL: ${UPLOAD_PUBLIC_BASE_URL:-http://localhost:4000}
+      UPLOAD_PUBLIC_PATH: ${UPLOAD_PUBLIC_PATH:-/uploads}
+      USE_MOCK_DB: ${USE_MOCK_DB:-false}
+    ports:
+      - "${API_PORT:-4000}:4000"
+    volumes:
+      - uploads_data:/app/uploads
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://127.0.0.1:4000/v1/health').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))\"",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  seed:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    profiles:
+      - seed
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-soundlog}:${POSTGRES_PASSWORD:-soundlog_password}@db:5432/${POSTGRES_DB:-soundlog}?schema=public
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-local-development}
+    command:
+      [
+        "sh",
+        "-c",
+        "./node_modules/.bin/prisma migrate deploy && node dist/prisma/seed.js",
+      ]
+
+volumes:
+  postgres_data:
+  uploads_data:

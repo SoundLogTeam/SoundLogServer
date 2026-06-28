@@ -1,3 +1,5 @@
+import { ERROR_CODES, ERROR_MESSAGES } from '../constants/error.constants.js';
+
 export class HttpError extends Error {
   constructor(
     public readonly statusCode: number,
@@ -10,14 +12,13 @@ export class HttpError extends Error {
 }
 
 export function badRequest(message: string, details?: Record<string, unknown>) {
-  return new HttpError(400, 'BAD_REQUEST', message, details);
+  return new HttpError(400, ERROR_CODES.BAD_REQUEST, message, details);
 }
 
-export function unauthorized(message = '인증이 필요합니다.') {
-  return new HttpError(401, 'UNAUTHORIZED', message);
+export function unauthorized(message: string = ERROR_MESSAGES.AUTH_REQUIRED) {
+  return new HttpError(401, ERROR_CODES.UNAUTHORIZED, message);
 }
 
-export function notFound(message = '요청한 리소스를 찾을 수 없습니다.') {
-  return new HttpError(404, 'NOT_FOUND', message);
+export function notFound(message: string = ERROR_MESSAGES.RESOURCE_NOT_FOUND) {
+  return new HttpError(404, ERROR_CODES.NOT_FOUND, message);
 }
-
