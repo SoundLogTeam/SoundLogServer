@@ -36,6 +36,19 @@ USE_MOCK_DB=true pnpm dev
 
 mockDB 모드는 메모리 안의 샘플 데이터로 같은 API 응답을 내려주며, 쓰기 API도 실행 중인 프로세스 안에서 상태가 반영됩니다.
 
+## Docker Compose
+
+PostgreSQL과 API 서버를 함께 실행할 수 있습니다.
+
+```bash
+cp .env.example .env
+docker compose up --build -d
+docker compose --profile seed run --rm seed
+curl http://localhost:4000/v1/health
+```
+
+API 컨테이너는 시작 시 `prisma migrate deploy`를 먼저 실행합니다. seed는 기존 사용자 데이터를 초기화할 수 있으므로 필요할 때만 별도 프로필로 실행합니다.
+
 ## Frontend Integration
 
 SoundLog 프론트엔드에서 아래 환경변수를 설정하면 로컬 서버를 바라봅니다.
