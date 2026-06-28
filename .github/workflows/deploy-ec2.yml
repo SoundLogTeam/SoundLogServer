@@ -3,6 +3,7 @@ name: Deploy API to EC2
 on:
   push:
     branches:
+      - main
       - codex/swagger-v1-docs-redirect
   workflow_dispatch:
     inputs:
@@ -102,24 +103,46 @@ jobs:
           EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
           EC2_SSH_PORT: ${{ secrets.EC2_SSH_PORT }}
           EC2_APP_DIR: ${{ secrets.EC2_APP_DIR }}
-          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
-          CLIENT_URL: ${{ secrets.CLIENT_URL }}
-          CLIENT_URLS: ${{ secrets.CLIENT_URLS }}
-          UPLOAD_PUBLIC_BASE_URL: ${{ secrets.UPLOAD_PUBLIC_BASE_URL }}
+          PRODUCTION_ENV: ${{ secrets.PRODUCTION_ENV }}
         run: |
           set -euo pipefail
           missing=()
-          for name in EC2_HOST EC2_USER EC2_SSH_KEY EC2_SSH_PORT EC2_APP_DIR POSTGRES_PASSWORD JWT_SECRET CLIENT_URL CLIENT_URLS UPLOAD_PUBLIC_BASE_URL; do
+          for name in EC2_HOST EC2_USER EC2_SSH_KEY EC2_SSH_PORT EC2_APP_DIR PRODUCTION_ENV; do
             if [ -z "${!name}" ]; then
               missing+=("$name")
             fi
           done
 
+          for key in API_PORT CLIENT_URL CLIENT_URLS POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB JWT_SECRET UPLOAD_PUBLIC_BASE_URL; do
+            value="$(sed -n "s/^${key}=//p" <<< "$PRODUCTION_ENV" | tail -n 1)"
+            if [ -z "$value" ]; then
+              missing+=("PRODUCTION_ENV.${key}")
+            fi
+          done
+
+          if grep -q "^DOCKER_IMAGE=" <<< "$PRODUCTION_ENV"; then
+            echo "PRODUCTION_ENV must not include DOCKER_IMAGE. The workflow injects it at deploy time."
+            exit 1
+          fi
+
           if [ "${#missing[@]}" -gt 0 ]; then
             printf 'Missing required secrets: %s\n' "${missing[*]}"
             exit 1
           fi
+
+      - name: Create production env file
+        shell: bash
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
+          PRODUCTION_ENV: ${{ secrets.PRODUCTION_ENV }}
+        run: |
+          set -euo pipefail
+          mkdir -p .deploy
+          {
+            printf 'DOCKER_IMAGE=%s/soundlog-server:%s\n' "$DOCKERHUB_USERNAME" "$IMAGE_TAG"
+            printf '%s\n' "$PRODUCTION_ENV"
+          } > .deploy/production.env
 
       - name: Prepare EC2 app directory
         uses: appleboy/ssh-action@v1.2.0
@@ -145,6 +168,18 @@ jobs:
           target: ${{ secrets.EC2_APP_DIR }}
           overwrite: true
 
+      - name: Copy production env file
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: ${{ secrets.EC2_SSH_PORT }}
+          source: .deploy/production.env
+          target: ${{ secrets.EC2_APP_DIR }}
+          strip_components: 1
+          overwrite: true
+
       - name: Deploy on EC2
         uses: appleboy/ssh-action@v1.2.0
         with:
@@ -155,31 +190,7 @@ jobs:
           script: |
             set -eu
             cd "${{ secrets.EC2_APP_DIR }}"
-
-            cat > .env <<'ENV'
-            DOCKER_IMAGE=${{ secrets.DOCKERHUB_USERNAME }}/soundlog-server:${{ needs.build-and-push.outputs.image_tag }}
-            API_PORT=${{ secrets.API_PORT }}
-            CLIENT_URL=${{ secrets.CLIENT_URL }}
-            CLIENT_URLS=${{ secrets.CLIENT_URLS }}
-            POSTGRES_USER=${{ secrets.POSTGRES_USER }}
-            POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
-            POSTGRES_DB=${{ secrets.POSTGRES_DB }}
-            JWT_SECRET=${{ secrets.JWT_SECRET }}
-            JWT_EXPIRES_IN_SECONDS=${{ secrets.JWT_EXPIRES_IN_SECONDS }}
-            GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
-            APPLE_CLIENT_ID=${{ secrets.APPLE_CLIENT_ID }}
-            KAKAO_APP_ID=${{ secrets.KAKAO_APP_ID }}
-            ML_RECOMMENDATION_API_URL=${{ secrets.ML_RECOMMENDATION_API_URL }}
-            ML_RECOMMENDATION_TIMEOUT_MS=${{ secrets.ML_RECOMMENDATION_TIMEOUT_MS }}
-            REQUEST_BODY_LIMIT=${{ secrets.REQUEST_BODY_LIMIT }}
-            MOMENT_PHOTO_MAX_FILE_SIZE_MB=${{ secrets.MOMENT_PHOTO_MAX_FILE_SIZE_MB }}
-            TOUR_API_BASE_URL=${{ secrets.TOUR_API_BASE_URL }}
-            TOUR_API_SERVICE_KEY=${{ secrets.TOUR_API_SERVICE_KEY }}
-            ALLOW_DEV_AUTH_FALLBACK=${{ secrets.ALLOW_DEV_AUTH_FALLBACK }}
-            UPLOAD_PUBLIC_BASE_URL=${{ secrets.UPLOAD_PUBLIC_BASE_URL }}
-            UPLOAD_PUBLIC_PATH=${{ secrets.UPLOAD_PUBLIC_PATH }}
-            USE_MOCK_DB=${{ secrets.USE_MOCK_DB }}
-            ENV
+            mv production.env .env
 
             echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
             docker compose -f docker-compose.prod.yml pull api
