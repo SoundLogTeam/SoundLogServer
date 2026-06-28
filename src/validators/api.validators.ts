@@ -136,6 +136,15 @@ export const authValidators = {
   }),
 };
 
+export const devDbTestValidators = {
+  createBody: z
+    .object({
+      label: z.string().min(1).max(120).optional(),
+      payload: z.record(z.string(), z.unknown()).optional(),
+    })
+    .default({}),
+};
+
 export const meValidators = {
   profileBody: z.object({
     birthYear: z.number().int().min(1900).max(2026).optional(),

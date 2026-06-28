@@ -249,3 +249,10 @@ model IdempotencyRecord {
 
   @@unique([scope, key, userId])
 }
+
+model DbTestRecord {
+  id        String   @id @default(cuid())
+  label     String
+  payload   Json?
+  createdAt DateTime @default(now())
+}

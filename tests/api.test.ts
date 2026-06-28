@@ -62,6 +62,23 @@ describe('Soundlog API', () => {
     expect(v1Docs.headers.location).toBe('/docs');
   });
 
+  it('creates a DB test record without auth', async () => {
+    const response = await request(app)
+      .post('/v1/dev/db-test-records')
+      .send({
+        label: 'swagger-smoke-test',
+        payload: {
+          source: 'api-test',
+        },
+      });
+
+    expect(response.status).toBe(201);
+    expect(response.body.data.id).toEqual(expect.any(String));
+    expect(response.body.data.label).toBe('swagger-smoke-test');
+    expect(response.body.data.table).toBe('DbTestRecord');
+    expect(response.body.data.database).toBe(useMockDb ? 'mock-db' : 'postgres');
+  });
+
   it('allows Expo web dev origins through CORS in non-production', async () => {
     const response = await request(app)
       .options('/v1/home/featured-playlists')
