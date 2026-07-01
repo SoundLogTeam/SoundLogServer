@@ -144,6 +144,63 @@ jobs:
             printf '%s\n' "$PRODUCTION_ENV"
           } > .deploy/production.env
 
+      - name: Debug EC2 SSH reachability
+        shell: bash
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_SSH_PORT: ${{ secrets.EC2_SSH_PORT }}
+        run: |
+          set +e
+          echo "UTC now: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+
+          echo "Runner public IPv4 from checkip.amazonaws.com:"
+          curl -fsS --max-time 10 https://checkip.amazonaws.com || true
+
+          echo "Runner public IPv4 from api.ipify.org:"
+          curl -fsS --max-time 10 https://api.ipify.org || true
+          echo
+
+          echo "EC2 host resolution summary:"
+          python3 - <<'PY'
+          import os
+          import socket
+
+          host = os.environ["EC2_HOST"]
+          port = int(os.environ["EC2_SSH_PORT"])
+          try:
+              infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+              families = sorted({socket.AddressFamily(info[0]).name for info in infos})
+              print(f"resolved_entries={len(infos)}")
+              print(f"address_families={','.join(families)}")
+          except Exception as error:
+              print(f"resolution_error={type(error).__name__}: {error}")
+          PY
+
+          echo "TCP connect check:"
+          python3 - <<'PY'
+          import os
+          import socket
+          import time
+
+          host = os.environ["EC2_HOST"]
+          port = int(os.environ["EC2_SSH_PORT"])
+          started = time.monotonic()
+          sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+          sock.settimeout(10)
+          try:
+              sock.connect((host, port))
+              elapsed = time.monotonic() - started
+              print(f"tcp_connect=success elapsed={elapsed:.2f}s")
+          except Exception as error:
+              elapsed = time.monotonic() - started
+              print(f"tcp_connect=failure elapsed={elapsed:.2f}s error={type(error).__name__}: {error}")
+          finally:
+              sock.close()
+          PY
+
+          echo "nc check:"
+          nc -vz -w 10 "$EC2_HOST" "$EC2_SSH_PORT" || true
+
       - name: Prepare EC2 app directory
         uses: appleboy/ssh-action@v1.2.0
         with:
