@@ -12,15 +12,17 @@ info:
     MVP 범위는 홈 추천, 관광지 조회, 플레이리스트 상세, 순간 로그, 리캡, 보관함, 추천 피드백 수집을 포함합니다.
     한국관광공사 OpenAPI 원본 응답은 서버에서 Soundlog 도메인 모델로 정규화해서 앱에 전달합니다.
 servers:
+  - url: http://localhost:4000
+    description: Local Docker/API server
   - url: https://api.soundlog.kr
     description: Production
   - url: https://dev-api.soundlog.kr
     description: Development
-  - url: https://local-api.soundlog.test
-    description: Local development placeholder
 tags:
   - name: System
     description: 서버 상태 확인
+  - name: Dev
+    description: 개발/검증용 엔드포인트
   - name: Auth
     description: 간편 로그인 및 토큰 관리
   - name: Me
@@ -68,6 +70,37 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+
+  /v1/dev/db-test-records:
+    post:
+      tags:
+        - Dev
+      security: []
+      summary: 인증 없는 DB 쓰기 테스트
+      description: |
+        Swagger UI에서 DB 쓰기를 빠르게 검증하기 위한 개발용 endpoint입니다.
+        실제 DB 모드에서는 `DbTestRecord` 테이블에 row를 생성하고, mock DB 모드에서는 mock 응답을 반환합니다.
+      operationId: createDbTestRecord
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DbTestRecordCreateRequest"
+            example:
+              label: swagger-smoke-test
+              payload:
+                source: swagger
+                note: DB insert 확인용
+      responses:
+        "201":
+          description: DB 테스트 record 생성 성공
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DbTestRecordResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
 
   /v1/auth/social-login:
     post:
@@ -962,6 +995,63 @@ components:
             checkedAt:
               type: string
               format: date-time
+
+    DbTestRecordCreateRequest:
+      type: object
+      properties:
+        label:
+          type: string
+          minLength: 1
+          maxLength: 120
+          default: swagger-db-test
+          example: swagger-smoke-test
+        payload:
+          type: object
+          additionalProperties: true
+          example:
+            source: swagger
+            note: DB insert 확인용
+
+    DbTestRecord:
+      type: object
+      required:
+        - id
+        - label
+        - createdAt
+        - database
+        - table
+      properties:
+        id:
+          type: string
+          example: cmabc123def456
+        label:
+          type: string
+          example: swagger-smoke-test
+        payload:
+          type: object
+          additionalProperties: true
+        createdAt:
+          type: string
+          format: date-time
+        database:
+          type: string
+          enum:
+            - postgres
+            - mock-db
+          example: postgres
+        table:
+          type: string
+          enum:
+            - DbTestRecord
+          example: DbTestRecord
+
+    DbTestRecordResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          $ref: "#/components/schemas/DbTestRecord"
 
     AcceptedResponse:
       type: object

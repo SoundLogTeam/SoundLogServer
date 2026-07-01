@@ -51,12 +51,32 @@ describe('Soundlog API', () => {
   it('serves Swagger UI and OpenAPI YAML', async () => {
     const spec = await request(app).get('/openapi.yaml');
     const docs = await request(app).get('/docs/');
+    const v1Docs = await request(app).get('/v1/docs');
 
     expect(spec.status).toBe(200);
     expect(spec.headers['content-type']).toContain('application/yaml');
     expect(spec.text).toContain('openapi: 3.1.0');
     expect(docs.status).toBe(200);
     expect(docs.text).toContain('Soundlog API Docs');
+    expect(v1Docs.status).toBe(302);
+    expect(v1Docs.headers.location).toBe('/docs');
+  });
+
+  it('creates a DB test record without auth', async () => {
+    const response = await request(app)
+      .post('/v1/dev/db-test-records')
+      .send({
+        label: 'swagger-smoke-test',
+        payload: {
+          source: 'api-test',
+        },
+      });
+
+    expect(response.status).toBe(201);
+    expect(response.body.data.id).toEqual(expect.any(String));
+    expect(response.body.data.label).toBe('swagger-smoke-test');
+    expect(response.body.data.table).toBe('DbTestRecord');
+    expect(response.body.data.database).toBe(useMockDb ? 'mock-db' : 'postgres');
   });
 
   it('allows Expo web dev origins through CORS in non-production', async () => {
