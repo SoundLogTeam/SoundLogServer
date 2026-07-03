@@ -46,4 +46,7 @@ jobs:
       - name: Run API tests with mock DB
         run: pnpm run test:api
         env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/soundlog_ci?schema=public
+          JWT_SECRET: soundlog-ci-test-secret
+          NODE_ENV: test
           USE_MOCK_DB: 'true'
