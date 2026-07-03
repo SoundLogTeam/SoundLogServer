@@ -509,7 +509,7 @@ function trackToDto(
 
 function placeToDto(place: Place) {
   return compact({
-    id: place.id,
+    id: toPublicPlaceId(place.id),
     title: place.title,
     address: place.address ?? undefined,
     category: place.category ?? undefined,
@@ -521,8 +521,20 @@ function placeToDto(place: Place) {
         ? { lat: place.lat, lng: place.lng }
         : undefined,
     overview: place.overview ?? undefined,
-    source: place.source,
+    source: toPublicPlaceSource(place.source),
   });
+}
+
+function toPublicPlaceId(id: string) {
+  return id.startsWith('mock-') ? `seed-${id.slice('mock-'.length)}` : id;
+}
+
+function toStoragePlaceId(id?: string) {
+  return id?.startsWith('seed-') ? `mock-${id.slice('seed-'.length)}` : id;
+}
+
+function toPublicPlaceSource(source: string) {
+  return source === 'mock' ? 'seed' : source;
 }
 
 type PlaylistWithTracks = Playlist & {
@@ -710,7 +722,9 @@ function scoreMoodRecommendation(
 
 async function findDefaultPlaylist(params?: { lat?: number; placeId?: string }) {
   if (params?.placeId) {
-    const place = await prisma.place.findUnique({ where: { id: params.placeId } });
+    const place = await prisma.place.findUnique({
+      where: { id: toStoragePlaceId(params.placeId) },
+    });
     const placeText = [place?.title, place?.category, place?.overview].join(' ');
 
     if (/해변|바다|해수욕장|ocean|beach/i.test(placeText)) {

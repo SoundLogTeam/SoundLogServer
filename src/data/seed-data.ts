@@ -73,7 +73,7 @@ export const places = [
     lat: 37.5512,
     lng: 126.9882,
     overview: '서울의 야경과 도심 산책을 함께 즐길 수 있는 대표 관광지입니다.',
-    source: 'mock',
+    source: 'seed',
   },
   {
     id: 'mock-gwanghwamun',
@@ -86,7 +86,7 @@ export const places = [
     lat: 37.5759,
     lng: 126.9768,
     overview: '도시 산책과 역사 관광 맥락을 함께 제공하는 서울 중심 관광지입니다.',
-    source: 'mock',
+    source: 'seed',
   },
   {
     id: 'mock-gwangalli',
@@ -99,7 +99,7 @@ export const places = [
     lat: 35.1532,
     lng: 129.1186,
     overview: '바다 산책과 야경을 함께 즐길 수 있는 부산 대표 해변입니다.',
-    source: 'mock',
+    source: 'seed',
   },
   {
     id: 'mock-haeundae',
@@ -112,7 +112,7 @@ export const places = [
     lat: 35.1587,
     lng: 129.1604,
     overview: '해변과 드라이브 맥락에 어울리는 부산 대표 관광지입니다.',
-    source: 'mock',
+    source: 'seed',
   },
 ] as const;
 
@@ -302,4 +302,3 @@ export const regionSoundTrends = [
     sampleSize: 980,
   },
 ] as const;
-
