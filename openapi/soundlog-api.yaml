@@ -14,10 +14,8 @@ info:
 servers:
   - url: http://localhost:4000
     description: Local Docker/API server
-  - url: https://api.soundlog.kr
-    description: Production
-  - url: https://dev-api.soundlog.kr
-    description: Development
+  - url: https://api.soundlog.shop
+    description: Public API
 tags:
   - name: System
     description: 서버 상태 확인
