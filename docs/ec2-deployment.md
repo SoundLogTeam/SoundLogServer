@@ -15,7 +15,6 @@ Only workflow-level credentials stay as separate GitHub Secrets. Application env
 | `EC2_SSH_PORT` | `22` | SSH port. |
 | `EC2_SSH_KEY` | PEM private key | Private key that can SSH into EC2. |
 | `EC2_APP_DIR` | `/home/ec2-user/soundlog-server` | Directory where compose and `.env` are written. |
-| `PUBLIC_API_BASE_URL` | `https://api.soundlog.shop` | Public HTTPS API origin used by uploaded file URLs and deploy health checks. |
 | `PRODUCTION_ENV` | multiline `.env` | Server runtime environment except generated deployment values. |
 
 ## `PRODUCTION_ENV` format
@@ -42,7 +41,7 @@ UPLOAD_PUBLIC_PATH=/uploads
 USE_MOCK_DB=false
 ```
 
-The workflow prepends `DOCKER_IMAGE=<dockerhub-username>/soundlog-server:<tag>` and injects `UPLOAD_PUBLIC_BASE_URL=<PUBLIC_API_BASE_URL>` at deploy time, so do not include those values in `PRODUCTION_ENV`.
+The workflow prepends `DOCKER_IMAGE=<dockerhub-username>/soundlog-server:<tag>` and derives `UPLOAD_PUBLIC_BASE_URL=http://<EC2_HOST>:<API_PORT>` at deploy time, so do not include those values in `PRODUCTION_ENV`.
 
 ## `soundlog.shop` DNS and HTTPS
 
@@ -77,7 +76,6 @@ gh secret set EC2_USER --repo SoundLogTeam/SoundLogServer --body 'ec2-user'
 gh secret set EC2_SSH_PORT --repo SoundLogTeam/SoundLogServer --body '22'
 gh secret set EC2_SSH_KEY --repo SoundLogTeam/SoundLogServer < ~/.ssh/soundlog-ec2.pem
 gh secret set EC2_APP_DIR --repo SoundLogTeam/SoundLogServer --body '/home/ec2-user/soundlog-server'
-gh secret set PUBLIC_API_BASE_URL --repo SoundLogTeam/SoundLogServer --body 'https://api.soundlog.shop'
 gh secret set PRODUCTION_ENV --repo SoundLogTeam/SoundLogServer < .env.production
 ```
 
@@ -91,4 +89,4 @@ gh workflow run deploy-ec2.yml --repo SoundLogTeam/SoundLogServer
 
 EC2 must already have Docker Engine and Docker Compose v2 installed. The workflow keeps Postgres data in the `postgres_data` Docker volume and uploaded files in the `uploads_data` Docker volume.
 
-After deployment, the workflow verifies `https://api.soundlog.shop/v1/health`. This must pass before shipping a `development`, `preview`, or production app build to testers.
+After deployment, the workflow verifies `http://<EC2_HOST>:<API_PORT>/v1/health`. Switch this to `https://api.soundlog.shop/v1/health` only after DNS, reverse proxy, and HTTPS certificate issuance are complete.
