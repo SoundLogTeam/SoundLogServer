@@ -265,47 +265,6 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
-  /v1/me/music-platform:
-    get:
-      tags:
-        - Me
-      summary: 음악 플랫폼 연동 상태 조회
-      operationId: getMyMusicPlatform
-      responses:
-        "200":
-          description: 음악 플랫폼 설정
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/MusicPlatformResponse"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-    put:
-      tags:
-        - Me
-      summary: 음악 플랫폼 선택/연동 상태 저장
-      description: |
-        앱이 실제 스트리밍 토큰을 직접 관리한다면 서버에는 선택 상태만 저장합니다.
-        서버가 OAuth를 대행한다면 provider access token은 별도 암호화 저장 정책이 필요합니다.
-      operationId: updateMyMusicPlatform
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/MusicPlatformInput"
-      responses:
-        "200":
-          description: 저장된 음악 플랫폼 설정
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/MusicPlatformResponse"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
   /v1/me/migrate-local-data:
     post:
       tags:
@@ -1169,13 +1128,6 @@ components:
         - active
         - local
 
-    MusicPlatformId:
-      type: string
-      enum:
-        - none
-        - melon
-        - youtubeMusic
-
     PlaceContext:
       type: object
       required:
@@ -1477,29 +1429,6 @@ components:
             completedOnboarding:
               type: boolean
               example: true
-            updatedAt:
-              type: string
-              format: date-time
-
-    MusicPlatformInput:
-      type: object
-      required:
-        - selectedPlatformId
-      properties:
-        selectedPlatformId:
-          $ref: "#/components/schemas/MusicPlatformId"
-        connected:
-          type: boolean
-          default: false
-        providerUserId:
-          type: string
-          description: 외부 음악 플랫폼 사용자 ID. 저장하지 않을 경우 생략 가능.
-
-    MusicPlatform:
-      allOf:
-        - $ref: "#/components/schemas/MusicPlatformInput"
-        - type: object
-          properties:
             updatedAt:
               type: string
               format: date-time
@@ -2157,14 +2086,6 @@ components:
         data:
           $ref: "#/components/schemas/UserProfile"
 
-    MusicPlatformResponse:
-      type: object
-      required:
-        - data
-      properties:
-        data:
-          $ref: "#/components/schemas/MusicPlatform"
-
     MeResponse:
       type: object
       required:
@@ -2179,8 +2100,6 @@ components:
               $ref: "#/components/schemas/AuthUser"
             profile:
               $ref: "#/components/schemas/UserProfile"
-            musicPlatform:
-              $ref: "#/components/schemas/MusicPlatform"
 
     LocalDataMigrationResponse:
       type: object

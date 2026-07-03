@@ -12,6 +12,9 @@ const blockedPatterns = [
   /track_pause/,
   /track_resume/,
   /track_skip/,
+  /\/v1\/me\/music-platform/,
+  /MusicPlatformInput/,
+  /MusicPlatformResponse/,
 ];
 const allowedExtensions = new Set([
   '.js',

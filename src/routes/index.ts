@@ -73,17 +73,6 @@ export function createApiRouter() {
     validate({ body: meValidators.profileBody }),
     asyncHandler(meController.upsertProfile),
   );
-  router.get(
-    '/v1/me/music-platform',
-    authMiddleware,
-    asyncHandler(meController.getMusicPlatform),
-  );
-  router.put(
-    '/v1/me/music-platform',
-    authMiddleware,
-    validate({ body: meValidators.musicPlatformBody }),
-    asyncHandler(meController.updateMusicPlatform),
-  );
   router.post(
     '/v1/me/migrate-local-data',
     authMiddleware,

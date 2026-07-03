@@ -132,11 +132,6 @@ export const meValidators = {
     preferredMoods: z.array(z.string()),
     travelStyles: z.array(z.string()),
   }),
-  musicPlatformBody: z.object({
-    connected: z.boolean().optional().default(false),
-    providerUserId: z.string().optional(),
-    selectedPlatformId: z.enum(['none', 'melon', 'youtubeMusic']),
-  }),
   migrationBody: z.object({
     idempotencyKey: z.string().min(1).max(128),
     libraryTrackCount: z.number().int().min(0).optional().default(0),

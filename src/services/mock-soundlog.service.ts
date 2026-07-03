@@ -254,28 +254,6 @@ export const mockSoundlogService = {
     return this.getMyProfile();
   },
 
-  async getMyMusicPlatform() {
-    return {
-      ...mockDb.musicPlatform,
-      updatedAt: mockDb.musicPlatform.updatedAt.toISOString(),
-    };
-  },
-
-  async updateMyMusicPlatform(_userId: string, input: {
-    connected?: boolean;
-    providerUserId?: string;
-    selectedPlatformId: string;
-  }) {
-    mockDb.musicPlatform = {
-      ...mockDb.musicPlatform,
-      ...input,
-      connected: input.connected ?? false,
-      updatedAt: new Date(),
-    };
-
-    return this.getMyMusicPlatform();
-  },
-
   async migrateLocalData(_userId: string, input: {
     idempotencyKey: string;
     libraryTrackCount: number;

@@ -158,7 +158,7 @@ describe('Soundlog API', () => {
     expect(logout.body.data.accepted).toBe(true);
   });
 
-  it('handles profile and music platform APIs', async () => {
+  it('handles profile APIs', async () => {
     const profile = await request(app)
       .get('/v1/me/profile')
       .set('Authorization', authHeader);
@@ -176,18 +176,6 @@ describe('Soundlog API', () => {
       });
     expect(updatedProfile.status).toBe(200);
     expect(updatedProfile.body.data.completedOnboarding).toBe(true);
-
-    const platform = await request(app)
-      .get('/v1/me/music-platform')
-      .set('Authorization', authHeader);
-    expect(platform.status).toBe(200);
-
-    const updatedPlatform = await request(app)
-      .put('/v1/me/music-platform')
-      .set('Authorization', authHeader)
-      .send({ selectedPlatformId: 'youtubeMusic', connected: true });
-    expect(updatedPlatform.status).toBe(200);
-    expect(updatedPlatform.body.data.selectedPlatformId).toBe('youtubeMusic');
   });
 
   it('returns tour and home data', async () => {
