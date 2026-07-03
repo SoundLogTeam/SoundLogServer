@@ -170,7 +170,9 @@ function recapShareToDto(recap: (typeof mockDb.recaps)[number]) {
 
 function getDefaultPlaylistId(params?: { lat?: number; placeId?: string }) {
   if (params?.placeId) {
-    const place = mockDb.places.find((item) => item.id === params.placeId);
+    const place = mockDb.places.find(
+      (item) => item.id === toStoragePlaceId(params.placeId),
+    );
     const placeText = [place?.title, place?.category, place?.overview].join(' ');
 
     if (/해변|바다|해수욕장|ocean|beach/i.test(placeText)) {
@@ -179,6 +181,18 @@ function getDefaultPlaylistId(params?: { lat?: number; placeId?: string }) {
   }
 
   return params?.lat && params.lat < 36.5 ? 'busan-ocean' : 'seoul-night';
+}
+
+function toPublicPlaceId(id: string) {
+  return id.startsWith('mock-') ? `seed-${id.slice('mock-'.length)}` : id;
+}
+
+function toStoragePlaceId(id?: string) {
+  return id?.startsWith('seed-') ? `mock-${id.slice('seed-'.length)}` : id;
+}
+
+function toPublicPlaceSource(source: string) {
+  return source === 'mock' ? 'seed' : source;
 }
 
 function scoreMoodRecommendation(
@@ -283,7 +297,7 @@ export const mockSoundlogService = {
       .slice(0, getLimit(params.limit, 10))
       .map((place) =>
         compact({
-          id: place.id,
+          id: toPublicPlaceId(place.id),
           title: place.title,
           address: place.address,
           category: place.category,
@@ -295,7 +309,7 @@ export const mockSoundlogService = {
               ? { lat: place.lat, lng: place.lng }
               : undefined,
           overview: place.overview,
-          source: place.source,
+          source: toPublicPlaceSource(place.source),
         }),
       );
   },

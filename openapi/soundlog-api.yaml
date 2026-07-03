@@ -1165,7 +1165,7 @@ components:
           type: string
           enum:
             - tour-api
-            - mock
+            - seed
             - user
 
     Track:

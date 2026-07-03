@@ -264,7 +264,8 @@ describe('Soundlog API', () => {
       limit: 2,
     });
     expect(tour.status).toBe(200);
-    expect(tour.body.data[0].id).toContain('mock-');
+    expect(tour.body.data[0].id).toContain('seed-');
+    expect(tour.body.data[0].source).toBe('seed');
 
     const featured = await request(app)
       .get('/v1/home/featured-playlists')
