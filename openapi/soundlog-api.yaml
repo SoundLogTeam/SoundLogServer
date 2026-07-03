@@ -12,15 +12,17 @@ info:
     MVP 범위는 홈 추천, 관광지 조회, 플레이리스트 상세, 순간 로그, 리캡, 보관함, 추천 피드백 수집을 포함합니다.
     한국관광공사 OpenAPI 원본 응답은 서버에서 Soundlog 도메인 모델로 정규화해서 앱에 전달합니다.
 servers:
+  - url: http://localhost:4000
+    description: Local Docker/API server
   - url: https://api.soundlog.kr
     description: Production
   - url: https://dev-api.soundlog.kr
     description: Development
-  - url: https://local-api.soundlog.test
-    description: Local development placeholder
 tags:
   - name: System
     description: 서버 상태 확인
+  - name: Dev
+    description: 개발/검증용 엔드포인트
   - name: Auth
     description: 간편 로그인 및 토큰 관리
   - name: Me
@@ -69,22 +71,52 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
-  /v1/auth/social-login:
+  /v1/dev/db-test-records:
+    post:
+      tags:
+        - Dev
+      security: []
+      summary: 인증 없는 DB 쓰기 테스트
+      description: |
+        Swagger UI에서 DB 쓰기를 빠르게 검증하기 위한 개발용 endpoint입니다.
+        실제 DB 모드에서는 `DbTestRecord` 테이블에 row를 생성하고, mock DB 모드에서는 mock 응답을 반환합니다.
+      operationId: createDbTestRecord
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DbTestRecordCreateRequest"
+            example:
+              label: swagger-smoke-test
+              payload:
+                source: swagger
+                note: DB insert 확인용
+      responses:
+        "201":
+          description: DB 테스트 record 생성 성공
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DbTestRecordResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /v1/auth/login:
     post:
       tags:
         - Auth
       security: []
-      summary: 간편 로그인
+      summary: 자체 계정 로그인
       description: |
-        Kakao, Apple, Google 등 외부 provider 토큰을 받아 Soundlog access token을 발급합니다.
-        MVP에서 인증을 생략한다면 후순위로 둘 수 있습니다.
-      operationId: socialLogin
+        Soundlog 이메일/비밀번호 계정으로 access token과 refresh token을 발급합니다.
+      operationId: login
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/SocialLoginRequest"
+              $ref: "#/components/schemas/LoginRequest"
       responses:
         "200":
           description: 로그인 성공
@@ -96,6 +128,31 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+
+  /v1/auth/register:
+    post:
+      tags:
+        - Auth
+      security: []
+      summary: 자체 계정 가입
+      description: |
+        Soundlog 이메일/비밀번호 계정을 만들고 access token과 refresh token을 발급합니다.
+      operationId: register
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "201":
+          description: 가입 성공
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthTokenResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
 
   /v1/auth/refresh:
     post:
@@ -962,6 +1019,63 @@ components:
             checkedAt:
               type: string
               format: date-time
+
+    DbTestRecordCreateRequest:
+      type: object
+      properties:
+        label:
+          type: string
+          minLength: 1
+          maxLength: 120
+          default: swagger-db-test
+          example: swagger-smoke-test
+        payload:
+          type: object
+          additionalProperties: true
+          example:
+            source: swagger
+            note: DB insert 확인용
+
+    DbTestRecord:
+      type: object
+      required:
+        - id
+        - label
+        - createdAt
+        - database
+        - table
+      properties:
+        id:
+          type: string
+          example: cmabc123def456
+        label:
+          type: string
+          example: swagger-smoke-test
+        payload:
+          type: object
+          additionalProperties: true
+        createdAt:
+          type: string
+          format: date-time
+        database:
+          type: string
+          enum:
+            - postgres
+            - mock-db
+          example: postgres
+        table:
+          type: string
+          enum:
+            - DbTestRecord
+          example: DbTestRecord
+
+    DbTestRecordResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          $ref: "#/components/schemas/DbTestRecord"
 
     AcceptedResponse:
       type: object
@@ -1864,60 +1978,31 @@ components:
           description: 익명 집계에 사용된 이벤트 수
           example: 1520
 
-    SocialLoginRequest:
+    LoginRequest:
       type: object
       required:
-        - provider
+        - email
+        - password
       properties:
-        provider:
+        email:
           type: string
-          enum:
-            - kakao
-            - apple
-            - google
-        authorizationCode:
+          format: email
+          example: user@soundlog.app
+        password:
           type: string
-          description: Authorization Code + PKCE 방식 provider에서 전달하는 code
-        idToken:
-          type: string
-          description: Apple/Google 등에서 받은 ID token
-        providerAccessToken:
-          type: string
-          description: Kakao 등 access token 검증 방식 provider에서 전달하는 token
-        providerToken:
-          type: string
-          deprecated: true
-          description: 기존 mock/레거시 클라이언트 호환용 provider token
-        codeVerifier:
-          type: string
-          description: PKCE code verifier
-        redirectUri:
-          type: string
-          example: soundlog://auth/callback
-        deviceId:
-          type: string
-          deprecated: true
-          description: 기존 mock 로그인 호환용 device id
-        device:
-          $ref: "#/components/schemas/AuthDeviceInfo"
+          minLength: 8
+          maxLength: 128
+          format: password
 
-    AuthDeviceInfo:
-      type: object
-      required:
-        - platform
-      properties:
-        platform:
-          type: string
-          enum:
-            - ios
-            - android
-            - web
-        appVersion:
-          type: string
-          example: 1.0.0
-        deviceId:
-          type: string
-          example: ios-device-uuid
+    RegisterRequest:
+      allOf:
+        - $ref: "#/components/schemas/LoginRequest"
+        - type: object
+          properties:
+            displayName:
+              type: string
+              maxLength: 120
+              example: Soundlog User
 
     AuthUser:
       type: object
@@ -1932,9 +2017,7 @@ components:
         provider:
           type: string
           enum:
-            - kakao
-            - apple
-            - google
+            - email
         displayName:
           type: string
           example: Soundlog User

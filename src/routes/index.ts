@@ -2,6 +2,7 @@ import { Router } from 'express';
 
 import {
   authController,
+  devDbTestController,
   homeController,
   libraryController,
   meController,
@@ -20,6 +21,7 @@ import { momentPhotoUpload } from '../middlewares/upload.middleware.js';
 import { validate } from '../middlewares/validate.middleware.js';
 import {
   authValidators,
+  devDbTestValidators,
   homeValidators,
   libraryValidators,
   meValidators,
@@ -36,11 +38,21 @@ export function createApiRouter() {
   const router = Router();
 
   router.get('/v1/health', asyncHandler(systemController.getHealth));
+  router.post(
+    '/v1/dev/db-test-records',
+    validate({ body: devDbTestValidators.createBody }),
+    asyncHandler(devDbTestController.createRecord),
+  );
 
   router.post(
-    '/v1/auth/social-login',
-    validate({ body: authValidators.socialLoginBody }),
-    asyncHandler(authController.socialLogin),
+    '/v1/auth/login',
+    validate({ body: authValidators.loginBody }),
+    asyncHandler(authController.login),
+  );
+  router.post(
+    '/v1/auth/register',
+    validate({ body: authValidators.registerBody }),
+    asyncHandler(authController.register),
   );
   router.post(
     '/v1/auth/refresh',

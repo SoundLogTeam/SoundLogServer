@@ -77,6 +77,13 @@ type MockRefreshToken = {
   tokenHash: string;
 };
 
+type MockPasswordUser = {
+  displayName: string;
+  email: string;
+  id: string;
+  passwordHash: string;
+};
+
 function cloneTrack(track: (typeof tracks)[number]): MockTrack {
   return {
     id: track.id,
@@ -195,6 +202,7 @@ function createMockDb() {
       topTrackIds: [...trend.topTrackIds],
     })),
     refreshTokens: [] as MockRefreshToken[],
+    passwordUsers: [] as MockPasswordUser[],
     idempotencyRecords: [] as Array<{
       idempotencyKey: string;
       response: unknown;

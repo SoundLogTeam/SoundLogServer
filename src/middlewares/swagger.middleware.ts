@@ -17,7 +17,15 @@ export function registerSwaggerDocs(app: Express) {
     res.type('application/yaml').send(readOpenApiSpec());
   });
 
+  app.get('/v1/openapi.yaml', (_req: Request, res: Response) => {
+    res.redirect(OPENAPI_SPEC_ROUTE);
+  });
+
   app.get('/swagger', (_req: Request, res: Response) => {
+    res.redirect(SWAGGER_DOCS_ROUTE);
+  });
+
+  app.get('/v1/docs', (_req: Request, res: Response) => {
     res.redirect(SWAGGER_DOCS_ROUTE);
   });
 

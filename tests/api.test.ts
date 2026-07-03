@@ -10,13 +10,20 @@ const app = createApp();
 const useMockDb = process.env.USE_MOCK_DB === 'true';
 
 async function getToken() {
-  const response = await request(app).post('/v1/auth/social-login').send({
-    provider: 'google',
-    providerAccessToken: 'local-dev-token',
-    device: {
-      deviceId: 'local-soundlog-user',
-      platform: 'web',
-    },
+  const email = `local-${Date.now()}@soundlog.test`;
+  const password = 'soundlog-password';
+
+  const register = await request(app).post('/v1/auth/register').send({
+    displayName: 'Local Soundlog User',
+    email,
+    password,
+  });
+
+  expect(register.status).toBe(201);
+
+  const response = await request(app).post('/v1/auth/login').send({
+    email,
+    password,
   });
 
   expect(response.status).toBe(200);
@@ -51,12 +58,32 @@ describe('Soundlog API', () => {
   it('serves Swagger UI and OpenAPI YAML', async () => {
     const spec = await request(app).get('/openapi.yaml');
     const docs = await request(app).get('/docs/');
+    const v1Docs = await request(app).get('/v1/docs');
 
     expect(spec.status).toBe(200);
     expect(spec.headers['content-type']).toContain('application/yaml');
     expect(spec.text).toContain('openapi: 3.1.0');
     expect(docs.status).toBe(200);
     expect(docs.text).toContain('Soundlog API Docs');
+    expect(v1Docs.status).toBe(302);
+    expect(v1Docs.headers.location).toBe('/docs');
+  });
+
+  it('creates a DB test record without auth', async () => {
+    const response = await request(app)
+      .post('/v1/dev/db-test-records')
+      .send({
+        label: 'swagger-smoke-test',
+        payload: {
+          source: 'api-test',
+        },
+      });
+
+    expect(response.status).toBe(201);
+    expect(response.body.data.id).toEqual(expect.any(String));
+    expect(response.body.data.label).toBe('swagger-smoke-test');
+    expect(response.body.data.table).toBe('DbTestRecord');
+    expect(response.body.data.database).toBe(useMockDb ? 'mock-db' : 'postgres');
   });
 
   it('allows Expo web dev origins through CORS in non-production', async () => {
@@ -85,18 +112,17 @@ describe('Soundlog API', () => {
   });
 
   it('refreshes auth tokens', async () => {
-    const login = await request(app).post('/v1/auth/social-login').send({
-      provider: 'google',
-      providerAccessToken: 'refresh-dev-token',
-      device: {
-        deviceId: 'refresh-user',
-        platform: 'web',
-      },
+    const password = 'refresh-password';
+    const register = await request(app).post('/v1/auth/register').send({
+      displayName: 'Refresh User',
+      email: `refresh-${Date.now()}@soundlog.test`,
+      password,
     });
     const response = await request(app).post('/v1/auth/refresh').send({
-      refreshToken: login.body.data.refreshToken,
+      refreshToken: register.body.data.refreshToken,
     });
 
+    expect(register.status).toBe(201);
     expect(response.status).toBe(200);
     expect(response.body.data.accessToken).toEqual(expect.any(String));
     expect(response.body.data.user.id).toEqual(expect.any(String));
@@ -121,9 +147,9 @@ describe('Soundlog API', () => {
     expect(migration.body.data.accepted).toBe(true);
     expect(migration.body.data.migrated.momentLogCount).toBe(3);
 
-    const login = await request(app).post('/v1/auth/social-login').send({
-      provider: 'kakao',
-      providerAccessToken: 'logout-dev-token',
+    const login = await request(app).post('/v1/auth/register').send({
+      email: `logout-${Date.now()}@soundlog.test`,
+      password: 'logout-password',
     });
     const logout = await request(app).post('/v1/auth/logout').send({
       refreshToken: login.body.data.refreshToken,
