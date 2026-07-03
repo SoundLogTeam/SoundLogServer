@@ -4,6 +4,8 @@ Soundlog React Native 앱과 백엔드 서버를 연결하기 위한 API 명세 
 
 현재 문서는 앱의 mock-server, React Query 호출부, 화면 기획서를 기준으로 작성했습니다. 서버 개발자는 `openapi/soundlog-api.yaml`을 Swagger UI, Redoc, Stoplight 등에 올려서 확인할 수 있습니다.
 
+운영/테스트 API origin은 `https://api.soundlog.shop`을 사용합니다.
+
 ## 문서 구성
 
 - [openapi/soundlog-api.yaml](openapi/soundlog-api.yaml): OpenAPI 3.1 기반 API 명세
