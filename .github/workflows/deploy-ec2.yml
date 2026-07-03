@@ -124,6 +124,11 @@ jobs:
             exit 1
           fi
 
+          if grep -q "^DATABASE_URL=" <<< "$PRODUCTION_ENV"; then
+            echo "PRODUCTION_ENV must not include DATABASE_URL. The workflow injects an encoded internal database URL at deploy time."
+            exit 1
+          fi
+
           if [ "${#missing[@]}" -gt 0 ]; then
             printf 'Missing required secrets: %s\n' "${missing[*]}"
             exit 1
@@ -140,15 +145,29 @@ jobs:
           set -euo pipefail
           mkdir -p .deploy
           api_port="$(sed -n 's/^API_PORT=//p' <<< "$PRODUCTION_ENV" | tail -n 1 | tr -d '\r')"
+          postgres_user="$(sed -n 's/^POSTGRES_USER=//p' <<< "$PRODUCTION_ENV" | tail -n 1 | tr -d '\r')"
+          postgres_password="$(sed -n 's/^POSTGRES_PASSWORD=//p' <<< "$PRODUCTION_ENV" | tail -n 1 | tr -d '\r')"
+          postgres_db="$(sed -n 's/^POSTGRES_DB=//p' <<< "$PRODUCTION_ENV" | tail -n 1 | tr -d '\r')"
 
           if [[ ! "$api_port" =~ ^[0-9]+$ ]]; then
             echo "PRODUCTION_ENV.API_PORT must be a numeric port."
             exit 1
           fi
 
+          database_url="$(
+            POSTGRES_USER="$postgres_user" POSTGRES_PASSWORD="$postgres_password" POSTGRES_DB="$postgres_db" node <<'NODE'
+          const encode = encodeURIComponent;
+          const user = encode(process.env.POSTGRES_USER || '');
+          const password = encode(process.env.POSTGRES_PASSWORD || '');
+          const database = encode(process.env.POSTGRES_DB || '');
+          process.stdout.write(`postgresql://${user}:${password}@db:5432/${database}?schema=public`);
+          NODE
+          )"
+
           {
             printf 'DOCKER_IMAGE=%s/soundlog-server:%s\n' "$DOCKERHUB_USERNAME" "$IMAGE_TAG"
-            printf '%s\n' "$PRODUCTION_ENV" | sed '/^DOCKER_IMAGE=/d;/^UPLOAD_PUBLIC_BASE_URL=/d'
+            printf '%s\n' "$PRODUCTION_ENV" | sed '/^DOCKER_IMAGE=/d;/^DATABASE_URL=/d;/^UPLOAD_PUBLIC_BASE_URL=/d'
+            printf 'DATABASE_URL=%s\n' "$database_url"
             printf 'UPLOAD_PUBLIC_BASE_URL=http://%s:%s\n' "$EC2_HOST" "$api_port"
           } > .deploy/production.env
 

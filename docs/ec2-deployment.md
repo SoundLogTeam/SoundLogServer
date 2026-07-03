@@ -41,7 +41,7 @@ UPLOAD_PUBLIC_PATH=/uploads
 USE_MOCK_DB=false
 ```
 
-The workflow prepends `DOCKER_IMAGE=<dockerhub-username>/soundlog-server:<tag>` and derives `UPLOAD_PUBLIC_BASE_URL=http://<EC2_HOST>:<API_PORT>` at deploy time, so do not include those values in `PRODUCTION_ENV`.
+The workflow prepends `DOCKER_IMAGE=<dockerhub-username>/soundlog-server:<tag>`, derives `UPLOAD_PUBLIC_BASE_URL=http://<EC2_HOST>:<API_PORT>`, and injects a URL-encoded internal `DATABASE_URL` at deploy time, so do not include those values in `PRODUCTION_ENV`.
 
 ## `soundlog.shop` DNS and HTTPS
 
