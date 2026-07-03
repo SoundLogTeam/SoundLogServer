@@ -13,7 +13,6 @@ export const tracks = [
     fallbackColor: '#192554',
     externalUrl: 'https://music.youtube.com/search?q=JENNIE%20Seoul%20City',
     platformUrls: {
-      spotify: 'https://open.spotify.com/search/JENNIE%20Seoul%20City',
       youtubeMusic: 'https://music.youtube.com/search?q=JENNIE%20Seoul%20City',
     } satisfies Prisma.JsonObject,
   },
@@ -302,4 +301,3 @@ export const regionSoundTrends = [
     sampleSize: 980,
   },
 ] as const;
-

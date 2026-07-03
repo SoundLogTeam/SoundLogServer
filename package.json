@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest",
     "test:api": "vitest run",
+    "check:no-spotify-metadata": "node scripts/check-no-spotify-metadata.mjs",
     "check:production-env": "node scripts/check-production-env.mjs",
     "db:generate": "prisma generate --schema prisma",
     "db:migrate": "prisma migrate dev --schema prisma",

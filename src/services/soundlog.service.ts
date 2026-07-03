@@ -351,7 +351,6 @@ function createMusicSearchUrls(artist: string, title: string) {
   return {
     externalUrl: `https://music.youtube.com/search?q=${query}`,
     platformUrls: {
-      spotify: `https://open.spotify.com/search/${query}`,
       youtubeMusic: `https://music.youtube.com/search?q=${query}`,
     },
   };
@@ -584,20 +583,6 @@ function profileToDto(profile: UserProfile) {
   });
 }
 
-function musicPlatformToDto(platform: {
-  connected: boolean;
-  providerUserId: string | null;
-  selectedPlatformId: string;
-  updatedAt: Date;
-}) {
-  return compact({
-    selectedPlatformId: platform.selectedPlatformId,
-    connected: platform.connected,
-    providerUserId: platform.providerUserId ?? undefined,
-    updatedAt: platform.updatedAt.toISOString(),
-  });
-}
-
 function momentLogToDto(log: MomentLog) {
   return compact({
     id: log.id,
@@ -788,42 +773,6 @@ export const soundlogService = {
     });
 
     return profileToDto(profile);
-  },
-
-  async getMyMusicPlatform(userId: string) {
-    const platform = await prisma.musicPlatform.upsert({
-      where: { userId },
-      update: {},
-      create: {
-        userId,
-        selectedPlatformId: 'none',
-        connected: false,
-      },
-    });
-
-    return musicPlatformToDto(platform);
-  },
-
-  async updateMyMusicPlatform(
-    userId: string,
-    input: {
-      connected?: boolean;
-      providerUserId?: string;
-      selectedPlatformId: string;
-    },
-  ) {
-    const platform = await prisma.musicPlatform.upsert({
-      where: { userId },
-      update: input,
-      create: {
-        userId,
-        selectedPlatformId: input.selectedPlatformId,
-        connected: input.connected ?? false,
-        providerUserId: input.providerUserId,
-      },
-    });
-
-    return musicPlatformToDto(platform);
   },
 
   async migrateLocalData(_userId: string, input: {

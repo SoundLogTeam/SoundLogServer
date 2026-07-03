@@ -103,12 +103,6 @@ export const authService = {
             completedOnboarding: false,
           },
         },
-        musicPlatform: {
-          create: {
-            selectedPlatformId: 'none',
-            connected: false,
-          },
-        },
       },
     });
 
@@ -169,10 +163,6 @@ export const authService = {
   async getMe(userId: string) {
     if (env.USE_MOCK_DB) {
       return {
-        musicPlatform: {
-          ...mockDb.musicPlatform,
-          updatedAt: mockDb.musicPlatform.updatedAt.toISOString(),
-        },
         profile: {
           ...mockDb.profile,
           updatedAt: mockDb.profile.updatedAt.toISOString(),
@@ -182,7 +172,6 @@ export const authService = {
     }
 
     return {
-      musicPlatform: await getMusicPlatformDto(userId),
       profile: await getProfileDto(userId),
       user: await getUserDto(userId),
     };
@@ -275,25 +264,6 @@ async function getProfileDto(userId: string) {
     preferredMoods: profile.preferredMoods,
     travelStyles: profile.travelStyles,
     updatedAt: profile.updatedAt.toISOString(),
-  };
-}
-
-async function getMusicPlatformDto(userId: string) {
-  const musicPlatform = await prisma.musicPlatform.upsert({
-    where: { userId },
-    update: {},
-    create: {
-      connected: false,
-      selectedPlatformId: 'none',
-      userId,
-    },
-  });
-
-  return {
-    connected: musicPlatform.connected,
-    providerUserId: musicPlatform.providerUserId ?? undefined,
-    selectedPlatformId: musicPlatform.selectedPlatformId,
-    updatedAt: musicPlatform.updatedAt.toISOString(),
   };
 }
 

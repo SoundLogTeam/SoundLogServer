@@ -132,11 +132,6 @@ export const meValidators = {
     preferredMoods: z.array(z.string()),
     travelStyles: z.array(z.string()),
   }),
-  musicPlatformBody: z.object({
-    connected: z.boolean().optional().default(false),
-    providerUserId: z.string().optional(),
-    selectedPlatformId: z.enum(['none', 'spotify', 'melon', 'youtubeMusic']),
-  }),
   migrationBody: z.object({
     idempotencyKey: z.string().min(1).max(128),
     libraryTrackCount: z.number().int().min(0).optional().default(0),
@@ -254,9 +249,6 @@ export const recommendationEventValidators = {
           sessionId: z.string().min(1),
           trackId: z.string().optional(),
           type: z.enum([
-            'track_play',
-            'track_pause',
-            'track_resume',
             'track_external_open',
             'track_like',
             'track_unlike',
@@ -266,7 +258,6 @@ export const recommendationEventValidators = {
             'mood_filter_change',
             'recommendation_mode_change',
             'top_filter_change',
-            'track_skip',
             'recap_representative_track_select',
           ]),
           value: z.string().optional(),

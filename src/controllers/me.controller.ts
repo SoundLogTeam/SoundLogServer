@@ -21,16 +21,6 @@ export const meController = {
     res.json(dataResponse(await apiService.upsertMyProfile(user.id, req.body)));
   },
 
-  async getMusicPlatform(req: Request, res: Response) {
-    const user = requireUser(req);
-    res.json(dataResponse(await apiService.getMyMusicPlatform(user.id)));
-  },
-
-  async updateMusicPlatform(req: Request, res: Response) {
-    const user = requireUser(req);
-    res.json(dataResponse(await apiService.updateMyMusicPlatform(user.id, req.body)));
-  },
-
   async migrateLocalData(req: Request, res: Response) {
     const user = requireUser(req);
     res.json(dataResponse(await apiService.migrateLocalData(user.id, req.body)));
