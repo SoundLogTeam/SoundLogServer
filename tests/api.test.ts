@@ -317,7 +317,7 @@ describe('Soundlog API', () => {
           {
             id: `event-${Date.now()}`,
             sessionId: 'seed-session',
-            type: 'track_play',
+            type: 'track_external_open',
             trackId: 'seoul-city',
             playlistId: 'seoul-night',
             context: { moodFilter: '전체' },

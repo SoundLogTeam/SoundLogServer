@@ -1698,9 +1698,7 @@ components:
     RecommendationEventType:
       type: string
       enum:
-        - track_play
-        - track_pause
-        - track_resume
+        - track_external_open
         - track_like
         - track_unlike
         - track_save
@@ -1709,7 +1707,6 @@ components:
         - mood_filter_change
         - recommendation_mode_change
         - top_filter_change
-        - track_skip
         - recap_representative_track_select
 
     RecommendationEvent:

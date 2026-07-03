@@ -8,6 +8,10 @@ const blockedPatterns = [
   /open\.spotify\.com/i,
   /spotify-auth/i,
   /playback/i,
+  /track_play/,
+  /track_pause/,
+  /track_resume/,
+  /track_skip/,
 ];
 const allowedExtensions = new Set([
   '.js',
