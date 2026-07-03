@@ -89,4 +89,4 @@ gh workflow run deploy-ec2.yml --repo SoundLogTeam/SoundLogServer
 
 EC2 must already have Docker Engine and Docker Compose v2 installed. The workflow keeps Postgres data in the `postgres_data` Docker volume and uploaded files in the `uploads_data` Docker volume.
 
-After deployment, the workflow verifies `http://<EC2_HOST>:<API_PORT>/v1/health`. Switch this to `https://api.soundlog.shop/v1/health` only after DNS, reverse proxy, and HTTPS certificate issuance are complete.
+After deployment, the workflow verifies `http://127.0.0.1:<API_PORT>/v1/health` from inside EC2. Verify `https://api.soundlog.shop/v1/health` separately after DNS, reverse proxy, and HTTPS certificate issuance are complete.

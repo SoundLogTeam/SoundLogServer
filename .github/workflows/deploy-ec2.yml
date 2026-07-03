@@ -204,27 +204,19 @@ jobs:
             docker compose -f docker-compose.prod.yml pull api
             docker compose -f docker-compose.prod.yml up -d
             docker compose -f docker-compose.prod.yml ps
-            docker image prune -f
 
-      - name: Verify public API health
-        shell: bash
-        env:
-          EC2_HOST: ${{ secrets.EC2_HOST }}
-          PRODUCTION_ENV: ${{ secrets.PRODUCTION_ENV }}
-        run: |
-          set -euo pipefail
-          api_port="$(sed -n 's/^API_PORT=//p' <<< "$PRODUCTION_ENV" | tail -n 1 | tr -d '\r')"
-          health_base_url="http://${EC2_HOST}:${api_port}"
+            api_port="$(sed -n 's/^API_PORT=//p' .env | tail -n 1 | tr -d '\r')"
+            for attempt in $(seq 1 18); do
+              if curl --fail --silent --show-error --max-time 10 "http://127.0.0.1:${api_port}/v1/health" > /tmp/soundlog-health.json; then
+                cat /tmp/soundlog-health.json
+                docker image prune -f
+                exit 0
+              fi
 
-          for attempt in {1..18}; do
-            if curl --fail --silent --show-error --max-time 10 "$health_base_url/v1/health" > /tmp/soundlog-health.json; then
-              cat /tmp/soundlog-health.json
-              exit 0
-            fi
+              echo "Waiting for API health check on EC2 (${attempt}/18)..."
+              sleep 10
+            done
 
-            echo "Waiting for API health check (${attempt}/18)..."
-            sleep 10
-          done
-
-          echo "API health check failed: $health_base_url/v1/health"
-          exit 1
+            echo "API health check failed on EC2: http://127.0.0.1:${api_port}/v1/health"
+            docker compose -f docker-compose.prod.yml logs --tail=120 api
+            exit 1
