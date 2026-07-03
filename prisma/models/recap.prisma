@@ -1,0 +1,28 @@
+model Recap {
+  id                    String            @id
+  userId                String
+  title                 String
+  placeName             String
+  representativeTrackId String
+  createdAt             DateTime          @default(now())
+  momentCount           Int?
+  sessionId             String?
+  backgroundImageUrl    String?
+  discImageUrl          String?
+  recordedAt            DateTime?
+  shareImageUrl         String?
+  moments               Json?
+  user                  User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  representativeTrack   Track             @relation("RepresentativeTrack", fields: [representativeTrackId], references: [id])
+  shareEvents           RecapShareEvent[]
+}
+
+model RecapShareEvent {
+  id        String   @id @default(cuid())
+  recapId   String
+  userId    String
+  type      String
+  createdAt DateTime
+  recap     Recap    @relation(fields: [recapId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}

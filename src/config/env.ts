@@ -10,9 +10,6 @@ const envSchema = z.object({
   CLIENT_URL: z.string().url().default('http://localhost:8081'),
   CLIENT_URLS: z.string().optional(),
   DATABASE_URL: z.string().min(1),
-  APPLE_CLIENT_ID: z.string().optional(),
-  GOOGLE_CLIENT_ID: z.string().optional(),
-  KAKAO_APP_ID: z.string().optional(),
   JWT_EXPIRES_IN_SECONDS: z.coerce.number().int().positive().default(3600),
   JWT_SECRET: z.string().min(16),
   ML_RECOMMENDATION_API_URL: z

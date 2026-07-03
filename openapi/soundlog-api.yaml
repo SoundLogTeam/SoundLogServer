@@ -102,22 +102,21 @@ paths:
         "400":
           $ref: "#/components/responses/BadRequest"
 
-  /v1/auth/social-login:
+  /v1/auth/login:
     post:
       tags:
         - Auth
       security: []
-      summary: 간편 로그인
+      summary: 자체 계정 로그인
       description: |
-        Kakao, Apple, Google 등 외부 provider 토큰을 받아 Soundlog access token을 발급합니다.
-        MVP에서 인증을 생략한다면 후순위로 둘 수 있습니다.
-      operationId: socialLogin
+        Soundlog 이메일/비밀번호 계정으로 access token과 refresh token을 발급합니다.
+      operationId: login
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/SocialLoginRequest"
+              $ref: "#/components/schemas/LoginRequest"
       responses:
         "200":
           description: 로그인 성공
@@ -129,6 +128,31 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+
+  /v1/auth/register:
+    post:
+      tags:
+        - Auth
+      security: []
+      summary: 자체 계정 가입
+      description: |
+        Soundlog 이메일/비밀번호 계정을 만들고 access token과 refresh token을 발급합니다.
+      operationId: register
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "201":
+          description: 가입 성공
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthTokenResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
 
   /v1/auth/refresh:
     post:
@@ -1954,60 +1978,31 @@ components:
           description: 익명 집계에 사용된 이벤트 수
           example: 1520
 
-    SocialLoginRequest:
+    LoginRequest:
       type: object
       required:
-        - provider
+        - email
+        - password
       properties:
-        provider:
+        email:
           type: string
-          enum:
-            - kakao
-            - apple
-            - google
-        authorizationCode:
+          format: email
+          example: user@soundlog.app
+        password:
           type: string
-          description: Authorization Code + PKCE 방식 provider에서 전달하는 code
-        idToken:
-          type: string
-          description: Apple/Google 등에서 받은 ID token
-        providerAccessToken:
-          type: string
-          description: Kakao 등 access token 검증 방식 provider에서 전달하는 token
-        providerToken:
-          type: string
-          deprecated: true
-          description: 기존 mock/레거시 클라이언트 호환용 provider token
-        codeVerifier:
-          type: string
-          description: PKCE code verifier
-        redirectUri:
-          type: string
-          example: soundlog://auth/callback
-        deviceId:
-          type: string
-          deprecated: true
-          description: 기존 mock 로그인 호환용 device id
-        device:
-          $ref: "#/components/schemas/AuthDeviceInfo"
+          minLength: 8
+          maxLength: 128
+          format: password
 
-    AuthDeviceInfo:
-      type: object
-      required:
-        - platform
-      properties:
-        platform:
-          type: string
-          enum:
-            - ios
-            - android
-            - web
-        appVersion:
-          type: string
-          example: 1.0.0
-        deviceId:
-          type: string
-          example: ios-device-uuid
+    RegisterRequest:
+      allOf:
+        - $ref: "#/components/schemas/LoginRequest"
+        - type: object
+          properties:
+            displayName:
+              type: string
+              maxLength: 120
+              example: Soundlog User
 
     AuthUser:
       type: object
@@ -2022,9 +2017,7 @@ components:
         provider:
           type: string
           enum:
-            - kakao
-            - apple
-            - google
+            - email
         displayName:
           type: string
           example: Soundlog User

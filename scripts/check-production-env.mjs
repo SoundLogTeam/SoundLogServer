@@ -5,8 +5,6 @@ const required = [
   'JWT_SECRET',
   'CLIENT_URLS',
   'UPLOAD_PUBLIC_BASE_URL',
-  'APPLE_CLIENT_ID',
-  'KAKAO_APP_ID',
 ];
 
 const errors = [];

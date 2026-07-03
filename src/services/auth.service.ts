@@ -1,6 +1,4 @@
-import crypto from 'node:crypto';
-
-import jwt from 'jsonwebtoken';
+import bcrypt from 'bcrypt';
 
 import { env } from '../config/env.js';
 import { ERROR_MESSAGES } from '../constants/error.constants.js';
@@ -13,273 +11,108 @@ import {
 } from '../utils/tokens.js';
 import { badRequest, unauthorized } from '../utils/http-error.js';
 
-type SocialLoginInput = {
-  authorizationCode?: string;
-  codeVerifier?: string;
-  device?: {
-    appVersion?: string;
-    deviceId?: string;
-    platform: 'ios' | 'android' | 'web';
-  };
-  deviceId?: string;
-  idToken?: string;
-  provider: 'kakao' | 'apple' | 'google';
-  providerAccessToken?: string;
-  providerDisplayName?: string;
-  providerToken?: string;
-  redirectUri?: string;
-};
-
-type VerifiedSocialIdentity = {
+type EmailPasswordAuthInput = {
   displayName?: string;
-  providerUserId: string;
+  email: string;
+  password: string;
 };
 
-type AppleJwtHeader = {
-  alg?: string;
-  kid?: string;
-};
+const FIRST_PARTY_PROVIDER = 'email';
+const PASSWORD_SALT_ROUNDS = 12;
 
-type AppleJwksResponse = {
-  keys?: Array<crypto.JsonWebKey & { kid?: string }>;
-};
-
-function getProviderCredential(input: SocialLoginInput) {
-  return input.idToken ??
-    input.authorizationCode ??
-    input.providerAccessToken ??
-    input.providerToken;
+function normalizeEmail(email: string) {
+  return email.trim().toLowerCase();
 }
 
-async function fetchJson<T>(url: string, init?: RequestInit) {
-  const response = await fetch(url, init);
-
-  if (!response.ok) {
-    throw unauthorized(ERROR_MESSAGES.INVALID_PROVIDER_CREDENTIALS);
-  }
-
-  return (await response.json()) as T;
+function getDefaultDisplayName(email: string) {
+  return email.split('@')[0] || 'Soundlog User';
 }
 
-async function verifyGoogleIdentity(input: SocialLoginInput): Promise<VerifiedSocialIdentity> {
-  if (input.idToken) {
-    if (!env.GOOGLE_CLIENT_ID && env.NODE_ENV === 'production') {
-      throw badRequest(ERROR_MESSAGES.GOOGLE_CLIENT_ID_REQUIRED);
-    }
+function getEmailDisplayName(input: EmailPasswordAuthInput) {
+  const displayName = input.displayName?.trim();
 
-    const data = await fetchJson<{
-      aud?: string;
-      email?: string;
-      name?: string;
-      sub?: string;
-    }>(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(input.idToken)}`);
-
-    if (!data.sub || (env.GOOGLE_CLIENT_ID && data.aud !== env.GOOGLE_CLIENT_ID)) {
-      throw unauthorized(ERROR_MESSAGES.INVALID_PROVIDER_CREDENTIALS);
-    }
-
-    return {
-      displayName: data.name ?? data.email,
-      providerUserId: data.sub,
-    };
-  }
-
-  const accessToken = input.providerAccessToken ?? input.providerToken;
-
-  if (!accessToken) {
-    throw badRequest(ERROR_MESSAGES.GOOGLE_PROVIDER_TOKEN_REQUIRED);
-  }
-
-  const data = await fetchJson<{
-    email?: string;
-    name?: string;
-    sub?: string;
-  }>('https://www.googleapis.com/oauth2/v3/userinfo', {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-
-  if (!data.sub) {
-    throw unauthorized(ERROR_MESSAGES.INVALID_PROVIDER_CREDENTIALS);
-  }
-
-  return {
-    displayName: data.name ?? data.email,
-    providerUserId: data.sub,
-  };
-}
-
-async function verifyKakaoIdentity(input: SocialLoginInput): Promise<VerifiedSocialIdentity> {
-  const accessToken = input.providerAccessToken ?? input.providerToken;
-
-  if (!accessToken) {
-    throw badRequest(ERROR_MESSAGES.KAKAO_PROVIDER_ACCESS_TOKEN_REQUIRED);
-  }
-
-  if (!env.KAKAO_APP_ID && env.NODE_ENV === 'production') {
-    throw badRequest(ERROR_MESSAGES.KAKAO_APP_ID_REQUIRED);
-  }
-
-  const tokenInfo = await fetchJson<{
-    app_id?: number;
-    id?: number;
-  }>('https://kapi.kakao.com/v1/user/access_token_info', {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-
-  if (!tokenInfo.id) {
-    throw unauthorized(ERROR_MESSAGES.INVALID_PROVIDER_CREDENTIALS);
-  }
-
-  if (env.KAKAO_APP_ID && String(tokenInfo.app_id) !== env.KAKAO_APP_ID) {
-    throw unauthorized(ERROR_MESSAGES.INVALID_PROVIDER_CREDENTIALS);
-  }
-
-  const data = await fetchJson<{
-    id?: number;
-    kakao_account?: {
-      email?: string;
-      profile?: {
-        nickname?: string;
-      };
-    };
-    properties?: {
-      nickname?: string;
-    };
-  }>('https://kapi.kakao.com/v2/user/me', {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-
-  if (!data.id) {
-    throw unauthorized(ERROR_MESSAGES.INVALID_PROVIDER_CREDENTIALS);
-  }
-
-  return {
-    displayName:
-      data.kakao_account?.profile?.nickname ??
-      data.properties?.nickname ??
-      data.kakao_account?.email,
-    providerUserId: String(data.id),
-  };
-}
-
-async function verifyAppleIdentity(input: SocialLoginInput): Promise<VerifiedSocialIdentity> {
-  if (!input.idToken) {
-    throw badRequest(ERROR_MESSAGES.APPLE_ID_TOKEN_REQUIRED);
-  }
-
-  if (!env.APPLE_CLIENT_ID && env.NODE_ENV === 'production') {
-    throw badRequest(ERROR_MESSAGES.APPLE_CLIENT_ID_REQUIRED);
-  }
-
-  const decoded = jwt.decode(input.idToken, { complete: true }) as
-    | { header?: AppleJwtHeader }
-    | null;
-  const kid = decoded?.header?.kid;
-
-  if (!kid) {
-    throw unauthorized(ERROR_MESSAGES.INVALID_PROVIDER_CREDENTIALS);
-  }
-
-  const jwks = await fetchJson<AppleJwksResponse>('https://appleid.apple.com/auth/keys');
-  const jwk = jwks.keys?.find((key) => key.kid === kid);
-
-  if (!jwk) {
-    throw unauthorized(ERROR_MESSAGES.INVALID_PROVIDER_CREDENTIALS);
-  }
-
-  const publicKey = crypto.createPublicKey({
-    key: jwk,
-    format: 'jwk',
-  } as crypto.JsonWebKeyInput);
-  const payload = jwt.verify(input.idToken, publicKey, {
-    algorithms: ['RS256'],
-    audience: env.APPLE_CLIENT_ID,
-    issuer: 'https://appleid.apple.com',
-  }) as { email?: string; sub?: string };
-
-  if (!payload.sub) {
-    throw unauthorized(ERROR_MESSAGES.INVALID_PROVIDER_CREDENTIALS);
-  }
-
-  return {
-    displayName: input.providerDisplayName ?? payload.email,
-    providerUserId: payload.sub,
-  };
-}
-
-async function verifySocialIdentity(input: SocialLoginInput): Promise<VerifiedSocialIdentity> {
-  switch (input.provider) {
-    case 'google':
-      return verifyGoogleIdentity(input);
-    case 'kakao':
-      return verifyKakaoIdentity(input);
-    case 'apple':
-      return verifyAppleIdentity(input);
-    default:
-      throw badRequest(ERROR_MESSAGES.UNSUPPORTED_PROVIDER);
-  }
-}
-
-function shouldUseDevSocialLoginFallback() {
-  if (env.NODE_ENV === 'production') {
-    return false;
-  }
-
-  return env.ALLOW_DEV_AUTH_FALLBACK || env.NODE_ENV === 'development' || env.NODE_ENV === 'test';
+  return displayName || getDefaultDisplayName(normalizeEmail(input.email));
 }
 
 export const authService = {
-  async socialLogin(input: SocialLoginInput) {
+  async login(input: EmailPasswordAuthInput) {
     if (env.USE_MOCK_DB) {
-      return createMockTokenPair(false);
+      return loginMockEmailUser(input);
     }
 
-    const useDevSocialLoginFallback = shouldUseDevSocialLoginFallback();
-    const explicitDeviceId =
-      useDevSocialLoginFallback ? input.device?.deviceId ?? input.deviceId : undefined;
-    const providerCredential = getProviderCredential(input);
-    const verifiedIdentity = useDevSocialLoginFallback
-      ? {
-          displayName: 'Soundlog User',
-          providerUserId:
-            explicitDeviceId ?? hashToken(`${input.provider}:${providerCredential}`).slice(0, 24),
-        }
-      : await verifySocialIdentity(input);
+    const email = normalizeEmail(input.email);
+    const user = await prisma.user.findUnique({
+      where: {
+        provider_providerUserId: {
+          provider: FIRST_PARTY_PROVIDER,
+          providerUserId: email,
+        },
+      },
+      select: {
+        id: true,
+        passwordHash: true,
+      },
+    });
 
+    if (!user?.passwordHash) {
+      throw unauthorized(ERROR_MESSAGES.INVALID_EMAIL_OR_PASSWORD);
+    }
+
+    const isPasswordValid = await bcrypt.compare(input.password, user.passwordHash);
+
+    if (!isPasswordValid) {
+      throw unauthorized(ERROR_MESSAGES.INVALID_EMAIL_OR_PASSWORD);
+    }
+
+    return createTokenPair(user.id, false);
+  },
+
+  async register(input: EmailPasswordAuthInput) {
+    if (env.USE_MOCK_DB) {
+      return registerMockEmailUser(input);
+    }
+
+    const email = normalizeEmail(input.email);
     const existingUser = await prisma.user.findUnique({
       where: {
         provider_providerUserId: {
-          provider: input.provider,
-          providerUserId: verifiedIdentity.providerUserId,
+          provider: FIRST_PARTY_PROVIDER,
+          providerUserId: email,
+        },
+      },
+      select: { id: true },
+    });
+
+    if (existingUser) {
+      throw badRequest(ERROR_MESSAGES.USER_ALREADY_EXISTS);
+    }
+
+    const passwordHash = await bcrypt.hash(input.password, PASSWORD_SALT_ROUNDS);
+    const user = await prisma.user.create({
+      data: {
+        displayName: getEmailDisplayName(input),
+        passwordHash,
+        provider: FIRST_PARTY_PROVIDER,
+        providerUserId: email,
+        profile: {
+          create: {
+            locationRecommendationEnabled: true,
+            preferredGenres: [],
+            preferredMoods: [],
+            travelStyles: [],
+            completedOnboarding: false,
+          },
+        },
+        musicPlatform: {
+          create: {
+            selectedPlatformId: 'none',
+            connected: false,
+          },
         },
       },
     });
-    const user =
-      existingUser ??
-      (await prisma.user.create({
-        data: {
-          provider: input.provider,
-          providerUserId: verifiedIdentity.providerUserId,
-          displayName: verifiedIdentity.displayName ?? 'Soundlog User',
-          profile: {
-            create: {
-              locationRecommendationEnabled: true,
-              preferredGenres: [],
-              preferredMoods: [],
-              travelStyles: [],
-              completedOnboarding: false,
-            },
-          },
-          musicPlatform: {
-            create: {
-              selectedPlatformId: 'none',
-              connected: false,
-            },
-          },
-        },
-      }));
 
-    return createTokenPair(user.id, !existingUser);
+    return createTokenPair(user.id, true);
   },
 
   async refresh(refreshToken: string) {
@@ -405,11 +238,13 @@ async function getUserDto(userId: string) {
       displayName: true,
       id: true,
       provider: true,
+      providerUserId: true,
     },
   });
 
   return {
     displayName: user.displayName ?? 'Soundlog User',
+    email: user.provider === FIRST_PARTY_PROVIDER ? user.providerUserId : undefined,
     id: user.id,
     provider: user.provider,
   };
@@ -465,7 +300,54 @@ async function getMusicPlatformDto(userId: string) {
 function mockUserToDto() {
   return {
     displayName: mockDb.user.displayName ?? 'Soundlog Mock User',
+    email:
+      mockDb.user.provider === FIRST_PARTY_PROVIDER
+        ? mockDb.user.providerUserId
+        : undefined,
     id: mockDb.user.id,
     provider: mockDb.user.provider,
   };
+}
+
+function setMockEmailUser(user: { displayName: string; email: string; id: string }) {
+  Object.assign(mockDb.user, {
+    displayName: user.displayName,
+    id: user.id,
+    provider: FIRST_PARTY_PROVIDER,
+    providerUserId: user.email,
+  });
+}
+
+async function registerMockEmailUser(input: EmailPasswordAuthInput) {
+  const email = normalizeEmail(input.email);
+  const existingUser = mockDb.passwordUsers.find((user) => user.email === email);
+
+  if (existingUser) {
+    throw badRequest(ERROR_MESSAGES.USER_ALREADY_EXISTS);
+  }
+
+  const user = {
+    displayName: getEmailDisplayName(input),
+    email,
+    id: `mock-user-email-${hashToken(email).slice(0, 12)}`,
+    passwordHash: await bcrypt.hash(input.password, PASSWORD_SALT_ROUNDS),
+  };
+
+  mockDb.passwordUsers.push(user);
+  setMockEmailUser(user);
+
+  return createMockTokenPair(true);
+}
+
+async function loginMockEmailUser(input: EmailPasswordAuthInput) {
+  const email = normalizeEmail(input.email);
+  const user = mockDb.passwordUsers.find((item) => item.email === email);
+
+  if (!user || !(await bcrypt.compare(input.password, user.passwordHash))) {
+    throw unauthorized(ERROR_MESSAGES.INVALID_EMAIL_OR_PASSWORD);
+  }
+
+  setMockEmailUser(user);
+
+  return createMockTokenPair(false);
 }

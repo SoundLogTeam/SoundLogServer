@@ -49,6 +49,22 @@ curl http://localhost:4000/v1/health
 
 API 컨테이너는 시작 시 `prisma migrate deploy`를 먼저 실행합니다. seed는 기존 사용자 데이터를 초기화할 수 있으므로 필요할 때만 별도 프로필로 실행합니다.
 
+## Prisma schema
+
+Prisma schema는 multi-file 구조로 관리합니다. `prisma/schema.prisma`에는 `generator`와 `datasource`만 두고, 모델은 도메인별로 `prisma/models/*.prisma`에 추가합니다.
+
+```text
+prisma/
+├── schema.prisma
+├── models/
+│   ├── auth.prisma
+│   ├── music.prisma
+│   ├── travel.prisma
+│   ├── recap.prisma
+│   └── analytics.prisma
+└── migrations/
+```
+
 ## Frontend Integration
 
 SoundLog 프론트엔드에서 아래 환경변수를 설정하면 로컬 서버를 바라봅니다.
@@ -73,15 +89,12 @@ EXPO_PUBLIC_SOUNDLOG_API_BASE_URL=http://localhost:4000 npm run web
 - `NODE_ENV=production`
 - `USE_MOCK_DB=false`
 - `ALLOW_DEV_AUTH_FALLBACK=false`
-- `APPLE_CLIENT_ID`, `KAKAO_APP_ID` 등 실제 OAuth provider 설정 완료
-- iOS Apple 로그인은 native app audience로 `APPLE_CLIENT_ID=com.mannomi.soundlog` 사용
-- Kakao 로그인은 Kakao token info의 `app_id`가 `KAKAO_APP_ID`와 일치해야 통과
-- 프론트 앱은 mock provider token 대신 실제 provider token/idToken을 서버로 교환
+- 자체 이메일/비밀번호 로그인만 사용하며, 서버는 비밀번호 원문 대신 bcrypt hash만 저장
 - `CLIENT_URLS`, `UPLOAD_PUBLIC_BASE_URL`, 앱의 `EXPO_PUBLIC_SOUNDLOG_API_BASE_URL`은 HTTPS 도메인 사용
 - `REQUEST_BODY_LIMIT`, `MOMENT_PHOTO_MAX_FILE_SIZE_MB`, `UPLOAD_DIRECTORY`, `UPLOAD_PUBLIC_PATH`는 운영 파일 업로드 정책에 맞게 조정
 - iOS 앱 설정에 전체 ATS 예외를 넣지 않기
 
-서버 코드는 `NODE_ENV=production`에서 `ALLOW_DEV_AUTH_FALLBACK=true`가 잘못 설정되어도 dev social-login fallback을 사용하지 않습니다.
+서버 코드는 자체 계정 로그인(`POST /v1/auth/login`, `POST /v1/auth/register`)으로 Soundlog access/refresh token을 발급합니다.
 
 운영 배포 전 환경변수는 아래 명령으로 확인합니다.
 
@@ -123,7 +136,8 @@ pnpm db:seed     # 로컬 seed 데이터 적재
 - `pnpm typecheck`
 - `pnpm test:api`
 - SoundLog Expo web 브라우저 연동
-  - `POST /v1/auth/social-login`
+  - `POST /v1/auth/register`
+  - `POST /v1/auth/login`
   - `GET /v1/home/featured-playlists`
   - `GET /v1/home/mood-recommendations`
   - `GET /v1/home/recent-music-logs`

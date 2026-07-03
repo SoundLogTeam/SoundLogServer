@@ -43,11 +43,19 @@ export async function authMiddleware(req: Request, _res: Response, next: NextFun
     const userId = verifyAccessToken(token);
 
     if (env.USE_MOCK_DB) {
-      if (userId !== mockDb.user.id) {
+      const passwordUser = mockDb.passwordUsers.find((user) => user.id === userId);
+
+      if (userId !== mockDb.user.id && !passwordUser) {
         throw unauthorized(ERROR_MESSAGES.INVALID_TOKEN);
       }
 
-      req.user = mockDb.user;
+      req.user = passwordUser
+        ? {
+            id: passwordUser.id,
+            provider: 'email',
+            providerUserId: passwordUser.email,
+          }
+        : mockDb.user;
       next();
       return;
     }
