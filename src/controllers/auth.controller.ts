@@ -4,8 +4,12 @@ import { authService } from '../services/auth.service.js';
 import { acceptedResponse, dataResponse } from '../utils/response.js';
 
 export const authController = {
-  async socialLogin(req: Request, res: Response) {
-    res.json(dataResponse(await authService.socialLogin(req.body)));
+  async login(req: Request, res: Response) {
+    res.json(dataResponse(await authService.login(req.body)));
+  },
+
+  async register(req: Request, res: Response) {
+    res.status(201).json(dataResponse(await authService.register(req.body)));
   },
 
   async refresh(req: Request, res: Response) {

@@ -93,39 +93,15 @@ const recommendationContextSchema = z
   .default({});
 
 export const authValidators = {
-  socialLoginBody: z
-    .object({
-      authorizationCode: z.string().min(1).optional(),
-      codeVerifier: z.string().min(1).optional(),
-      device: z
-        .object({
-          appVersion: z.string().optional(),
-          deviceId: z.string().optional(),
-          platform: z.enum(['ios', 'android', 'web']),
-        })
-        .optional(),
-      deviceId: z.string().optional(),
-      idToken: z.string().min(1).optional(),
-      provider: z.enum(['kakao', 'apple', 'google']),
-      providerAccessToken: z.string().min(1).optional(),
-      providerDisplayName: z.string().min(1).max(120).optional(),
-      providerToken: z.string().min(1).optional(),
-      redirectUri: z.string().optional(),
-    })
-    .refine(
-      (value) =>
-        Boolean(
-          value.authorizationCode ||
-            value.idToken ||
-            value.providerAccessToken ||
-            value.providerToken ||
-            value.device?.deviceId ||
-            value.deviceId,
-        ),
-      {
-        message: ERROR_MESSAGES.PROVIDER_CREDENTIALS_REQUIRED,
-      },
-    ),
+  loginBody: z.object({
+    email: z.string().trim().email(),
+    password: z.string().min(8).max(128),
+  }),
+  registerBody: z.object({
+    displayName: z.string().trim().min(1).max(120).optional(),
+    email: z.string().trim().email(),
+    password: z.string().min(8).max(128),
+  }),
   logoutBody: z
     .object({
       refreshToken: z.string().min(1).optional(),

@@ -45,9 +45,14 @@ export function createApiRouter() {
   );
 
   router.post(
-    '/v1/auth/social-login',
-    validate({ body: authValidators.socialLoginBody }),
-    asyncHandler(authController.socialLogin),
+    '/v1/auth/login',
+    validate({ body: authValidators.loginBody }),
+    asyncHandler(authController.login),
+  );
+  router.post(
+    '/v1/auth/register',
+    validate({ body: authValidators.registerBody }),
+    asyncHandler(authController.register),
   );
   router.post(
     '/v1/auth/refresh',
