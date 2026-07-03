@@ -69,22 +69,21 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
-  /v1/auth/social-login:
+  /v1/auth/login:
     post:
       tags:
         - Auth
       security: []
-      summary: 간편 로그인
+      summary: 자체 계정 로그인
       description: |
-        Kakao, Apple, Google 등 외부 provider 토큰을 받아 Soundlog access token을 발급합니다.
-        MVP에서 인증을 생략한다면 후순위로 둘 수 있습니다.
-      operationId: socialLogin
+        Soundlog 이메일/비밀번호 계정으로 access token과 refresh token을 발급합니다.
+      operationId: login
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/SocialLoginRequest"
+              $ref: "#/components/schemas/LoginRequest"
       responses:
         "200":
           description: 로그인 성공
@@ -96,6 +95,31 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+
+  /v1/auth/register:
+    post:
+      tags:
+        - Auth
+      security: []
+      summary: 자체 계정 가입
+      description: |
+        Soundlog 이메일/비밀번호 계정을 만들고 access token과 refresh token을 발급합니다.
+      operationId: register
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "201":
+          description: 가입 성공
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthTokenResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
 
   /v1/auth/refresh:
     post:
@@ -122,6 +146,48 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AuthTokenResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/auth/logout:
+    post:
+      tags:
+        - Auth
+      security: []
+      summary: 로그아웃 및 refresh token 무효화
+      description: |
+        클라이언트가 보관 중인 refresh token을 서버에서 무효화합니다.
+        서버 요청이 실패해도 앱은 로컬 access/refresh token을 삭제해야 합니다.
+      operationId: logout
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LogoutRequest"
+      responses:
+        "202":
+          description: 로그아웃 요청 수락
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcceptedResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /v1/me:
+    get:
+      tags:
+        - Me
+      summary: 내 계정과 프로필 요약 조회
+      operationId: getMe
+      responses:
+        "200":
+          description: 로그인 사용자, 취향 프로필, 음악 플랫폼 설정
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
 
@@ -202,6 +268,35 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/MusicPlatformResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/me/migrate-local-data:
+    post:
+      tags:
+        - Me
+      summary: 게스트 로컬 데이터 계정 이관
+      description: |
+        로그인 전 이 기기에 저장된 순간 로그, 좋아요/저장 음악, Recap 초안을 로그인 계정으로 이관합니다.
+        동일한 `Idempotency-Key`로 재시도해도 중복 저장되지 않아야 합니다.
+      operationId: migrateLocalData
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LocalDataMigrationRequest"
+      responses:
+        "200":
+          description: 이관 처리 결과
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LocalDataMigrationResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -1793,22 +1888,110 @@ components:
           description: 익명 집계에 사용된 이벤트 수
           example: 1520
 
-    SocialLoginRequest:
+    LoginRequest:
       type: object
       required:
-        - provider
-        - providerToken
+        - email
+        - password
       properties:
+        email:
+          type: string
+          format: email
+          example: user@soundlog.app
+        password:
+          type: string
+          minLength: 8
+          maxLength: 128
+          format: password
+
+    RegisterRequest:
+      allOf:
+        - $ref: "#/components/schemas/LoginRequest"
+        - type: object
+          properties:
+            displayName:
+              type: string
+              maxLength: 120
+              example: Soundlog User
+
+    AuthUser:
+      type: object
+      required:
+        - id
+        - provider
+        - displayName
+      properties:
+        id:
+          type: string
+          example: user_123
         provider:
           type: string
           enum:
-            - kakao
-            - apple
-            - google
-        providerToken:
+            - email
+        displayName:
           type: string
-        deviceId:
+          example: Soundlog User
+        email:
           type: string
+          format: email
+        profileImageUrl:
+          type: string
+          format: uri
+
+    LogoutRequest:
+      type: object
+      properties:
+        refreshToken:
+          type: string
+          description: 무효화할 refresh token. 없으면 클라이언트 로컬 세션만 정리합니다.
+
+    LocalDataMigrationRequest:
+      type: object
+      required:
+        - idempotencyKey
+      properties:
+        idempotencyKey:
+          type: string
+          maxLength: 128
+          description: 중복 이관 방지용 클라이언트 생성 키
+        momentLogCount:
+          type: integer
+          minimum: 0
+          default: 0
+        libraryTrackCount:
+          type: integer
+          minimum: 0
+          default: 0
+        recapDraftCount:
+          type: integer
+          minimum: 0
+          default: 0
+
+    LocalDataMigrationResult:
+      type: object
+      required:
+        - accepted
+        - migrated
+      properties:
+        accepted:
+          type: boolean
+          example: true
+        migrated:
+          type: object
+          required:
+            - momentLogCount
+            - libraryTrackCount
+            - recapDraftCount
+          properties:
+            momentLogCount:
+              type: integer
+              example: 3
+            libraryTrackCount:
+              type: integer
+              example: 6
+            recapDraftCount:
+              type: integer
+              example: 1
 
     AuthToken:
       type: object
@@ -1816,6 +1999,8 @@ components:
         - accessToken
         - refreshToken
         - expiresIn
+        - user
+        - isNewUser
       properties:
         accessToken:
           type: string
@@ -1825,6 +2010,13 @@ components:
           type: integer
           description: access token 만료까지 남은 초
           example: 3600
+        user:
+          $ref: "#/components/schemas/AuthUser"
+        profile:
+          $ref: "#/components/schemas/UserProfile"
+        isNewUser:
+          type: boolean
+          example: false
 
     PlaceContextListResponse:
       type: object
@@ -1889,6 +2081,31 @@ components:
       properties:
         data:
           $ref: "#/components/schemas/MusicPlatform"
+
+    MeResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          type: object
+          required:
+            - user
+          properties:
+            user:
+              $ref: "#/components/schemas/AuthUser"
+            profile:
+              $ref: "#/components/schemas/UserProfile"
+            musicPlatform:
+              $ref: "#/components/schemas/MusicPlatform"
+
+    LocalDataMigrationResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          $ref: "#/components/schemas/LocalDataMigrationResult"
 
     LibraryTrackListResponse:
       type: object

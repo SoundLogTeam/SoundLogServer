@@ -42,7 +42,8 @@ MVP 이후 추천 품질과 서비스 완성도를 높이기 위한 API입니다
 | `POST /v1/recaps` | 저장된 로그 기반 리캡 생성 |
 | `POST /v1/recaps/{recapId}/share-events` | 공유/저장 이벤트 집계 |
 | `GET /v1/trends/regions/{regionCode}/sound` | 지역 기반 사운드 트렌드 |
-| `POST /v1/auth/social-login` | 간편 로그인 |
+| `POST /v1/auth/register` | 자체 계정 가입 |
+| `POST /v1/auth/login` | 자체 계정 로그인 |
 
 ## 공통 정책
 
