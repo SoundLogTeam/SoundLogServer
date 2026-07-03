@@ -351,7 +351,6 @@ function createMusicSearchUrls(artist: string, title: string) {
   return {
     externalUrl: `https://music.youtube.com/search?q=${query}`,
     platformUrls: {
-      spotify: `https://open.spotify.com/search/${query}`,
       youtubeMusic: `https://music.youtube.com/search?q=${query}`,
     },
   };

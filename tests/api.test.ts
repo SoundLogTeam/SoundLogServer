@@ -185,9 +185,9 @@ describe('Soundlog API', () => {
     const updatedPlatform = await request(app)
       .put('/v1/me/music-platform')
       .set('Authorization', authHeader)
-      .send({ selectedPlatformId: 'spotify', connected: true });
+      .send({ selectedPlatformId: 'youtubeMusic', connected: true });
     expect(updatedPlatform.status).toBe(200);
-    expect(updatedPlatform.body.data.selectedPlatformId).toBe('spotify');
+    expect(updatedPlatform.body.data.selectedPlatformId).toBe('youtubeMusic');
   });
 
   it('returns tour and home data', async () => {

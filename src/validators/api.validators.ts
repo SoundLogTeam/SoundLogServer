@@ -135,7 +135,7 @@ export const meValidators = {
   musicPlatformBody: z.object({
     connected: z.boolean().optional().default(false),
     providerUserId: z.string().optional(),
-    selectedPlatformId: z.enum(['none', 'spotify', 'melon', 'youtubeMusic']),
+    selectedPlatformId: z.enum(['none', 'melon', 'youtubeMusic']),
   }),
   migrationBody: z.object({
     idempotencyKey: z.string().min(1).max(128),
