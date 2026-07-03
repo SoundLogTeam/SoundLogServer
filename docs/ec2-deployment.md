@@ -15,6 +15,7 @@ Only workflow-level credentials stay as separate GitHub Secrets. Application env
 | `EC2_SSH_PORT` | `22` | SSH port. |
 | `EC2_SSH_KEY` | PEM private key | Private key that can SSH into EC2. |
 | `EC2_APP_DIR` | `/home/ec2-user/soundlog-server` | Directory where compose and `.env` are written. |
+| `PUBLIC_API_BASE_URL` | `https://api.soundlog.shop` | Public HTTPS API origin used by uploaded file URLs and deploy health checks. |
 | `PRODUCTION_ENV` | multiline `.env` | Server runtime environment except generated deployment values. |
 
 ## `PRODUCTION_ENV` format
@@ -23,8 +24,8 @@ Register `PRODUCTION_ENV` as a multiline secret with this format.
 
 ```dotenv
 API_PORT=4000
-CLIENT_URL=http://localhost:8081
-CLIENT_URLS=http://localhost:8081,http://localhost:8082
+CLIENT_URL=https://soundlog.shop
+CLIENT_URLS=https://soundlog.shop,https://www.soundlog.shop,https://sound-log-app.vercel.app,http://localhost:8081,http://localhost:8082
 POSTGRES_USER=soundlog
 POSTGRES_PASSWORD=<generated-db-password>
 POSTGRES_DB=soundlog
@@ -41,7 +42,27 @@ UPLOAD_PUBLIC_PATH=/uploads
 USE_MOCK_DB=false
 ```
 
-The workflow prepends `DOCKER_IMAGE=<dockerhub-username>/soundlog-server:<tag>` and derives `UPLOAD_PUBLIC_BASE_URL=http://<EC2_HOST>:<API_PORT>` at deploy time, so do not include those values in `PRODUCTION_ENV`.
+The workflow prepends `DOCKER_IMAGE=<dockerhub-username>/soundlog-server:<tag>` and injects `UPLOAD_PUBLIC_BASE_URL=<PUBLIC_API_BASE_URL>` at deploy time, so do not include those values in `PRODUCTION_ENV`.
+
+## `soundlog.shop` DNS and HTTPS
+
+Use this DNS layout.
+
+| Host | Type | Target |
+| --- | --- | --- |
+| `soundlog.shop` | `A` | `76.76.21.21` |
+| `www.soundlog.shop` | `CNAME` | `cname.vercel-dns.com.` |
+| `api.soundlog.shop` | `A` | EC2 Elastic IP |
+
+DNS records cannot include ports. Keep the API container on EC2 port `4000`, then terminate HTTPS with a reverse proxy. Caddy example:
+
+```caddyfile
+api.soundlog.shop {
+  reverse_proxy 127.0.0.1:4000
+}
+```
+
+The EC2 security group should allow inbound `80` and `443` for HTTPS certificate issuance and API traffic. Avoid exposing `4000` publicly once the reverse proxy is active.
 
 ## Register secrets with GitHub CLI
 
@@ -56,6 +77,7 @@ gh secret set EC2_USER --repo SoundLogTeam/SoundLogServer --body 'ec2-user'
 gh secret set EC2_SSH_PORT --repo SoundLogTeam/SoundLogServer --body '22'
 gh secret set EC2_SSH_KEY --repo SoundLogTeam/SoundLogServer < ~/.ssh/soundlog-ec2.pem
 gh secret set EC2_APP_DIR --repo SoundLogTeam/SoundLogServer --body '/home/ec2-user/soundlog-server'
+gh secret set PUBLIC_API_BASE_URL --repo SoundLogTeam/SoundLogServer --body 'https://api.soundlog.shop'
 gh secret set PRODUCTION_ENV --repo SoundLogTeam/SoundLogServer < .env.production
 ```
 
@@ -69,4 +91,4 @@ gh workflow run deploy-ec2.yml --repo SoundLogTeam/SoundLogServer
 
 EC2 must already have Docker Engine and Docker Compose v2 installed. The workflow keeps Postgres data in the `postgres_data` Docker volume and uploaded files in the `uploads_data` Docker volume.
 
-The EC2 security group must allow inbound TCP traffic for `API_PORT` from the testers or clients that will use the app. For the current HTTP test server, `http://54.226.62.131:4000/v1/health` should respond before shipping a `development` or `preview` app build to testers.
+After deployment, the workflow verifies `https://api.soundlog.shop/v1/health`. This must pass before shipping a `development`, `preview`, or production app build to testers.
