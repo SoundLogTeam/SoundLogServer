@@ -1,9 +1,10 @@
+import bcrypt from 'bcrypt';
 import request from 'supertest';
 import { beforeAll, describe, expect, it } from 'vitest';
 
 import { createApp } from '../src/app.js';
 import { prisma } from '../src/config/prisma.js';
-import { resetMockDb } from '../src/mock/mock-db.js';
+import { mockDb, resetMockDb } from '../src/mock/mock-db.js';
 import { disconnectSeedDatabase, seedDatabase } from '../prisma/seed.js';
 
 const app = createApp();
@@ -29,6 +30,45 @@ async function getToken() {
   expect(response.status).toBe(200);
   expect(response.body.data.user.id).toEqual(expect.any(String));
   return response.body.data.accessToken as string;
+}
+
+async function getStoredPasswordHash(email: string) {
+  const normalizedEmail = email.trim().toLowerCase();
+
+  if (useMockDb) {
+    return mockDb.passwordUsers.find((user) => user.email === normalizedEmail)?.passwordHash;
+  }
+
+  const user = await prisma.user.findUnique({
+    where: {
+      provider_providerUserId: {
+        provider: 'email',
+        providerUserId: normalizedEmail,
+      },
+    },
+    select: {
+      passwordHash: true,
+    },
+  });
+
+  return user?.passwordHash;
+}
+
+function findSecretLeaks(value: unknown, secret: string, path = '$'): string[] {
+  if (Array.isArray(value)) {
+    return value.flatMap((item, index) => findSecretLeaks(item, secret, `${path}[${index}]`));
+  }
+
+  if (value && typeof value === 'object') {
+    return Object.entries(value).flatMap(([key, item]) => {
+      const nextPath = `${path}.${key}`;
+      const keyLeaks = key.toLowerCase().includes('password') ? [nextPath] : [];
+
+      return [...keyLeaks, ...findSecretLeaks(item, secret, nextPath)];
+    });
+  }
+
+  return value === secret ? [path] : [];
 }
 
 describe('Soundlog API', () => {
@@ -126,6 +166,45 @@ describe('Soundlog API', () => {
     expect(response.status).toBe(200);
     expect(response.body.data.accessToken).toEqual(expect.any(String));
     expect(response.body.data.user.id).toEqual(expect.any(String));
+  });
+
+  it('stores first-party passwords only as one-way bcrypt hashes', async () => {
+    const email = `secure-${Date.now()}@soundlog.test`;
+    const password = 'soundlog-password-SECURE-123!';
+
+    const register = await request(app).post('/v1/auth/register').send({
+      displayName: 'Password Security User',
+      email,
+      password,
+    });
+
+    expect(register.status).toBe(201);
+    expect(findSecretLeaks(register.body, password)).toEqual([]);
+
+    const passwordHash = await getStoredPasswordHash(email);
+
+    expect(passwordHash).toEqual(expect.any(String));
+    expect(passwordHash).not.toBe(password);
+    expect(passwordHash).toMatch(/^\$2[aby]\$\d{2}\$/);
+    expect(Number(passwordHash?.split('$')[2])).toBeGreaterThanOrEqual(12);
+    await expect(bcrypt.compare(password, passwordHash as string)).resolves.toBe(true);
+    await expect(bcrypt.compare(`${password}-wrong`, passwordHash as string)).resolves.toBe(false);
+
+    const login = await request(app).post('/v1/auth/login').send({
+      email,
+      password,
+    });
+
+    expect(login.status).toBe(200);
+    expect(findSecretLeaks(login.body, password)).toEqual([]);
+
+    const wrongPassword = await request(app).post('/v1/auth/login').send({
+      email,
+      password: `${password}-wrong`,
+    });
+
+    expect(wrongPassword.status).toBe(401);
+    expect(wrongPassword.body.error.code).toBe('UNAUTHORIZED');
   });
 
   it('returns account summary, migrates local data, and logs out', async () => {
