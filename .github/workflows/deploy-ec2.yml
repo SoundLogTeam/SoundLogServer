@@ -245,7 +245,14 @@ jobs:
         env:
           EC2_HOST: ${{ secrets.EC2_HOST }}
           PRODUCTION_ENV: ${{ secrets.PRODUCTION_ENV }}
+          PUBLIC_API_BASE_URL: ${{ secrets.PUBLIC_API_BASE_URL }}
         run: |
           set -euo pipefail
           api_port="$(sed -n 's/^API_PORT=//p' <<< "$PRODUCTION_ENV" | tail -n 1 | tr -d '\r')"
-          PUBLIC_API_BASE_URL="http://${EC2_HOST}:${api_port}" node scripts/check-public-api-contract.mjs
+          public_api_base_url="${PUBLIC_API_BASE_URL:-}"
+
+          if [ -z "$public_api_base_url" ]; then
+            public_api_base_url="http://${EC2_HOST}:${api_port}"
+          fi
+
+          PUBLIC_API_BASE_URL="$public_api_base_url" node scripts/check-public-api-contract.mjs

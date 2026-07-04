@@ -5,7 +5,9 @@ const apiBaseUrl = (cliApiBaseUrl || process.env.PUBLIC_API_BASE_URL || '').repl
 const errors = [];
 
 if (!apiBaseUrl) {
-  console.error('Usage: PUBLIC_API_BASE_URL=http://<EC2_HOST>:4000 node scripts/check-public-api-contract.mjs');
+  console.error(
+    'Usage: PUBLIC_API_BASE_URL=https://soundlog.shop/api/soundlog node scripts/check-public-api-contract.mjs',
+  );
   process.exit(1);
 }
 
