@@ -240,6 +240,56 @@ jobs:
             docker compose -f docker-compose.prod.yml logs --tail=120 api
             exit 1
 
+      - name: Sync frontend Vercel API origin
+        shell: bash
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          FRONTEND_VERCEL_PROJECT: ${{ secrets.FRONTEND_VERCEL_PROJECT }}
+          FRONTEND_VERCEL_SCOPE: ${{ secrets.FRONTEND_VERCEL_SCOPE }}
+          FRONTEND_VERCEL_TOKEN: ${{ secrets.FRONTEND_VERCEL_TOKEN }}
+          PRODUCTION_ENV: ${{ secrets.PRODUCTION_ENV }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$FRONTEND_VERCEL_TOKEN" ]; then
+            echo "Skipping frontend Vercel API origin sync because FRONTEND_VERCEL_TOKEN is not configured."
+            exit 0
+          fi
+
+          api_port="$(sed -n 's/^API_PORT=//p' <<< "$PRODUCTION_ENV" | tail -n 1 | tr -d '\r')"
+          if [[ ! "$api_port" =~ ^[0-9]+$ ]]; then
+            echo "PRODUCTION_ENV.API_PORT must be a numeric port."
+            exit 1
+          fi
+
+          api_origin="http://${EC2_HOST}:${api_port}"
+          project="${FRONTEND_VERCEL_PROJECT:-sound-log-app}"
+          scope="${FRONTEND_VERCEL_SCOPE:-mannomis-projects}"
+          tmpdir="$(mktemp -d)"
+
+          cleanup() {
+            rm -rf "$tmpdir"
+          }
+          trap cleanup EXIT
+
+          npx --yes vercel@54.20.1 link \
+            --yes \
+            --scope "$scope" \
+            --project "$project" \
+            --cwd "$tmpdir" \
+            --token "$FRONTEND_VERCEL_TOKEN"
+
+          for environment in preview production; do
+            npx --yes vercel@54.20.1 env add SOUNDLOG_API_ORIGIN "$environment" \
+              --force \
+              --yes \
+              --sensitive \
+              --value "$api_origin" \
+              --cwd "$tmpdir" \
+              --scope "$scope" \
+              --token "$FRONTEND_VERCEL_TOKEN"
+          done
+
       - name: Verify public API contract
         shell: bash
         env:
