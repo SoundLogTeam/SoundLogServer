@@ -239,3 +239,13 @@ jobs:
             echo "API health check failed on EC2: http://127.0.0.1:${api_port}/v1/health"
             docker compose -f docker-compose.prod.yml logs --tail=120 api
             exit 1
+
+      - name: Verify public API contract
+        shell: bash
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          PRODUCTION_ENV: ${{ secrets.PRODUCTION_ENV }}
+        run: |
+          set -euo pipefail
+          api_port="$(sed -n 's/^API_PORT=//p' <<< "$PRODUCTION_ENV" | tail -n 1 | tr -d '\r')"
+          PUBLIC_API_BASE_URL="http://${EC2_HOST}:${api_port}" node scripts/check-public-api-contract.mjs
