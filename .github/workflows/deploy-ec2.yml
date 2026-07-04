@@ -336,11 +336,42 @@ jobs:
             echo "::group::EC2 local health"
             curl --fail --silent --show-error --max-time 5 "http://127.0.0.1:${api_port}/v1/health" || true
             printf '\n'
-            public_ip="$(curl --silent --show-error --max-time 5 http://169.254.169.254/latest/meta-data/public-ipv4 || true)"
+            metadata_token="$(curl --silent --show-error --max-time 5 -X PUT \
+              -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' \
+              http://169.254.169.254/latest/api/token || true)"
+            metadata_curl() {
+              if [ -n "$metadata_token" ]; then
+                curl --silent --show-error --max-time 5 \
+                  -H "X-aws-ec2-metadata-token: ${metadata_token}" \
+                  "http://169.254.169.254/latest/meta-data/$1" || true
+              else
+                curl --silent --show-error --max-time 5 \
+                  "http://169.254.169.254/latest/meta-data/$1" || true
+              fi
+            }
+            public_ip="$(metadata_curl public-ipv4)"
             echo "EC2 metadata public-ipv4=${public_ip:-unavailable}"
             if [ -n "$public_ip" ]; then
               curl --fail --silent --show-error --max-time 5 "http://${public_ip}:${api_port}/v1/health" || true
               printf '\n'
+            fi
+            echo "::endgroup::"
+
+            echo "::group::EC2 metadata network identity"
+            echo "instance-id=$(metadata_curl instance-id)"
+            macs="$(metadata_curl network/interfaces/macs/)"
+            printf 'network-interface-macs=%s\n' "${macs:-unavailable}"
+            first_mac="$(printf '%s\n' "$macs" | head -n 1)"
+            if [ -n "$first_mac" ]; then
+              metadata_mac_path="network/interfaces/macs/${first_mac}"
+              vpc_id="$(metadata_curl "${metadata_mac_path}vpc-id")"
+              subnet_id="$(metadata_curl "${metadata_mac_path}subnet-id")"
+              security_groups="$(metadata_curl "${metadata_mac_path}security-groups")"
+              security_group_ids="$(metadata_curl "${metadata_mac_path}security-group-ids")"
+              echo "vpc-id=${vpc_id}"
+              echo "subnet-id=${subnet_id}"
+              echo "security-groups=${security_groups}"
+              echo "security-group-ids=${security_group_ids}"
             fi
             echo "::endgroup::"
 
