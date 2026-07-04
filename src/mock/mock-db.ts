@@ -16,7 +16,6 @@ type MockTrack = {
   fallbackColor?: string;
   id: string;
   platformUrls?: Record<string, string>;
-  previewUrl?: string;
   title: string;
 };
 

@@ -16,6 +16,10 @@ Only workflow-level credentials stay as separate GitHub Secrets. Application env
 | `EC2_SSH_KEY` | PEM private key | Private key that can SSH into EC2. |
 | `EC2_APP_DIR` | `/home/ec2-user/soundlog-server` | Directory where compose and `.env` are written. |
 | `PRODUCTION_ENV` | multiline `.env` | Server runtime environment except generated deployment values. |
+| `PUBLIC_API_BASE_URL` | `http://<EC2_HOST>:4000` | Publicly reachable API origin to verify after EC2 deploy. |
+| `FRONTEND_VERCEL_TOKEN` | `vercel_...` | Optional. Enables automatic `SOUNDLOG_API_ORIGIN` sync for the frontend Vercel project. |
+| `FRONTEND_VERCEL_SCOPE` | `mannomis-projects` | Optional. Vercel team/user scope for the frontend project. Defaults to `mannomis-projects`. |
+| `FRONTEND_VERCEL_PROJECT` | `sound-log-app` | Optional. Frontend Vercel project name. Defaults to `sound-log-app`. |
 
 ## `PRODUCTION_ENV` format
 
@@ -43,7 +47,7 @@ USE_MOCK_DB=false
 
 The workflow prepends `DOCKER_IMAGE=<dockerhub-username>/soundlog-server:<tag>`, derives `UPLOAD_PUBLIC_BASE_URL=http://<EC2_HOST>:<API_PORT>`, and injects a URL-encoded internal `DATABASE_URL` at deploy time, so do not include those values in `PRODUCTION_ENV`.
 
-## `soundlog.shop` DNS and HTTPS
+## `soundlog.shop` DNS and API proxy
 
 Use this DNS layout.
 
@@ -51,17 +55,16 @@ Use this DNS layout.
 | --- | --- | --- |
 | `soundlog.shop` | `A` | `76.76.21.21` |
 | `www.soundlog.shop` | `CNAME` | `cname.vercel-dns.com.` |
-| `api.soundlog.shop` | `A` | EC2 Elastic IP |
 
-DNS records cannot include ports. Keep the API container on EC2 port `4000`, then terminate HTTPS with a reverse proxy. Caddy example:
+Do not use a separate API subdomain for the current deployment. The public API URL is:
 
-```caddyfile
-api.soundlog.shop {
-  reverse_proxy 127.0.0.1:4000
-}
+```txt
+https://soundlog.shop/api/soundlog
 ```
 
-The EC2 security group should allow inbound `80` and `443` for HTTPS certificate issuance and API traffic. Avoid exposing `4000` publicly once the reverse proxy is active.
+The frontend Vercel project rewrites `/api/soundlog/:path*` to the EC2 API origin in the server-side Vercel layer. Set Vercel `SOUNDLOG_API_ORIGIN` to the current EC2 API origin, for example `http://<EC2_HOST>:4000`.
+
+When `FRONTEND_VERCEL_TOKEN` is configured in this repo, the deploy workflow updates `SOUNDLOG_API_ORIGIN` for the frontend Vercel `preview` and `production` environments after each successful EC2 deploy. Re-run the frontend Vercel deployment after the env sync so the generated rewrite config is rebuilt.
 
 ## Register secrets with GitHub CLI
 
@@ -77,6 +80,11 @@ gh secret set EC2_SSH_PORT --repo SoundLogTeam/SoundLogServer --body '22'
 gh secret set EC2_SSH_KEY --repo SoundLogTeam/SoundLogServer < ~/.ssh/soundlog-ec2.pem
 gh secret set EC2_APP_DIR --repo SoundLogTeam/SoundLogServer --body '/home/ec2-user/soundlog-server'
 gh secret set PRODUCTION_ENV --repo SoundLogTeam/SoundLogServer < .env.production
+gh secret set PUBLIC_API_BASE_URL --repo SoundLogTeam/SoundLogServer --body 'http://<EC2_HOST>:4000'
+
+gh secret set FRONTEND_VERCEL_TOKEN --repo SoundLogTeam/SoundLogServer --body '<vercel-token>'
+gh secret set FRONTEND_VERCEL_SCOPE --repo SoundLogTeam/SoundLogServer --body 'mannomis-projects'
+gh secret set FRONTEND_VERCEL_PROJECT --repo SoundLogTeam/SoundLogServer --body 'sound-log-app'
 ```
 
 ## Run deployment
@@ -89,4 +97,4 @@ gh workflow run deploy-ec2.yml --repo SoundLogTeam/SoundLogServer
 
 EC2 must already have Docker Engine and Docker Compose v2 installed. The workflow keeps Postgres data in the `postgres_data` Docker volume and uploaded files in the `uploads_data` Docker volume.
 
-After deployment, the workflow verifies `http://127.0.0.1:<API_PORT>/v1/health` from inside EC2. Verify `https://api.soundlog.shop/v1/health` separately after DNS, reverse proxy, and HTTPS certificate issuance are complete.
+After deployment, the workflow verifies `http://127.0.0.1:<API_PORT>/v1/health` from inside EC2 and runs the public API contract check against `PUBLIC_API_BASE_URL` when configured. After the frontend deployment is rebuilt with the synced Vercel env, verify `https://soundlog.shop/api/soundlog/v1/health` and run the app repo's deployed-web check.
