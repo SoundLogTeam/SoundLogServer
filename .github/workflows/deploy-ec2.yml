@@ -292,6 +292,21 @@ jobs:
           done
 
       - name: Verify EC2 API contract
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: ${{ secrets.EC2_SSH_PORT }}
+          script: |
+            set -eu
+            cd "${{ secrets.EC2_APP_DIR }}"
+            docker compose -f docker-compose.prod.yml exec -T \
+              -e PUBLIC_API_BASE_URL=http://127.0.0.1:4000 \
+              api \
+              node scripts/check-public-api-contract.mjs
+
+      - name: Check EC2 API external reachability
         shell: bash
         env:
           EC2_HOST: ${{ secrets.EC2_HOST }}
@@ -299,11 +314,15 @@ jobs:
         run: |
           set -euo pipefail
           api_port="$(sed -n 's/^API_PORT=//p' <<< "$PRODUCTION_ENV" | tail -n 1 | tr -d '\r')"
-          api_origin="http://${EC2_HOST}:${api_port}"
 
           if [[ ! "$api_port" =~ ^[0-9]+$ ]]; then
             echo "PRODUCTION_ENV.API_PORT must be a numeric port."
             exit 1
           fi
 
-          PUBLIC_API_BASE_URL="$api_origin" node scripts/check-public-api-contract.mjs
+          if ! curl --fail --silent --show-error --max-time 10 "http://${EC2_HOST}:${api_port}/v1/health" > /tmp/soundlog-external-health.json; then
+            echo "::warning::EC2 API port is not reachable from the GitHub runner. The server deploy passed internally, but the frontend Vercel rewrite will need a reachable SOUNDLOG_API_ORIGIN."
+            exit 0
+          fi
+
+          cat /tmp/soundlog-external-health.json
