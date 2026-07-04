@@ -321,8 +321,8 @@ jobs:
           fi
 
           if ! curl --fail --silent --show-error --max-time 10 "http://${EC2_HOST}:${api_port}/v1/health" > /tmp/soundlog-external-health.json; then
-            echo "::warning::EC2 API port is not reachable from the GitHub runner. The server deploy passed internally, but the frontend Vercel rewrite will need a reachable SOUNDLOG_API_ORIGIN."
-            exit 0
+            echo "::error::EC2 API port is not reachable from the GitHub runner. Open TCP ${api_port} on the EC2 security group/firewall or point SOUNDLOG_API_ORIGIN to a reachable API origin before deploying the frontend."
+            exit 1
           fi
 
           cat /tmp/soundlog-external-health.json
