@@ -72,10 +72,15 @@ async function verifyNearbyPlaces() {
     const payload = await fetchJson(
       '/v1/tour/nearby-places?lat=35.1595&lng=129.1604&radiusMeters=2000&limit=1',
     );
-    const place = payload?.data?.[0];
+
+    if (!Array.isArray(payload?.data)) {
+      addError('/v1/tour/nearby-places returned a non-array data payload.');
+      return;
+    }
+
+    const place = payload.data[0];
 
     if (!place) {
-      addError('/v1/tour/nearby-places returned an empty data payload.');
       return;
     }
 
