@@ -1190,9 +1190,6 @@ components:
         albumImageUrl:
           type: string
           format: uri
-        previewUrl:
-          type: string
-          format: uri
         externalUrl:
           type: string
           format: uri

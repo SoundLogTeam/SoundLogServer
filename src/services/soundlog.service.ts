@@ -29,7 +29,6 @@ type TrackDto = {
   artist: string;
   fallbackColor?: string;
   albumImageUrl?: string;
-  previewUrl?: string;
   externalUrl?: string;
   platformUrls?: Record<string, string>;
   isLiked?: boolean;
@@ -498,7 +497,6 @@ function trackToDto(
     artist: track.artist,
     fallbackColor: track.fallbackColor ?? undefined,
     albumImageUrl: track.albumImageUrl ?? undefined,
-    previewUrl: track.previewUrl ?? undefined,
     externalUrl: track.externalUrl ?? undefined,
     platformUrls: (track.platformUrls as Record<string, string> | null) ?? undefined,
     isLiked: state?.isLiked ?? seededState?.isLiked,

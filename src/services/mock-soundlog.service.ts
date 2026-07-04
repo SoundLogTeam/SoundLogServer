@@ -14,7 +14,6 @@ type TrackDto = {
   isLiked?: boolean;
   isSaved?: boolean;
   platformUrls?: Record<string, string>;
-  previewUrl?: string;
   title: string;
 };
 
