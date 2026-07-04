@@ -65,6 +65,19 @@ The frontend Vercel project rewrites `/api/soundlog/:path*` to the EC2 API origi
 
 When `FRONTEND_VERCEL_TOKEN` is configured in this repo, the deploy workflow updates `SOUNDLOG_API_ORIGIN` for the frontend Vercel `preview` and `production` environments after each successful EC2 deploy. Re-run the frontend Vercel deployment after the env sync so the generated rewrite config is rebuilt.
 
+## Public API ingress
+
+The deploy workflow publishes the API container on `0.0.0.0:<API_PORT>`, but Vercel can only proxy `/api/soundlog` when the EC2 security group also allows inbound TCP `<API_PORT>`. If the deploy log fails at `Check EC2 API external reachability`, use the `security-group-ids=` value printed in `Diagnose EC2 API network` and open the API port.
+
+```sh
+aws ec2 authorize-security-group-ingress \
+  --region <EC2_REGION> \
+  --group-id <SECURITY_GROUP_ID_FROM_DEPLOY_LOG> \
+  --ip-permissions 'IpProtocol=tcp,FromPort=4000,ToPort=4000,IpRanges=[{CidrIp=0.0.0.0/0,Description="SoundLog API for Vercel rewrite"}]'
+```
+
+If the rule already exists, AWS returns `InvalidPermission.Duplicate`; in that case, no additional ingress rule is needed and the failing deploy should be rerun.
+
 ## Register secrets with GitHub CLI
 
 Run these from any directory after `gh auth login`.
