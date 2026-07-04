@@ -19,6 +19,11 @@ Only workflow-level credentials stay as separate GitHub Secrets. Application env
 | `FRONTEND_VERCEL_TOKEN` | `vercel_...` | Optional. Enables automatic `SOUNDLOG_API_ORIGIN` sync for the frontend Vercel project. |
 | `FRONTEND_VERCEL_SCOPE` | `mannomis-projects` | Optional. Vercel team/user scope for the frontend project. Defaults to `mannomis-projects`. |
 | `FRONTEND_VERCEL_PROJECT` | `sound-log-app` | Optional. Frontend Vercel project name. Defaults to `sound-log-app`. |
+| `AWS_ACCESS_KEY_ID` | `AKIA...` | Optional. Enables automatic EC2 API security-group ingress sync. |
+| `AWS_SECRET_ACCESS_KEY` | `...` | Optional. Enables automatic EC2 API security-group ingress sync. |
+| `AWS_SESSION_TOKEN` | `...` | Optional. Use only for temporary AWS credentials. |
+| `AWS_REGION` | `us-east-1` | Optional. AWS region for the EC2 security group. Can also be provided as workflow dispatch input. |
+| `EC2_SECURITY_GROUP_ID` | `sg-...` | Optional. Security group that should allow inbound `API_PORT`. Can also be provided as workflow dispatch input. |
 
 ## `PRODUCTION_ENV` format
 
@@ -76,7 +81,7 @@ aws ec2 authorize-security-group-ingress \
   --ip-permissions 'IpProtocol=tcp,FromPort=4000,ToPort=4000,IpRanges=[{CidrIp=0.0.0.0/0,Description="SoundLog API for Vercel rewrite"}]'
 ```
 
-If the rule already exists, AWS returns `InvalidPermission.Duplicate`; in that case, no additional ingress rule is needed and the failing deploy should be rerun.
+The deploy log also prints `placement-region=` and `security-group-ids=` in `Diagnose EC2 API network`, so those values can be copied directly into the command. If `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, and `EC2_SECURITY_GROUP_ID` are configured as repository secrets, the deploy workflow tries this security-group sync automatically before the external reachability gate. If the rule already exists, AWS returns `InvalidPermission.Duplicate`; the workflow treats that as success and continues.
 
 ## Register secrets with GitHub CLI
 
@@ -96,6 +101,11 @@ gh secret set PRODUCTION_ENV --repo SoundLogTeam/SoundLogServer < .env.productio
 gh secret set FRONTEND_VERCEL_TOKEN --repo SoundLogTeam/SoundLogServer --body '<vercel-token>'
 gh secret set FRONTEND_VERCEL_SCOPE --repo SoundLogTeam/SoundLogServer --body 'mannomis-projects'
 gh secret set FRONTEND_VERCEL_PROJECT --repo SoundLogTeam/SoundLogServer --body 'sound-log-app'
+
+gh secret set AWS_ACCESS_KEY_ID --repo SoundLogTeam/SoundLogServer --body '<aws-access-key-id>'
+gh secret set AWS_SECRET_ACCESS_KEY --repo SoundLogTeam/SoundLogServer --body '<aws-secret-access-key>'
+gh secret set AWS_REGION --repo SoundLogTeam/SoundLogServer --body '<ec2-region-from-deploy-log>'
+gh secret set EC2_SECURITY_GROUP_ID --repo SoundLogTeam/SoundLogServer --body '<security-group-id-from-deploy-log>'
 ```
 
 ## Run deployment
@@ -108,4 +118,4 @@ gh workflow run deploy-ec2.yml --repo SoundLogTeam/SoundLogServer
 
 EC2 must already have Docker Engine and Docker Compose v2 installed. The workflow keeps Postgres data in the `postgres_data` Docker volume and uploaded files in the `uploads_data` Docker volume.
 
-After deployment, the workflow verifies `http://127.0.0.1:<API_PORT>/v1/health` from inside EC2 and runs the API contract check from inside the deployed API container. It then prints EC2 network diagnostics, including Docker port publishing, listening sockets, local health, public-IP self-curl, EC2 metadata network identity, and host firewall state. Finally, it verifies `http://<EC2_HOST>:<API_PORT>/v1/health` from GitHub Actions and fails the deploy if the public API port is unreachable. If this gate fails, open TCP `<API_PORT>` on the reported EC2 security group/firewall or point `SOUNDLOG_API_ORIGIN` to a reachable API origin before rebuilding the frontend. After the frontend deployment is rebuilt with the synced Vercel env, verify `https://soundlog.shop/api/soundlog/v1/health` and run the app repo's deployed-web check.
+After deployment, the workflow verifies `http://127.0.0.1:<API_PORT>/v1/health` from inside EC2 and runs the API contract check from inside the deployed API container. It then prints EC2 network diagnostics, including Docker port publishing, listening sockets, local health, public-IP self-curl, EC2 metadata network identity, placement region, security groups, and host firewall state. When optional AWS credentials are configured, it opens TCP `<API_PORT>` on the configured security group. Finally, it verifies `http://<EC2_HOST>:<API_PORT>/v1/health` from GitHub Actions and fails the deploy if the public API port is unreachable. If this gate fails, open TCP `<API_PORT>` on the reported EC2 security group/firewall or point `SOUNDLOG_API_ORIGIN` to a reachable API origin before rebuilding the frontend. After the frontend deployment is rebuilt with the synced Vercel env, verify `https://soundlog.shop/api/soundlog/v1/health` and run the app repo's deployed-web check.

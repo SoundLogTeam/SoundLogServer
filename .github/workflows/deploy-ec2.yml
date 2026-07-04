@@ -11,6 +11,14 @@ on:
         description: Docker image tag to build and deploy. Defaults to the current commit SHA.
         required: false
         type: string
+      aws_region:
+        description: Optional AWS region used to open the EC2 API ingress rule.
+        required: false
+        type: string
+      security_group_id:
+        description: Optional EC2 security group ID used to open the API ingress rule.
+        required: false
+        type: string
 
 concurrency:
   group: deploy-api-${{ github.ref }}
@@ -359,6 +367,8 @@ jobs:
 
             echo "::group::EC2 metadata network identity"
             echo "instance-id=$(metadata_curl instance-id)"
+            echo "placement-region=$(metadata_curl placement/region)"
+            echo "placement-availability-zone=$(metadata_curl placement/availability-zone)"
             macs="$(metadata_curl network/interfaces/macs/)"
             printf 'network-interface-macs=%s\n' "${macs:-unavailable}"
             first_mac="$(printf '%s\n' "$macs" | head -n 1)"
@@ -385,6 +395,72 @@ jobs:
             fi
             sudo -n iptables -S INPUT 2>/dev/null || true
             echo "::endgroup::"
+
+      - name: Open EC2 API ingress when AWS credentials are configured
+        shell: bash
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
+          AWS_REGION_SECRET: ${{ secrets.AWS_REGION }}
+          AWS_REGION_INPUT: ${{ inputs.aws_region }}
+          EC2_SECURITY_GROUP_ID_SECRET: ${{ secrets.EC2_SECURITY_GROUP_ID }}
+          EC2_SECURITY_GROUP_ID_INPUT: ${{ inputs.security_group_id }}
+          PRODUCTION_ENV: ${{ secrets.PRODUCTION_ENV }}
+        run: |
+          set -euo pipefail
+          api_port="$(sed -n 's/^API_PORT=//p' <<< "$PRODUCTION_ENV" | tail -n 1 | tr -d '\r')"
+          aws_region="${AWS_REGION_INPUT:-${AWS_REGION_SECRET:-}}"
+          security_group_id="${EC2_SECURITY_GROUP_ID_INPUT:-${EC2_SECURITY_GROUP_ID_SECRET:-}}"
+
+          if [[ ! "$api_port" =~ ^[0-9]+$ ]]; then
+            echo "PRODUCTION_ENV.API_PORT must be a numeric port."
+            exit 1
+          fi
+
+          missing=()
+          for name in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY; do
+            if [ -z "${!name}" ]; then
+              missing+=("$name")
+            fi
+          done
+          if [ -z "$aws_region" ]; then
+            missing+=("AWS_REGION")
+          fi
+          if [ -z "$security_group_id" ]; then
+            missing+=("EC2_SECURITY_GROUP_ID")
+          fi
+
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf 'Skipping EC2 API ingress sync because optional values are missing: %s\n' "${missing[*]}"
+            exit 0
+          fi
+
+          if ! command -v aws >/dev/null 2>&1; then
+            python -m pip install --user awscli
+            export PATH="$HOME/.local/bin:$PATH"
+          fi
+
+          ip_permissions="IpProtocol=tcp,FromPort=${api_port},ToPort=${api_port},IpRanges=[{CidrIp=0.0.0.0/0,Description=\"SoundLog API for Vercel rewrite\"}]"
+          set +e
+          output="$(aws ec2 authorize-security-group-ingress \
+            --region "$aws_region" \
+            --group-id "$security_group_id" \
+            --ip-permissions "$ip_permissions" 2>&1)"
+          status=$?
+          set -e
+
+          printf '%s\n' "$output"
+          if [ "$status" -eq 0 ]; then
+            echo "Opened TCP ${api_port} on ${security_group_id}."
+            exit 0
+          fi
+          if grep -q "InvalidPermission.Duplicate" <<< "$output"; then
+            echo "TCP ${api_port} is already allowed on ${security_group_id}."
+            exit 0
+          fi
+
+          exit "$status"
 
       - name: Check EC2 API external reachability
         shell: bash
