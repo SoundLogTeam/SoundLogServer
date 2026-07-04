@@ -306,6 +306,55 @@ jobs:
               api \
               node scripts/check-public-api-contract.mjs
 
+      - name: Diagnose EC2 API network
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: ${{ secrets.EC2_SSH_PORT }}
+          script: |
+            set -eu
+            cd "${{ secrets.EC2_APP_DIR }}"
+
+            api_port="$(sed -n 's/^API_PORT=//p' .env | tail -n 1 | tr -d '\r')"
+            echo "API_PORT=${api_port}"
+
+            echo "::group::Docker compose state"
+            docker compose -f docker-compose.prod.yml ps
+            docker compose -f docker-compose.prod.yml port api 4000 || true
+            echo "::endgroup::"
+
+            echo "::group::Listening sockets"
+            if command -v ss >/dev/null 2>&1; then
+              sudo -n ss -ltnp 2>/dev/null | grep -E "(:${api_port}|:4000|:80|:443)" || ss -ltnp | grep -E "(:${api_port}|:4000|:80|:443)" || true
+            else
+              netstat -ltnp 2>/dev/null | grep -E "(:${api_port}|:4000|:80|:443)" || true
+            fi
+            echo "::endgroup::"
+
+            echo "::group::EC2 local health"
+            curl --fail --silent --show-error --max-time 5 "http://127.0.0.1:${api_port}/v1/health" || true
+            printf '\n'
+            public_ip="$(curl --silent --show-error --max-time 5 http://169.254.169.254/latest/meta-data/public-ipv4 || true)"
+            echo "EC2 metadata public-ipv4=${public_ip:-unavailable}"
+            if [ -n "$public_ip" ]; then
+              curl --fail --silent --show-error --max-time 5 "http://${public_ip}:${api_port}/v1/health" || true
+              printf '\n'
+            fi
+            echo "::endgroup::"
+
+            echo "::group::Host firewall state"
+            if command -v firewall-cmd >/dev/null 2>&1; then
+              sudo -n firewall-cmd --state 2>/dev/null || true
+              sudo -n firewall-cmd --list-all 2>/dev/null || true
+            fi
+            if command -v ufw >/dev/null 2>&1; then
+              sudo -n ufw status verbose 2>/dev/null || true
+            fi
+            sudo -n iptables -S INPUT 2>/dev/null || true
+            echo "::endgroup::"
+
       - name: Check EC2 API external reachability
         shell: bash
         env:
