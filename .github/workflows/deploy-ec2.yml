@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - codex/server-deploy-contract-check-fix
   workflow_dispatch:
     inputs:
       image_tag:
@@ -290,19 +291,19 @@ jobs:
               --token "$FRONTEND_VERCEL_TOKEN"
           done
 
-      - name: Verify public API contract
+      - name: Verify EC2 API contract
         shell: bash
         env:
           EC2_HOST: ${{ secrets.EC2_HOST }}
           PRODUCTION_ENV: ${{ secrets.PRODUCTION_ENV }}
-          PUBLIC_API_BASE_URL: ${{ secrets.PUBLIC_API_BASE_URL }}
         run: |
           set -euo pipefail
           api_port="$(sed -n 's/^API_PORT=//p' <<< "$PRODUCTION_ENV" | tail -n 1 | tr -d '\r')"
-          public_api_base_url="${PUBLIC_API_BASE_URL:-}"
+          api_origin="http://${EC2_HOST}:${api_port}"
 
-          if [ -z "$public_api_base_url" ]; then
-            public_api_base_url="http://${EC2_HOST}:${api_port}"
+          if [[ ! "$api_port" =~ ^[0-9]+$ ]]; then
+            echo "PRODUCTION_ENV.API_PORT must be a numeric port."
+            exit 1
           fi
 
-          PUBLIC_API_BASE_URL="$public_api_base_url" node scripts/check-public-api-contract.mjs
+          PUBLIC_API_BASE_URL="$api_origin" node scripts/check-public-api-contract.mjs

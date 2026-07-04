@@ -16,7 +16,6 @@ Only workflow-level credentials stay as separate GitHub Secrets. Application env
 | `EC2_SSH_KEY` | PEM private key | Private key that can SSH into EC2. |
 | `EC2_APP_DIR` | `/home/ec2-user/soundlog-server` | Directory where compose and `.env` are written. |
 | `PRODUCTION_ENV` | multiline `.env` | Server runtime environment except generated deployment values. |
-| `PUBLIC_API_BASE_URL` | `http://<EC2_HOST>:4000` | Publicly reachable API origin to verify after EC2 deploy. |
 | `FRONTEND_VERCEL_TOKEN` | `vercel_...` | Optional. Enables automatic `SOUNDLOG_API_ORIGIN` sync for the frontend Vercel project. |
 | `FRONTEND_VERCEL_SCOPE` | `mannomis-projects` | Optional. Vercel team/user scope for the frontend project. Defaults to `mannomis-projects`. |
 | `FRONTEND_VERCEL_PROJECT` | `sound-log-app` | Optional. Frontend Vercel project name. Defaults to `sound-log-app`. |
@@ -80,7 +79,6 @@ gh secret set EC2_SSH_PORT --repo SoundLogTeam/SoundLogServer --body '22'
 gh secret set EC2_SSH_KEY --repo SoundLogTeam/SoundLogServer < ~/.ssh/soundlog-ec2.pem
 gh secret set EC2_APP_DIR --repo SoundLogTeam/SoundLogServer --body '/home/ec2-user/soundlog-server'
 gh secret set PRODUCTION_ENV --repo SoundLogTeam/SoundLogServer < .env.production
-gh secret set PUBLIC_API_BASE_URL --repo SoundLogTeam/SoundLogServer --body 'http://<EC2_HOST>:4000'
 
 gh secret set FRONTEND_VERCEL_TOKEN --repo SoundLogTeam/SoundLogServer --body '<vercel-token>'
 gh secret set FRONTEND_VERCEL_SCOPE --repo SoundLogTeam/SoundLogServer --body 'mannomis-projects'
@@ -97,4 +95,4 @@ gh workflow run deploy-ec2.yml --repo SoundLogTeam/SoundLogServer
 
 EC2 must already have Docker Engine and Docker Compose v2 installed. The workflow keeps Postgres data in the `postgres_data` Docker volume and uploaded files in the `uploads_data` Docker volume.
 
-After deployment, the workflow verifies `http://127.0.0.1:<API_PORT>/v1/health` from inside EC2 and runs the public API contract check against `PUBLIC_API_BASE_URL` when configured. After the frontend deployment is rebuilt with the synced Vercel env, verify `https://soundlog.shop/api/soundlog/v1/health` and run the app repo's deployed-web check.
+After deployment, the workflow verifies `http://127.0.0.1:<API_PORT>/v1/health` from inside EC2 and runs the API contract check against the deployed EC2 origin. After the frontend deployment is rebuilt with the synced Vercel env, verify `https://soundlog.shop/api/soundlog/v1/health` and run the app repo's deployed-web check.
