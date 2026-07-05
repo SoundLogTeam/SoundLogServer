@@ -13,6 +13,118 @@ import {
 
 const prisma = new PrismaClient();
 
+async function seedTracks() {
+  for (const track of tracks) {
+    await prisma.track.upsert({
+      where: { id: track.id },
+      update: { ...track },
+      create: { ...track },
+    });
+  }
+}
+
+async function seedPlaces() {
+  for (const place of places) {
+    await prisma.place.upsert({
+      where: { id: place.id },
+      update: { ...place },
+      create: { ...place },
+    });
+  }
+}
+
+async function seedPlaylists() {
+  for (const playlist of playlists) {
+    await prisma.playlist.upsert({
+      where: { id: playlist.id },
+      update: {
+        backgroundImageUrl: playlist.backgroundImageUrl,
+        coverImageUrl: playlist.coverImageUrl,
+        description: playlist.description,
+        durationText: playlist.durationText,
+        placeName: playlist.placeName,
+        reason: playlist.reason,
+        regionName: playlist.regionName,
+        source: playlist.source,
+        trackCount: playlist.trackIds.length,
+      },
+      create: {
+        id: playlist.id,
+        backgroundImageUrl: playlist.backgroundImageUrl,
+        coverImageUrl: playlist.coverImageUrl,
+        description: playlist.description,
+        durationText: playlist.durationText,
+        placeName: playlist.placeName,
+        reason: playlist.reason,
+        regionName: playlist.regionName,
+        source: playlist.source,
+        trackCount: playlist.trackIds.length,
+      },
+    });
+
+    await prisma.playlistTrack.deleteMany({
+      where: { playlistId: playlist.id },
+    });
+
+    for (const [index, trackId] of playlist.trackIds.entries()) {
+      await prisma.playlistTrack.create({
+        data: {
+          playlistId: playlist.id,
+          trackId,
+          position: index + 1,
+          isLiked: trackId === 'seoul-city',
+          isSaved: trackId === 'hangang',
+        },
+      });
+    }
+  }
+}
+
+async function seedMoodRecommendations() {
+  for (const recommendation of moodRecommendations) {
+    const data = {
+      ...recommendation,
+      genres: [...recommendation.genres],
+      moods: [...recommendation.moods],
+      travelStyles: [...recommendation.travelStyles],
+    };
+
+    await prisma.moodRecommendation.upsert({
+      where: { id: recommendation.id },
+      update: data,
+      create: data,
+    });
+  }
+}
+
+async function seedRegionSoundTrends() {
+  for (const trend of regionSoundTrends) {
+    const data = {
+      ...trend,
+      topMoodTags: [...trend.topMoodTags],
+      topTrackIds: [...trend.topTrackIds],
+    };
+
+    await prisma.regionSoundTrend.upsert({
+      where: {
+        regionCode_period: {
+          regionCode: trend.regionCode,
+          period: trend.period,
+        },
+      },
+      update: data,
+      create: data,
+    });
+  }
+}
+
+export async function seedPublicCatalog() {
+  await seedTracks();
+  await seedPlaylists();
+  await seedMoodRecommendations();
+  await seedRegionSoundTrends();
+}
+
 export async function seedDatabase() {
   const user = await prisma.user.upsert({
     where: {
@@ -71,81 +183,8 @@ export async function seedDatabase() {
     },
   });
 
-  for (const track of tracks) {
-    await prisma.track.upsert({
-      where: { id: track.id },
-      update: { ...track },
-      create: { ...track },
-    });
-  }
-
-  for (const place of places) {
-    await prisma.place.upsert({
-      where: { id: place.id },
-      update: { ...place },
-      create: { ...place },
-    });
-  }
-
-  for (const playlist of playlists) {
-    await prisma.playlist.upsert({
-      where: { id: playlist.id },
-      update: {
-        backgroundImageUrl: playlist.backgroundImageUrl,
-        coverImageUrl: playlist.coverImageUrl,
-        description: playlist.description,
-        durationText: playlist.durationText,
-        placeName: playlist.placeName,
-        reason: playlist.reason,
-        regionName: playlist.regionName,
-        source: playlist.source,
-        trackCount: playlist.trackIds.length,
-      },
-      create: {
-        id: playlist.id,
-        backgroundImageUrl: playlist.backgroundImageUrl,
-        coverImageUrl: playlist.coverImageUrl,
-        description: playlist.description,
-        durationText: playlist.durationText,
-        placeName: playlist.placeName,
-        reason: playlist.reason,
-        regionName: playlist.regionName,
-        source: playlist.source,
-        trackCount: playlist.trackIds.length,
-      },
-    });
-
-    await prisma.playlistTrack.deleteMany({
-      where: { playlistId: playlist.id },
-    });
-
-    for (const [index, trackId] of playlist.trackIds.entries()) {
-      await prisma.playlistTrack.create({
-        data: {
-          playlistId: playlist.id,
-          trackId,
-          position: index + 1,
-          isLiked: trackId === 'seoul-city',
-          isSaved: trackId === 'hangang',
-        },
-      });
-    }
-  }
-
-  for (const recommendation of moodRecommendations) {
-    const data = {
-      ...recommendation,
-      genres: [...recommendation.genres],
-      moods: [...recommendation.moods],
-      travelStyles: [...recommendation.travelStyles],
-    };
-
-    await prisma.moodRecommendation.upsert({
-      where: { id: recommendation.id },
-      update: data,
-      create: data,
-    });
-  }
+  await seedPublicCatalog();
+  await seedPlaces();
 
   for (const log of seedMomentLogs) {
     const track = await prisma.track.findUniqueOrThrow({
@@ -197,25 +236,6 @@ export async function seedDatabase() {
     });
   }
 
-  for (const trend of regionSoundTrends) {
-    const data = {
-      ...trend,
-      topMoodTags: [...trend.topMoodTags],
-      topTrackIds: [...trend.topTrackIds],
-    };
-
-    await prisma.regionSoundTrend.upsert({
-      where: {
-        regionCode_period: {
-          regionCode: trend.regionCode,
-          period: trend.period,
-        },
-      },
-      update: data,
-      create: data,
-    });
-  }
-
   await prisma.libraryTrackState.upsert({
     where: {
       userId_trackId: {
@@ -256,7 +276,9 @@ export async function disconnectSeedDatabase() {
 }
 
 if (process.argv[1]?.endsWith('prisma/seed.ts') || process.argv[1]?.endsWith('prisma/seed.js')) {
-  seedDatabase()
+  const seed = process.argv.includes('--public-catalog') ? seedPublicCatalog : seedDatabase;
+
+  seed()
   .then(async () => {
     await disconnectSeedDatabase();
   })

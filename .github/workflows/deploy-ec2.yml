@@ -4,10 +4,19 @@ on:
   push:
     branches:
       - main
+      - codex/server-deploy-contract-check-fix
   workflow_dispatch:
     inputs:
       image_tag:
         description: Docker image tag to build and deploy. Defaults to the current commit SHA.
+        required: false
+        type: string
+      aws_region:
+        description: Optional AWS region used to open the EC2 API ingress rule.
+        required: false
+        type: string
+      security_group_id:
+        description: Optional EC2 security group ID used to open the API ingress rule.
         required: false
         type: string
 
@@ -290,19 +299,186 @@ jobs:
               --token "$FRONTEND_VERCEL_TOKEN"
           done
 
-      - name: Verify public API contract
+      - name: Verify EC2 API contract
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: ${{ secrets.EC2_SSH_PORT }}
+          script: |
+            set -eu
+            cd "${{ secrets.EC2_APP_DIR }}"
+            docker compose -f docker-compose.prod.yml exec -T \
+              -e PUBLIC_API_BASE_URL=http://127.0.0.1:4000 \
+              api \
+              node scripts/check-public-api-contract.mjs
+
+      - name: Diagnose EC2 API network
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: ${{ secrets.EC2_SSH_PORT }}
+          script: |
+            set -eu
+            cd "${{ secrets.EC2_APP_DIR }}"
+
+            api_port="$(sed -n 's/^API_PORT=//p' .env | tail -n 1 | tr -d '\r')"
+            echo "API_PORT=${api_port}"
+
+            echo "::group::Docker compose state"
+            docker compose -f docker-compose.prod.yml ps
+            docker compose -f docker-compose.prod.yml port api 4000 || true
+            echo "::endgroup::"
+
+            echo "::group::Listening sockets"
+            if command -v ss >/dev/null 2>&1; then
+              sudo -n ss -ltnp 2>/dev/null | grep -E "(:${api_port}|:4000|:80|:443)" || ss -ltnp | grep -E "(:${api_port}|:4000|:80|:443)" || true
+            else
+              netstat -ltnp 2>/dev/null | grep -E "(:${api_port}|:4000|:80|:443)" || true
+            fi
+            echo "::endgroup::"
+
+            echo "::group::EC2 local health"
+            curl --fail --silent --show-error --max-time 5 "http://127.0.0.1:${api_port}/v1/health" || true
+            printf '\n'
+            metadata_token="$(curl --silent --show-error --max-time 5 -X PUT \
+              -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' \
+              http://169.254.169.254/latest/api/token || true)"
+            metadata_curl() {
+              if [ -n "$metadata_token" ]; then
+                curl --silent --show-error --max-time 5 \
+                  -H "X-aws-ec2-metadata-token: ${metadata_token}" \
+                  "http://169.254.169.254/latest/meta-data/$1" || true
+              else
+                curl --silent --show-error --max-time 5 \
+                  "http://169.254.169.254/latest/meta-data/$1" || true
+              fi
+            }
+            public_ip="$(metadata_curl public-ipv4)"
+            echo "EC2 metadata public-ipv4=${public_ip:-unavailable}"
+            if [ -n "$public_ip" ]; then
+              curl --fail --silent --show-error --max-time 5 "http://${public_ip}:${api_port}/v1/health" || true
+              printf '\n'
+            fi
+            echo "::endgroup::"
+
+            echo "::group::EC2 metadata network identity"
+            echo "instance-id=$(metadata_curl instance-id)"
+            echo "placement-region=$(metadata_curl placement/region)"
+            echo "placement-availability-zone=$(metadata_curl placement/availability-zone)"
+            macs="$(metadata_curl network/interfaces/macs/)"
+            printf 'network-interface-macs=%s\n' "${macs:-unavailable}"
+            first_mac="$(printf '%s\n' "$macs" | head -n 1)"
+            if [ -n "$first_mac" ]; then
+              metadata_mac_path="network/interfaces/macs/${first_mac}"
+              vpc_id="$(metadata_curl "${metadata_mac_path}vpc-id")"
+              subnet_id="$(metadata_curl "${metadata_mac_path}subnet-id")"
+              security_groups="$(metadata_curl "${metadata_mac_path}security-groups")"
+              security_group_ids="$(metadata_curl "${metadata_mac_path}security-group-ids")"
+              echo "vpc-id=${vpc_id}"
+              echo "subnet-id=${subnet_id}"
+              echo "security-groups=${security_groups}"
+              echo "security-group-ids=${security_group_ids}"
+            fi
+            echo "::endgroup::"
+
+            echo "::group::Host firewall state"
+            if command -v firewall-cmd >/dev/null 2>&1; then
+              sudo -n firewall-cmd --state 2>/dev/null || true
+              sudo -n firewall-cmd --list-all 2>/dev/null || true
+            fi
+            if command -v ufw >/dev/null 2>&1; then
+              sudo -n ufw status verbose 2>/dev/null || true
+            fi
+            sudo -n iptables -S INPUT 2>/dev/null || true
+            echo "::endgroup::"
+
+      - name: Open EC2 API ingress when AWS credentials are configured
+        shell: bash
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
+          AWS_REGION_SECRET: ${{ secrets.AWS_REGION }}
+          AWS_REGION_INPUT: ${{ inputs.aws_region }}
+          EC2_SECURITY_GROUP_ID_SECRET: ${{ secrets.EC2_SECURITY_GROUP_ID }}
+          EC2_SECURITY_GROUP_ID_INPUT: ${{ inputs.security_group_id }}
+          PRODUCTION_ENV: ${{ secrets.PRODUCTION_ENV }}
+        run: |
+          set -euo pipefail
+          api_port="$(sed -n 's/^API_PORT=//p' <<< "$PRODUCTION_ENV" | tail -n 1 | tr -d '\r')"
+          aws_region="${AWS_REGION_INPUT:-${AWS_REGION_SECRET:-}}"
+          security_group_id="${EC2_SECURITY_GROUP_ID_INPUT:-${EC2_SECURITY_GROUP_ID_SECRET:-}}"
+
+          if [[ ! "$api_port" =~ ^[0-9]+$ ]]; then
+            echo "PRODUCTION_ENV.API_PORT must be a numeric port."
+            exit 1
+          fi
+
+          missing=()
+          for name in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY; do
+            if [ -z "${!name}" ]; then
+              missing+=("$name")
+            fi
+          done
+          if [ -z "$aws_region" ]; then
+            missing+=("AWS_REGION")
+          fi
+          if [ -z "$security_group_id" ]; then
+            missing+=("EC2_SECURITY_GROUP_ID")
+          fi
+
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf 'Skipping EC2 API ingress sync because optional values are missing: %s\n' "${missing[*]}"
+            exit 0
+          fi
+
+          if ! command -v aws >/dev/null 2>&1; then
+            python -m pip install --user awscli
+            export PATH="$HOME/.local/bin:$PATH"
+          fi
+
+          ip_permissions="IpProtocol=tcp,FromPort=${api_port},ToPort=${api_port},IpRanges=[{CidrIp=0.0.0.0/0,Description=\"SoundLog API for Vercel rewrite\"}]"
+          set +e
+          output="$(aws ec2 authorize-security-group-ingress \
+            --region "$aws_region" \
+            --group-id "$security_group_id" \
+            --ip-permissions "$ip_permissions" 2>&1)"
+          status=$?
+          set -e
+
+          printf '%s\n' "$output"
+          if [ "$status" -eq 0 ]; then
+            echo "Opened TCP ${api_port} on ${security_group_id}."
+            exit 0
+          fi
+          if grep -q "InvalidPermission.Duplicate" <<< "$output"; then
+            echo "TCP ${api_port} is already allowed on ${security_group_id}."
+            exit 0
+          fi
+
+          exit "$status"
+
+      - name: Check EC2 API external reachability
         shell: bash
         env:
           EC2_HOST: ${{ secrets.EC2_HOST }}
           PRODUCTION_ENV: ${{ secrets.PRODUCTION_ENV }}
-          PUBLIC_API_BASE_URL: ${{ secrets.PUBLIC_API_BASE_URL }}
         run: |
           set -euo pipefail
           api_port="$(sed -n 's/^API_PORT=//p' <<< "$PRODUCTION_ENV" | tail -n 1 | tr -d '\r')"
-          public_api_base_url="${PUBLIC_API_BASE_URL:-}"
 
-          if [ -z "$public_api_base_url" ]; then
-            public_api_base_url="http://${EC2_HOST}:${api_port}"
+          if [[ ! "$api_port" =~ ^[0-9]+$ ]]; then
+            echo "PRODUCTION_ENV.API_PORT must be a numeric port."
+            exit 1
           fi
 
-          PUBLIC_API_BASE_URL="$public_api_base_url" node scripts/check-public-api-contract.mjs
+          if ! curl --fail --silent --show-error --max-time 10 "http://${EC2_HOST}:${api_port}/v1/health" > /tmp/soundlog-external-health.json; then
+            echo "::error::EC2 API port is not reachable from the GitHub runner. Open TCP ${api_port} on the EC2 security group/firewall or point SOUNDLOG_API_ORIGIN to a reachable API origin before deploying the frontend."
+            exit 1
+          fi
+
+          cat /tmp/soundlog-external-health.json
