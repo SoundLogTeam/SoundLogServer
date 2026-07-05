@@ -115,6 +115,19 @@ async function verifyMusicMetadata() {
   }
 }
 
+async function verifyPlaylistCatalog() {
+  try {
+    const payload = await fetchJson('/v1/playlists/geoje-ocean');
+    const playlist = payload?.data;
+
+    if (playlist?.id !== 'geoje-ocean' || !Array.isArray(playlist.tracks) || playlist.tracks.length === 0) {
+      addError('/v1/playlists/geoje-ocean did not return a seeded playlist with tracks.');
+    }
+  } catch (error) {
+    addError(error instanceof Error ? error.message : String(error));
+  }
+}
+
 async function verifyRemovedMusicPlatformRoute() {
   try {
     const { response, text } = await fetchText('/v1/me/music-platform');
@@ -136,6 +149,7 @@ await verifyHealth();
 await verifyOpenApi();
 await verifyNearbyPlaces();
 await verifyMusicMetadata();
+await verifyPlaylistCatalog();
 await verifyRemovedMusicPlatformRoute();
 
 if (errors.length > 0) {

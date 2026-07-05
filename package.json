@@ -16,7 +16,8 @@
     "db:generate": "prisma generate --schema prisma",
     "db:migrate": "prisma migrate dev --schema prisma",
     "db:deploy": "prisma migrate deploy --schema prisma",
-    "db:seed": "tsx prisma/seed.ts"
+    "db:seed": "tsx prisma/seed.ts",
+    "db:seed:public": "tsx prisma/seed.ts --public-catalog"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
