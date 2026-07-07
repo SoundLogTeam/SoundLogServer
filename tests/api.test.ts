@@ -71,6 +71,30 @@ function findSecretLeaks(value: unknown, secret: string, path = '$'): string[] {
   return value === secret ? [path] : [];
 }
 
+async function createTestMomentLog(input: {
+  authHeader: string;
+  filename: string;
+  placeName: string;
+  sessionId?: string;
+  trackId?: string;
+}) {
+  const response = await request(app)
+    .post('/v1/moment-logs')
+    .set('Authorization', input.authHeader)
+    .field('createdAt', new Date().toISOString())
+    .field('moodTags', 'fresh,calm')
+    .field('placeName', input.placeName)
+    .field('sessionId', input.sessionId ?? '')
+    .field('trackId', input.trackId ?? 'seoul-city')
+    .attach('photo', Buffer.from('fake-image'), {
+      filename: input.filename,
+      contentType: 'image/jpeg',
+    });
+
+  expect(response.status).toBe(201);
+  return response.body.data;
+}
+
 describe('Soundlog API', () => {
   let accessToken: string;
   let authHeader: string;
@@ -287,6 +311,14 @@ describe('Soundlog API', () => {
     expect(mood.status).toBe(200);
     expect(mood.body.data[0].track).toBeDefined();
 
+    await createTestMomentLog({
+      authHeader,
+      filename: 'recent-music-log.jpg',
+      placeName: '최근 로그 테스트 장소',
+      sessionId: `recent-session-${Date.now()}`,
+      trackId: 'seoul-city',
+    });
+
     const recent = await request(app)
       .get('/v1/home/recent-music-logs')
       .set('Authorization', authHeader);
@@ -385,11 +417,22 @@ describe('Soundlog API', () => {
           {
             id: `event-${Date.now()}`,
             sessionId: 'seed-session',
-            type: 'track_external_open',
+            type: 'live_track_shared',
             trackId: 'seoul-city',
             playlistId: 'seoul-night',
-            context: { moodFilter: '전체' },
+            context: { moodFilter: '전체', placeName: '서울 야경 산책' },
             createdAt: new Date().toISOString(),
+            value: 'companions',
+          },
+          {
+            id: `event-nearby-${Date.now()}`,
+            sessionId: 'seed-session',
+            type: 'nearby_sound_opened',
+            trackId: 'seoul-city',
+            playlistId: 'seoul-night',
+            context: { moodFilter: '잔잔한', placeName: '서울 야경 산책' },
+            createdAt: new Date().toISOString(),
+            value: 'nearby',
           },
         ],
       });
@@ -399,25 +442,42 @@ describe('Soundlog API', () => {
   });
 
   it('handles recap APIs', async () => {
-    const list = await request(app).get('/v1/recaps').set('Authorization', authHeader);
-    expect(list.status).toBe(200);
-    expect(list.body.data.length).toBeGreaterThan(0);
+    const recapSessionId = `recap-session-${Date.now()}`;
+
+    await createTestMomentLog({
+      authHeader,
+      filename: 'recap-moment-1.jpg',
+      placeName: '리캡 테스트 장소',
+      sessionId: recapSessionId,
+      trackId: 'seoul-night-track',
+    });
+    await createTestMomentLog({
+      authHeader,
+      filename: 'recap-moment-2.jpg',
+      placeName: '리캡 테스트 장소',
+      sessionId: recapSessionId,
+      trackId: 'seoul-night-track',
+    });
 
     const idempotencyKey = `recap-${Date.now()}`;
     const created = await request(app)
       .post('/v1/recaps')
       .set('Authorization', authHeader)
       .set('Idempotency-Key', idempotencyKey)
-      .send({ templateId: 'album', sessionId: 'seed-session', title: '테스트 리캡' });
+      .send({ templateId: 'album', sessionId: recapSessionId, title: '테스트 리캡' });
     expect(created.status).toBe(201);
     createdRecapId = created.body.data.id;
     expect(created.body.data.representativeTrack.id).toBe('seoul-night-track');
+
+    const list = await request(app).get('/v1/recaps').set('Authorization', authHeader);
+    expect(list.status).toBe(200);
+    expect(list.body.data.some((recap: { id: string }) => recap.id === createdRecapId)).toBe(true);
 
     const duplicate = await request(app)
       .post('/v1/recaps')
       .set('Authorization', authHeader)
       .set('Idempotency-Key', idempotencyKey)
-      .send({ templateId: 'album', sessionId: 'seed-session', title: '중복 리캡' });
+      .send({ templateId: 'album', sessionId: recapSessionId, title: '중복 리캡' });
     expect(duplicate.status).toBe(201);
     expect(duplicate.body.data.id).toBe(createdRecapId);
 

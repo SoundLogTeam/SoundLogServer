@@ -1629,6 +1629,8 @@ components:
         - track_unsave
         - playlist_open
         - mood_filter_change
+        - live_track_shared
+        - nearby_sound_opened
         - recommendation_mode_change
         - top_filter_change
         - recap_representative_track_select
