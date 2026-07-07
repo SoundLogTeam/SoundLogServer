@@ -16,6 +16,16 @@ model User {
   travelSessions       TravelSession[]
   recapShareEvents     RecapShareEvent[]
   idempotencyRecords   IdempotencyRecord[]
+  ownedTravelRooms     TravelRoom[]          @relation("TravelRoomOwner")
+  travelRoomMembers    TravelRoomMember[]
+  travelRoomMoments    TravelRoomMoment[]
+  soundMapPins         SoundMapPin[]
+  sentMateRequests     TravelMateRequest[]   @relation("TravelMateRequester")
+  receivedMateRequests TravelMateRequest[]   @relation("TravelMateTarget")
+  communityBlocksMade  CommunityBlock[]      @relation("CommunityBlocker")
+  communityBlocksTaken CommunityBlock[]      @relation("CommunityBlocked")
+  communityReports     CommunityReport[]     @relation("CommunityReporter")
+  communityReportsOn   CommunityReport[]     @relation("CommunityReportedUser")
 
   @@unique([provider, providerUserId])
 }

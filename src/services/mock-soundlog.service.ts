@@ -167,6 +167,137 @@ function recapShareToDto(recap: (typeof mockDb.recaps)[number]) {
   });
 }
 
+function normalizeApproxCoordinate(value: number) {
+  return Math.round(value * 100) / 100;
+}
+
+function distanceMeters(from: { lat: number; lng: number }, to: { lat: number; lng: number }) {
+  const earthRadiusMeters = 6_371_000;
+  const toRadians = (value: number) => (value * Math.PI) / 180;
+  const deltaLat = toRadians(to.lat - from.lat);
+  const deltaLng = toRadians(to.lng - from.lng);
+  const fromLat = toRadians(from.lat);
+  const toLat = toRadians(to.lat);
+  const haversine =
+    Math.sin(deltaLat / 2) ** 2 +
+    Math.cos(fromLat) * Math.cos(toLat) * Math.sin(deltaLng / 2) ** 2;
+
+  return 2 * earthRadiusMeters * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
+}
+
+function filterPinsByRadius<T extends { lat: number; lng: number }>(
+  pins: T[],
+  query: { lat?: number; lng?: number; radiusMeters?: number },
+) {
+  if (query.lat === undefined || query.lng === undefined) {
+    return pins;
+  }
+
+  const radiusMeters = query.radiusMeters ?? 3000;
+  return pins.filter(
+    (pin) => distanceMeters({ lat: query.lat!, lng: query.lng! }, pin) <= radiusMeters,
+  );
+}
+
+function createInviteCode() {
+  return Math.random().toString(36).slice(2, 8).toUpperCase();
+}
+
+function getMockUserProfile(userId: string) {
+  const passwordUser = mockDb.passwordUsers.find((user) => user.id === userId);
+  return {
+    displayName: passwordUser?.displayName ?? mockDb.user.displayName,
+    preferredGenres: mockDb.profile.preferredGenres,
+    preferredMoods: mockDb.profile.preferredMoods,
+    travelStyles: mockDb.profile.travelStyles,
+  };
+}
+
+function roomToDto(room: (typeof mockDb.travelRooms)[number]) {
+  const members = mockDb.travelRoomMembers.filter((member) => member.roomId === room.id);
+  const moments = mockDb.travelRoomMoments
+    .filter((moment) => moment.roomId === room.id)
+    .sort((first, second) => second.createdAt.getTime() - first.createdAt.getTime());
+
+  return {
+    id: room.id,
+    title: room.title,
+    inviteCode: room.inviteCode,
+    sessionId: room.sessionId,
+    visibility: room.visibility,
+    memberCount: members.length,
+    momentCount: moments.length,
+    members: members.map((member) => ({
+      id: member.id,
+      userId: member.userId,
+      role: member.role,
+      displayName: member.displayName,
+      joinedAt: member.joinedAt.toISOString(),
+    })),
+    moments: moments.map((moment) => ({
+      id: moment.id,
+      userId: moment.userId,
+      momentLogId: moment.momentLogId,
+      placeName: moment.placeName,
+      note: moment.note,
+      status: moment.status,
+      track: moment.trackSnapshot,
+      createdAt: moment.createdAt.toISOString(),
+    })),
+    createdAt: room.createdAt.toISOString(),
+    updatedAt: room.updatedAt.toISOString(),
+  };
+}
+
+function soundMapPinToDto(pin: (typeof mockDb.soundMapPins)[number], viewerId: string) {
+  const isMine = pin.userId === viewerId;
+  const profile = getMockUserProfile(pin.userId);
+
+  return {
+    id: pin.id,
+    alias: isMine ? '나' : profile.displayName ?? '근처 여행자',
+    isMine,
+    visibility: pin.visibility,
+    location: isMine || pin.visibility !== 'nearby'
+      ? { lat: pin.lat, lng: pin.lng }
+      : { lat: pin.approxLat, lng: pin.approxLng },
+    moodTags: pin.moodTags,
+    placeName: pin.placeName,
+    profile: {
+      preferredGenres: profile.preferredGenres,
+      preferredMoods: profile.preferredMoods,
+      travelStyles: profile.travelStyles,
+    },
+    sessionId: pin.sessionId,
+    track: pin.trackSnapshot,
+    travelMode: pin.travelMode,
+    expiresAt: pin.expiresAt.toISOString(),
+    updatedAt: pin.updatedAt.toISOString(),
+  };
+}
+
+function scoreMockMatch(pin: (typeof mockDb.soundMapPins)[number], params: { mood?: string; state?: string }) {
+  let score = 70;
+  if (params.mood && mockDb.profile.preferredMoods.some((mood) => params.mood?.includes(mood))) {
+    score += 8;
+  }
+  if (params.state && mockDb.profile.travelStyles.some((style) => params.state?.includes(style))) {
+    score += 8;
+  }
+  if (pin.trackSnapshot) {
+    score += 6;
+  }
+  return Math.min(score, 96);
+}
+
+function mateRequestToDto(request: (typeof mockDb.travelMateRequests)[number]) {
+  return {
+    ...request,
+    createdAt: request.createdAt.toISOString(),
+    updatedAt: request.updatedAt.toISOString(),
+  };
+}
+
 function getDefaultPlaylistId(params?: { lat?: number; placeId?: string }) {
   if (params?.placeId) {
     const place = mockDb.places.find(
@@ -604,6 +735,382 @@ export const mockSoundlogService = {
         ...event,
         createdAt: new Date(event.createdAt),
       });
+    });
+  },
+
+  async createTravelRoom(userId: string, input: {
+    sessionId?: string;
+    title: string;
+    visibility: string;
+  }) {
+    const now = new Date();
+    const room = {
+      id: createPublicId('room'),
+      inviteCode: createInviteCode(),
+      ownerId: userId,
+      sessionId: input.sessionId,
+      title: input.title,
+      visibility: input.visibility,
+      createdAt: now,
+      updatedAt: now,
+    };
+    mockDb.travelRooms.push(room);
+    mockDb.travelRoomMembers.push({
+      id: createPublicId('member'),
+      joinedAt: now,
+      role: 'owner',
+      roomId: room.id,
+      userId,
+    });
+
+    return roomToDto(room);
+  },
+
+  async getTravelRoom(userId: string, roomId: string) {
+    const room = mockDb.travelRooms.find((item) => item.id === roomId);
+    const isMember = mockDb.travelRoomMembers.some(
+      (member) => member.roomId === roomId && member.userId === userId,
+    );
+
+    if (!room || !isMember) {
+      throw notFound(ERROR_MESSAGES.TRAVEL_ROOM_NOT_FOUND);
+    }
+
+    return roomToDto(room);
+  },
+
+  async joinTravelRoom(userId: string, roomId: string, input: {
+    displayName?: string;
+    inviteCode?: string;
+  }) {
+    const room = mockDb.travelRooms.find((item) => item.id === roomId);
+
+    if (!room) {
+      throw notFound(ERROR_MESSAGES.TRAVEL_ROOM_NOT_FOUND);
+    }
+
+    if (input.inviteCode && input.inviteCode !== room.inviteCode) {
+      throw badRequest(ERROR_MESSAGES.TRAVEL_ROOM_INVITE_CODE_INVALID);
+    }
+
+    const existing = mockDb.travelRoomMembers.find(
+      (member) => member.roomId === roomId && member.userId === userId,
+    );
+
+    if (existing) {
+      existing.displayName = input.displayName;
+    } else {
+      mockDb.travelRoomMembers.push({
+        id: createPublicId('member'),
+        displayName: input.displayName,
+        joinedAt: new Date(),
+        role: 'member',
+        roomId,
+        userId,
+      });
+    }
+
+    return roomToDto(room);
+  },
+
+  async addTravelRoomMoment(userId: string, roomId: string, input: {
+    artistName?: string;
+    momentLogId?: string;
+    note?: string;
+    placeName?: string;
+    status?: string;
+    trackId?: string;
+    trackTitle?: string;
+  }) {
+    const isMember = mockDb.travelRoomMembers.some(
+      (member) => member.roomId === roomId && member.userId === userId,
+    );
+
+    if (!isMember) {
+      throw notFound(ERROR_MESSAGES.TRAVEL_ROOM_NOT_FOUND);
+    }
+
+    const momentLog = input.momentLogId
+      ? mockDb.momentLogs.find((moment) => moment.id === input.momentLogId)
+      : undefined;
+    const track = findMockTrack(input.trackId) ??
+      momentLog?.trackSnapshot ?? {
+        id: input.trackId ?? createPublicId('track'),
+        title: input.trackTitle ?? '선택한 음악',
+        artist: input.artistName ?? '아티스트 미상',
+      };
+    const moment = {
+      id: createPublicId('room_moment'),
+      createdAt: new Date(),
+      momentLogId: input.momentLogId,
+      note: input.note,
+      placeName: input.placeName ?? momentLog?.placeName,
+      roomId,
+      status: input.status ?? 'candidate',
+      trackSnapshot: track,
+      userId,
+    };
+    mockDb.travelRoomMoments.push(moment);
+
+    return {
+      id: moment.id,
+      userId: moment.userId,
+      momentLogId: moment.momentLogId,
+      note: moment.note,
+      placeName: moment.placeName,
+      status: moment.status,
+      track: moment.trackSnapshot,
+      createdAt: moment.createdAt.toISOString(),
+    };
+  },
+
+  async createTravelRoomRecap(userId: string, roomId: string, input: {
+    representativeTrackId?: string;
+    templateId?: string;
+    title?: string;
+  }, idempotencyKey?: string) {
+    return withMockIdempotency(
+      { idempotencyKey, scope: `travel-room-recap.create.${roomId}`, userId },
+      () => {
+        const room = mockDb.travelRooms.find((item) => item.id === roomId && item.ownerId === userId);
+        if (!room) {
+          throw notFound(ERROR_MESSAGES.TRAVEL_ROOM_NOT_FOUND);
+        }
+        const moments = mockDb.travelRoomMoments.filter((moment) => moment.roomId === roomId);
+        const representativeTrackId =
+          input.representativeTrackId ??
+          moments.find((moment) => moment.trackSnapshot?.id)?.trackSnapshot?.id ??
+          'seoul-city';
+
+        if (!findMockTrack(representativeTrackId)) {
+          throw notFound(ERROR_MESSAGES.REPRESENTATIVE_TRACK_NOT_FOUND);
+        }
+
+        const recap = {
+          id: createPublicId('recap'),
+          title: input.title ?? `${room.title} 공동 Recap`,
+          placeName: moments[0]?.placeName ?? room.title,
+          representativeTrackId,
+          createdAt: new Date(),
+          momentCount: moments.length,
+          sessionId: room.sessionId,
+          recordedAt: moments[0]?.createdAt ?? new Date(),
+          moments: moments.map((moment) => ({
+            id: moment.id,
+            placeName: moment.placeName ?? '위치 없음',
+            trackTitle: moment.trackSnapshot?.title ?? '저장된 순간',
+            artistName: moment.trackSnapshot?.artist ?? '음악 없음',
+            recordedAt: moment.createdAt.toISOString(),
+          })),
+        };
+        mockDb.recaps.unshift(recap);
+
+        return compact({
+          ...recapItemToDto(recap),
+          roomId,
+          templateId: input.templateId,
+        });
+      },
+    );
+  },
+
+  async upsertSoundMapCurrentTrack(userId: string, input: {
+    artistName?: string;
+    location: { lat: number; lng: number };
+    moodTags?: string[];
+    placeName?: string;
+    sessionId?: string;
+    trackId?: string;
+    trackTitle?: string;
+    travelMode?: string;
+    ttlMinutes?: number;
+    visibility: string;
+  }) {
+    const now = new Date();
+    const track = findMockTrack(input.trackId) ?? {
+      id: input.trackId ?? createPublicId('track'),
+      title: input.trackTitle ?? '선택한 음악',
+      artist: input.artistName ?? '아티스트 미상',
+    };
+    const pin = mockDb.soundMapPins.find((item) => item.userId === userId);
+    const nextPin = {
+      id: pin?.id ?? createPublicId('sound_pin'),
+      userId,
+      sessionId: input.sessionId,
+      visibility: input.visibility,
+      lat: input.location.lat,
+      lng: input.location.lng,
+      approxLat: normalizeApproxCoordinate(input.location.lat),
+      approxLng: normalizeApproxCoordinate(input.location.lng),
+      travelMode: input.travelMode,
+      moodTags: input.moodTags ?? [],
+      placeName: input.placeName,
+      trackSnapshot: track,
+      expiresAt: new Date(Date.now() + (input.ttlMinutes ?? 120) * 60_000),
+      createdAt: pin?.createdAt ?? now,
+      updatedAt: now,
+    };
+
+    if (pin) {
+      Object.assign(pin, nextPin);
+    } else {
+      mockDb.soundMapPins.push(nextPin);
+    }
+
+    return soundMapPinToDto(nextPin, userId);
+  },
+
+  async getSoundMapPins(userId: string, query: {
+    lat?: number;
+    lng?: number;
+    radiusMeters?: number;
+    visibility?: string;
+  }) {
+    const blockedIds = mockDb.communityBlocks
+      .filter((block) => block.blockerId === userId)
+      .map((block) => block.blockedUserId);
+    const pins = mockDb.soundMapPins
+      .filter((pin) => pin.expiresAt > new Date())
+      .filter((pin) => !blockedIds.includes(pin.userId))
+      .filter((pin) => (query.visibility ? pin.visibility === query.visibility : pin.visibility !== 'private'));
+
+    return filterPinsByRadius(pins, query)
+      .map((pin) => soundMapPinToDto(pin, userId));
+  },
+
+  async getNearbySoundMatches(userId: string, query: {
+    lat?: number;
+    lng?: number;
+    mood?: string;
+    radiusMeters?: number;
+    state?: string;
+  }) {
+    const blockedIds = mockDb.communityBlocks
+      .filter((block) => block.blockerId === userId)
+      .map((block) => block.blockedUserId);
+    const pins = mockDb.soundMapPins
+      .filter((pin) => pin.expiresAt > new Date())
+      .filter((pin) => pin.userId !== userId && pin.visibility === 'nearby')
+      .filter((pin) => !blockedIds.includes(pin.userId));
+
+    return filterPinsByRadius(pins, query)
+      .map((pin) => ({
+        ...soundMapPinToDto(pin, userId),
+        matchScore: scoreMockMatch(pin, query),
+        targetPinId: pin.id,
+      }));
+  },
+
+  async getMusicMatches(userId: string, query: { mood?: string; state?: string }) {
+    const pins = await this.getNearbySoundMatches(userId, query);
+    return pins.map((pin) => ({
+      id: `match-${pin.id}`,
+      pin,
+      targetPinId: pin.targetPinId,
+      matchScore: pin.matchScore,
+      safety: {
+        exactLocationHidden: true,
+        firstMessageTemplates: ['liked_track', 'walk_together', 'cafe_together'],
+        contactHiddenUntilAccepted: true,
+      },
+    }));
+  },
+
+  async createTravelMateRequest(userId: string, input: {
+    messageTemplate: string;
+    targetPinId?: string;
+    targetUserId?: string;
+  }) {
+    const targetPin = input.targetPinId
+      ? mockDb.soundMapPins.find((pin) => pin.id === input.targetPinId)
+      : undefined;
+    const targetUserId = input.targetUserId ?? targetPin?.userId;
+    if (!targetUserId) {
+      throw badRequest(ERROR_MESSAGES.TRAVEL_MATE_TARGET_REQUIRED);
+    }
+    const existingActiveRequest = mockDb.travelMateRequests
+      .filter(
+        (request) =>
+          request.requesterId === userId &&
+          request.targetUserId === targetUserId &&
+          request.targetPinId === input.targetPinId &&
+          ['pending', 'accepted'].includes(request.status),
+      )
+      .sort((first, second) => second.createdAt.getTime() - first.createdAt.getTime())[0];
+
+    if (existingActiveRequest) {
+      return mateRequestToDto(existingActiveRequest);
+    }
+
+    const now = new Date();
+    const request = {
+      id: createPublicId('mate'),
+      requesterId: userId,
+      targetUserId,
+      targetPinId: input.targetPinId,
+      messageTemplate: input.messageTemplate,
+      status: 'pending',
+      createdAt: now,
+      updatedAt: now,
+    };
+    mockDb.travelMateRequests.push(request);
+    return mateRequestToDto(request);
+  },
+
+  async updateTravelMateRequest(userId: string, requestId: string, input: { action: string }) {
+    const request = mockDb.travelMateRequests.find(
+      (item) => item.id === requestId && (item.requesterId === userId || item.targetUserId === userId),
+    );
+    if (!request) {
+      throw notFound(ERROR_MESSAGES.TRAVEL_MATE_REQUEST_NOT_FOUND);
+    }
+    const nextStatusByAction: Record<string, string> = {
+      accept: 'accepted',
+      cancel: 'cancelled',
+      decline: 'declined',
+      expire: 'expired',
+    };
+    request.status = nextStatusByAction[input.action] ?? request.status;
+    request.updatedAt = new Date();
+    return mateRequestToDto(request);
+  },
+
+  async blockCommunityUser(userId: string, input: { targetPinId?: string; targetUserId?: string }) {
+    const targetPin = input.targetPinId
+      ? mockDb.soundMapPins.find((pin) => pin.id === input.targetPinId)
+      : undefined;
+    const targetUserId = input.targetUserId ?? targetPin?.userId;
+
+    if (!targetUserId) {
+      throw badRequest(ERROR_MESSAGES.TRAVEL_MATE_TARGET_REQUIRED);
+    }
+
+    if (!mockDb.communityBlocks.some((block) => block.blockerId === userId && block.blockedUserId === targetUserId)) {
+      mockDb.communityBlocks.push({
+        id: createPublicId('block'),
+        blockedUserId: targetUserId,
+        blockerId: userId,
+        createdAt: new Date(),
+      });
+    }
+  },
+
+  async reportCommunityTarget(userId: string, input: {
+    details?: string;
+    reason: string;
+    requestId?: string;
+    targetPinId?: string;
+    targetUserId?: string;
+  }) {
+    mockDb.communityReports.push({
+      id: createPublicId('report'),
+      reporterId: userId,
+      reason: input.reason,
+      details: input.details,
+      requestId: input.requestId,
+      targetPinId: input.targetPinId,
+      targetUserId: input.targetUserId,
+      createdAt: new Date(),
     });
   },
 

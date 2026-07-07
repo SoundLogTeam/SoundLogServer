@@ -1,4 +1,5 @@
 export { authController } from './auth.controller.js';
+export { communityController } from './community.controller.js';
 export { devDbTestController } from './dev-db-test.controller.js';
 export { homeController } from './home.controller.js';
 export { libraryController } from './library.controller.js';

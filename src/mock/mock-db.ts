@@ -83,6 +83,67 @@ type MockPasswordUser = {
   passwordHash: string;
 };
 
+type MockTravelRoom = {
+  createdAt: Date;
+  id: string;
+  inviteCode: string;
+  ownerId: string;
+  sessionId?: string;
+  title: string;
+  updatedAt: Date;
+  visibility: string;
+};
+
+type MockTravelRoomMember = {
+  displayName?: string;
+  id: string;
+  joinedAt: Date;
+  role: string;
+  roomId: string;
+  userId: string;
+};
+
+type MockTravelRoomMoment = {
+  createdAt: Date;
+  id: string;
+  momentLogId?: string;
+  note?: string;
+  placeName?: string;
+  roomId: string;
+  status: string;
+  trackSnapshot?: MockTrack;
+  userId: string;
+};
+
+type MockSoundMapPin = {
+  approxLat: number;
+  approxLng: number;
+  createdAt: Date;
+  expiresAt: Date;
+  id: string;
+  lat: number;
+  lng: number;
+  moodTags: string[];
+  placeName?: string;
+  sessionId?: string;
+  trackSnapshot?: MockTrack;
+  travelMode?: string;
+  updatedAt: Date;
+  userId: string;
+  visibility: string;
+};
+
+type MockTravelMateRequest = {
+  createdAt: Date;
+  id: string;
+  messageTemplate: string;
+  requesterId: string;
+  status: string;
+  targetPinId?: string;
+  targetUserId: string;
+  updatedAt: Date;
+};
+
 function cloneTrack(track: (typeof tracks)[number]): MockTrack {
   return {
     id: track.id,
@@ -202,6 +263,27 @@ function createMockDb() {
     })),
     refreshTokens: [] as MockRefreshToken[],
     passwordUsers: [] as MockPasswordUser[],
+    travelRooms: [] as MockTravelRoom[],
+    travelRoomMembers: [] as MockTravelRoomMember[],
+    travelRoomMoments: [] as MockTravelRoomMoment[],
+    soundMapPins: [] as MockSoundMapPin[],
+    travelMateRequests: [] as MockTravelMateRequest[],
+    communityBlocks: [] as Array<{
+      blockedUserId: string;
+      blockerId: string;
+      createdAt: Date;
+      id: string;
+    }>,
+    communityReports: [] as Array<{
+      createdAt: Date;
+      details?: string;
+      id: string;
+      reason: string;
+      reporterId: string;
+      requestId?: string;
+      targetPinId?: string;
+      targetUserId?: string;
+    }>,
     idempotencyRecords: [] as Array<{
       idempotencyKey: string;
       response: unknown;

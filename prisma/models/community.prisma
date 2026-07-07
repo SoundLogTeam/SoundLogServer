@@ -1,0 +1,98 @@
+model TravelRoom {
+  id         String             @id
+  ownerId    String
+  title      String
+  inviteCode String             @unique
+  sessionId  String?
+  visibility String             @default("invite_only")
+  createdAt  DateTime           @default(now())
+  updatedAt  DateTime           @updatedAt
+  owner      User               @relation("TravelRoomOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  members    TravelRoomMember[]
+  moments    TravelRoomMoment[]
+}
+
+model TravelRoomMember {
+  id          String     @id @default(cuid())
+  roomId      String
+  userId      String
+  role        String
+  displayName String?
+  joinedAt    DateTime   @default(now())
+  room        TravelRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([roomId, userId])
+}
+
+model TravelRoomMoment {
+  id            String     @id
+  roomId        String
+  userId        String
+  momentLogId   String?
+  placeName     String?
+  note          String?
+  status        String     @default("candidate")
+  trackSnapshot Json?
+  createdAt     DateTime   @default(now())
+  room          TravelRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  user          User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model SoundMapPin {
+  id            String    @id
+  userId        String    @unique
+  sessionId     String?
+  visibility    String
+  lat           Float
+  lng           Float
+  approxLat     Float
+  approxLng     Float
+  travelMode    String?
+  moodTags      String[]
+  placeName     String?
+  trackSnapshot Json?
+  expiresAt     DateTime
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model TravelMateRequest {
+  id              String       @id
+  requesterId     String
+  targetUserId    String
+  targetPinId     String?
+  messageTemplate String
+  status          String
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  requester       User         @relation("TravelMateRequester", fields: [requesterId], references: [id], onDelete: Cascade)
+  targetUser      User         @relation("TravelMateTarget", fields: [targetUserId], references: [id], onDelete: Cascade)
+  reports         CommunityReport[]
+}
+
+model CommunityBlock {
+  id            String   @id @default(cuid())
+  blockerId     String
+  blockedUserId String
+  createdAt     DateTime @default(now())
+  blocker       User     @relation("CommunityBlocker", fields: [blockerId], references: [id], onDelete: Cascade)
+  blockedUser   User     @relation("CommunityBlocked", fields: [blockedUserId], references: [id], onDelete: Cascade)
+
+  @@unique([blockerId, blockedUserId])
+}
+
+model CommunityReport {
+  id             String             @id @default(cuid())
+  reporterId     String
+  targetUserId   String?
+  targetPinId    String?
+  requestId      String?
+  reason         String
+  details        String?
+  createdAt      DateTime           @default(now())
+  reporter       User               @relation("CommunityReporter", fields: [reporterId], references: [id], onDelete: Cascade)
+  targetUser     User?              @relation("CommunityReportedUser", fields: [targetUserId], references: [id], onDelete: SetNull)
+  mateRequest    TravelMateRequest? @relation(fields: [requestId], references: [id], onDelete: SetNull)
+}

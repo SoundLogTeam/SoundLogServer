@@ -515,6 +515,183 @@ describe('Soundlog API', () => {
     expect(updated.body.data.status).toBe('ended');
   });
 
+  it('handles travel rooms, sound map, and mate requests', async () => {
+    const targetEmail = `target-${Date.now()}@soundlog.test`;
+    const targetPassword = 'soundlog-password';
+    const targetRegister = await request(app).post('/v1/auth/register').send({
+      displayName: 'Nearby Sound Traveler',
+      email: targetEmail,
+      password: targetPassword,
+    });
+    expect(targetRegister.status).toBe(201);
+    const targetUserId = targetRegister.body.data.user.id;
+    const targetLogin = await request(app).post('/v1/auth/login').send({
+      email: targetEmail,
+      password: targetPassword,
+    });
+    expect(targetLogin.status).toBe(200);
+    const targetAuthHeader = `Bearer ${targetLogin.body.data.accessToken}`;
+
+    const room = await request(app)
+      .post('/v1/travel-rooms')
+      .set('Authorization', authHeader)
+      .send({
+        sessionId: 'community-session',
+        title: '강릉 사운드 여행방',
+      });
+    expect(room.status).toBe(201);
+    expect(room.body.data.inviteCode).toEqual(expect.any(String));
+
+    const joined = await request(app)
+      .post(`/v1/travel-rooms/${room.body.data.id}/join`)
+      .set('Authorization', targetAuthHeader)
+      .send({
+        displayName: '수경',
+        inviteCode: room.body.data.inviteCode,
+      });
+    expect(joined.status).toBe(200);
+    expect(joined.body.data.memberCount).toBe(2);
+
+    const sharedMoment = await request(app)
+      .post(`/v1/travel-rooms/${room.body.data.id}/moments`)
+      .set('Authorization', targetAuthHeader)
+      .send({
+        note: '주문진 바다 컷',
+        placeName: '주문진 해변',
+        status: 'accepted',
+        trackId: 'seoul-night-track',
+      });
+    expect(sharedMoment.status).toBe(201);
+    expect(sharedMoment.body.data.track.id).toBe('seoul-night-track');
+
+    const roomRecap = await request(app)
+      .post(`/v1/travel-rooms/${room.body.data.id}/recaps`)
+      .set('Authorization', authHeader)
+      .send({
+        templateId: 'album',
+        title: '강릉 공동 Recap',
+      });
+    expect(roomRecap.status).toBe(201);
+    expect(roomRecap.body.data.roomId).toBe(room.body.data.id);
+
+    const targetPin = await request(app)
+      .post('/v1/sound-map/current-track')
+      .set('Authorization', targetAuthHeader)
+      .send({
+        location: { lat: 37.752, lng: 128.876 },
+        moodTags: ['calm'],
+        placeName: '강릉 카페거리',
+        sessionId: 'community-session',
+        trackId: 'seoul-night-track',
+        travelMode: 'walk',
+        visibility: 'nearby',
+      });
+    expect(targetPin.status).toBe(202);
+    expect(targetPin.body.data.visibility).toBe('nearby');
+
+    const myPin = await request(app)
+      .post('/v1/sound-map/current-track')
+      .set('Authorization', authHeader)
+      .send({
+        location: { lat: 37.751, lng: 128.875 },
+        moodTags: ['fresh'],
+        placeName: '강릉역',
+        sessionId: 'community-session',
+        trackId: 'seoul-city',
+        travelMode: 'walk',
+        visibility: 'companions',
+      });
+    expect(myPin.status).toBe(202);
+
+    const map = await request(app)
+      .get('/v1/sound-map')
+      .set('Authorization', authHeader)
+      .query({ lat: 37.751, lng: 128.875, radiusMeters: 3000 });
+    expect(map.status).toBe(200);
+    expect(map.body.data.length).toBeGreaterThanOrEqual(2);
+
+    const smallRadiusMap = await request(app)
+      .get('/v1/sound-map')
+      .set('Authorization', authHeader)
+      .query({ lat: 37.751, lng: 128.875, radiusMeters: 100 });
+    expect(smallRadiusMap.status).toBe(200);
+    expect(smallRadiusMap.body.data.map((pin: { id: string }) => pin.id)).not.toContain(
+      targetPin.body.data.id,
+    );
+
+    const emptyNearbyByRadius = await request(app)
+      .get('/v1/sound-map/nearby')
+      .set('Authorization', authHeader)
+      .query({ lat: 37.751, lng: 128.875, radiusMeters: 100 });
+    expect(emptyNearbyByRadius.status).toBe(200);
+    expect(emptyNearbyByRadius.body.data).toEqual([]);
+
+    const nearby = await request(app)
+      .get('/v1/sound-map/nearby')
+      .set('Authorization', authHeader)
+      .query({ mood: '잔잔한', state: '산책' });
+    expect(nearby.status).toBe(200);
+    expect(nearby.body.data[0].targetPinId).toBe(targetPin.body.data.id);
+
+    const matches = await request(app)
+      .get('/v1/music-matches')
+      .set('Authorization', authHeader)
+      .query({ mood: '잔잔한', state: '산책' });
+    expect(matches.status).toBe(200);
+    expect(matches.body.data[0].targetPinId).toBe(targetPin.body.data.id);
+    expect(matches.body.data[0].safety.exactLocationHidden).toBe(true);
+
+    const mateRequest = await request(app)
+      .post('/v1/travel-mate-requests')
+      .set('Authorization', authHeader)
+      .send({
+        messageTemplate: 'liked_track',
+        targetPinId: targetPin.body.data.id,
+    });
+    expect(mateRequest.status).toBe(201);
+    expect(mateRequest.body.data.status).toBe('pending');
+
+    const duplicateMateRequest = await request(app)
+      .post('/v1/travel-mate-requests')
+      .set('Authorization', authHeader)
+      .send({
+        messageTemplate: 'liked_track',
+        targetPinId: targetPin.body.data.id,
+      });
+    expect(duplicateMateRequest.status).toBe(201);
+    expect(duplicateMateRequest.body.data.id).toBe(mateRequest.body.data.id);
+
+    const accepted = await request(app)
+      .patch(`/v1/travel-mate-requests/${mateRequest.body.data.id}`)
+      .set('Authorization', targetAuthHeader)
+      .send({ action: 'accept' });
+    expect(accepted.status).toBe(200);
+    expect(accepted.body.data.status).toBe('accepted');
+
+    const report = await request(app)
+      .post('/v1/community/reports')
+      .set('Authorization', authHeader)
+      .send({
+        reason: 'safety',
+        targetPinId: targetPin.body.data.id,
+        targetUserId,
+      });
+    expect(report.status).toBe(202);
+
+    const block = await request(app)
+      .post('/v1/community/blocks')
+      .set('Authorization', authHeader)
+      .send({ targetPinId: targetPin.body.data.id });
+    expect(block.status).toBe(202);
+
+    const hiddenMatches = await request(app)
+      .get('/v1/music-matches')
+      .set('Authorization', authHeader)
+      .query({ mood: '잔잔한', state: '산책' });
+    expect(hiddenMatches.status).toBe(200);
+    expect(hiddenMatches.body.data).toEqual([]);
+  });
+
   it('returns regional trends without auth', async () => {
     const response = await request(app)
       .get('/v1/trends/regions/KR-26/sound')

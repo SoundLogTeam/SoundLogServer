@@ -772,6 +772,381 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /v1/travel-rooms:
+    post:
+      tags:
+        - Community
+      summary: 공동 여행방 생성
+      operationId: createTravelRoom
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TravelRoomCreateRequest"
+      responses:
+        "201":
+          description: 생성된 공동 여행방
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TravelRoomResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/travel-rooms/{roomId}:
+    get:
+      tags:
+        - Community
+      summary: 공동 여행방 조회
+      operationId: getTravelRoom
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 공동 여행방
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TravelRoomResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/travel-rooms/{roomId}/join:
+    post:
+      tags:
+        - Community
+      summary: 공동 여행방 참여
+      operationId: joinTravelRoom
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TravelRoomJoinRequest"
+      responses:
+        "200":
+          description: 참여 후 공동 여행방
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TravelRoomResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/travel-rooms/{roomId}/moments:
+    post:
+      tags:
+        - Community
+      summary: 공동 Recap 후보 순간 추가
+      operationId: addTravelRoomMoment
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TravelRoomMomentCreateRequest"
+      responses:
+        "201":
+          description: 추가된 공동 순간
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TravelRoomMomentResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/travel-rooms/{roomId}/recaps:
+    post:
+      tags:
+        - Community
+      summary: 공동 Recap 생성
+      operationId: createTravelRoomRecap
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TravelRoomRecapCreateRequest"
+      responses:
+        "201":
+          description: 생성된 공동 Recap
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecapItemResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/sound-map:
+    get:
+      tags:
+        - Community
+      summary: Live Sound Map 핀 조회
+      operationId: getSoundMap
+      parameters:
+        - name: lat
+          in: query
+          schema:
+            type: number
+        - name: lng
+          in: query
+          schema:
+            type: number
+        - name: radiusMeters
+          in: query
+          schema:
+            type: integer
+            default: 3000
+        - name: visibility
+          in: query
+          schema:
+            type: string
+            enum: [companions, nearby]
+      responses:
+        "200":
+          description: 지도 핀 목록
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoundMapPinListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/sound-map/current-track:
+    post:
+      tags:
+        - Community
+      summary: 현재 선택 곡을 지도에 공개
+      operationId: upsertSoundMapCurrentTrack
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SoundMapCurrentTrackRequest"
+      responses:
+        "202":
+          description: 공개 상태 저장
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoundMapPinResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/sound-map/nearby:
+    get:
+      tags:
+        - Community
+      summary: 주변 익명 사운드 핀 조회
+      operationId: getNearbySounds
+      parameters:
+        - name: lat
+          in: query
+          schema:
+            type: number
+        - name: lng
+          in: query
+          schema:
+            type: number
+        - name: radiusMeters
+          in: query
+          schema:
+            type: integer
+            default: 3000
+        - name: state
+          in: query
+          schema:
+            type: string
+        - name: mood
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 주변 익명 사운드 핀
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoundMapPinListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/music-matches:
+    get:
+      tags:
+        - Community
+      summary: 주변 음악 취향 매칭 후보 조회
+      operationId: getMusicMatches
+      parameters:
+        - name: lat
+          in: query
+          schema:
+            type: number
+        - name: lng
+          in: query
+          schema:
+            type: number
+        - name: radiusMeters
+          in: query
+          schema:
+            type: integer
+            default: 3000
+        - name: state
+          in: query
+          schema:
+            type: string
+        - name: mood
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 취향 매칭 후보
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MusicMatchListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/travel-mate-requests:
+    post:
+      tags:
+        - Community
+      summary: 동행 매칭 요청 생성
+      operationId: createTravelMateRequest
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TravelMateRequestCreateRequest"
+      responses:
+        "201":
+          description: 생성된 동행 매칭 요청
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TravelMateRequestResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/travel-mate-requests/{requestId}:
+    patch:
+      tags:
+        - Community
+      summary: 동행 매칭 요청 상태 변경
+      operationId: updateTravelMateRequest
+      parameters:
+        - name: requestId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TravelMateRequestUpdateRequest"
+      responses:
+        "200":
+          description: 변경된 동행 매칭 요청
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TravelMateRequestResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/community/blocks:
+    post:
+      tags:
+        - Community
+      summary: 커뮤니티 사용자 차단
+      operationId: blockCommunityUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                targetUserId:
+                  type: string
+                  description: 대상 사용자 ID를 알고 있을 때 사용합니다.
+                targetPinId:
+                  type: string
+                  description: 익명 사운드맵 핀을 기준으로 서버가 대상 사용자를 찾아 차단합니다.
+      responses:
+        "202":
+          description: 차단 요청 수락
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcceptedResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/community/reports:
+    post:
+      tags:
+        - Community
+      summary: 커뮤니티 신고
+      operationId: reportCommunityTarget
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CommunityReportRequest"
+      responses:
+        "202":
+          description: 신고 요청 수락
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcceptedResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /v1/travel-sessions:
     post:
       tags:
@@ -1811,6 +2186,471 @@ components:
         createdAt:
           type: string
           format: date-time
+
+    TravelRoomCreateRequest:
+      type: object
+      properties:
+        sessionId:
+          type: string
+        title:
+          type: string
+          minLength: 1
+          maxLength: 80
+          default: Soundlog 여행방
+        visibility:
+          type: string
+          enum:
+            - invite_only
+            - companions
+          default: invite_only
+
+    TravelRoomJoinRequest:
+      type: object
+      properties:
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 40
+          example: 수경
+        inviteCode:
+          type: string
+          minLength: 4
+          maxLength: 16
+          example: A1B2C3D4
+
+    TravelRoomMomentCreateRequest:
+      type: object
+      properties:
+        momentLogId:
+          type: string
+        trackId:
+          type: string
+          example: seoul-night-track
+        trackTitle:
+          type: string
+          maxLength: 160
+          example: 서울의 밤
+        artistName:
+          type: string
+          maxLength: 120
+          example: 10cm
+        placeName:
+          type: string
+          maxLength: 120
+          example: 강릉 카페거리
+        note:
+          type: string
+          maxLength: 240
+          example: 주문진 바다 컷
+        status:
+          type: string
+          enum:
+            - candidate
+            - accepted
+          default: candidate
+
+    TravelRoomRecapCreateRequest:
+      type: object
+      properties:
+        representativeTrackId:
+          type: string
+        templateId:
+          type: string
+          enum:
+            - album
+            - film
+            - lp
+          default: album
+        title:
+          type: string
+          maxLength: 120
+
+    TravelRoomMember:
+      type: object
+      required:
+        - id
+        - userId
+        - role
+        - joinedAt
+      properties:
+        id:
+          type: string
+        userId:
+          type: string
+        role:
+          type: string
+          enum:
+            - owner
+            - member
+        displayName:
+          type: string
+        joinedAt:
+          type: string
+          format: date-time
+
+    TravelRoomMoment:
+      type: object
+      required:
+        - id
+        - userId
+        - status
+        - createdAt
+      properties:
+        id:
+          type: string
+        userId:
+          type: string
+        momentLogId:
+          type: string
+        placeName:
+          type: string
+        note:
+          type: string
+        status:
+          type: string
+          enum:
+            - candidate
+            - accepted
+        track:
+          $ref: "#/components/schemas/Track"
+        createdAt:
+          type: string
+          format: date-time
+
+    TravelRoom:
+      type: object
+      required:
+        - id
+        - title
+        - inviteCode
+        - visibility
+        - memberCount
+        - momentCount
+        - members
+        - moments
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        inviteCode:
+          type: string
+        sessionId:
+          type: string
+        visibility:
+          type: string
+          enum:
+            - invite_only
+            - companions
+        memberCount:
+          type: integer
+        momentCount:
+          type: integer
+        members:
+          type: array
+          items:
+            $ref: "#/components/schemas/TravelRoomMember"
+        moments:
+          type: array
+          items:
+            $ref: "#/components/schemas/TravelRoomMoment"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    SoundMapCurrentTrackRequest:
+      type: object
+      required:
+        - location
+        - visibility
+      properties:
+        location:
+          $ref: "#/components/schemas/GeoPoint"
+        sessionId:
+          type: string
+        visibility:
+          type: string
+          enum:
+            - companions
+            - nearby
+            - private
+        trackId:
+          type: string
+        trackTitle:
+          type: string
+          maxLength: 160
+        artistName:
+          type: string
+          maxLength: 120
+        travelMode:
+          $ref: "#/components/schemas/TravelMode"
+        moodTags:
+          type: array
+          items:
+            $ref: "#/components/schemas/MoodTag"
+        placeName:
+          type: string
+          maxLength: 120
+        ttlMinutes:
+          type: integer
+          minimum: 5
+          maximum: 240
+          default: 120
+
+    SoundMapPin:
+      type: object
+      required:
+        - id
+        - alias
+        - isMine
+        - visibility
+        - location
+        - moodTags
+        - profile
+        - expiresAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+        userId:
+          type: string
+          description: 본인 핀일 때만 내려갑니다.
+        alias:
+          type: string
+          example: 근처 여행자
+        isMine:
+          type: boolean
+        visibility:
+          type: string
+          enum:
+            - companions
+            - nearby
+            - private
+        location:
+          $ref: "#/components/schemas/GeoPoint"
+        moodTags:
+          type: array
+          items:
+            $ref: "#/components/schemas/MoodTag"
+        placeName:
+          type: string
+        profile:
+          type: object
+          required:
+            - preferredGenres
+            - preferredMoods
+            - travelStyles
+          properties:
+            preferredGenres:
+              type: array
+              items:
+                type: string
+            preferredMoods:
+              type: array
+              items:
+                type: string
+            travelStyles:
+              type: array
+              items:
+                type: string
+        sessionId:
+          type: string
+        track:
+          $ref: "#/components/schemas/Track"
+        travelMode:
+          $ref: "#/components/schemas/TravelMode"
+        expiresAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    MusicMatch:
+      type: object
+      required:
+        - id
+        - pin
+        - targetPinId
+        - matchScore
+        - safety
+      properties:
+        id:
+          type: string
+        pin:
+          $ref: "#/components/schemas/SoundMapPin"
+        targetPinId:
+          type: string
+        matchScore:
+          type: integer
+          minimum: 0
+          maximum: 100
+        safety:
+          type: object
+          required:
+            - exactLocationHidden
+            - firstMessageTemplates
+            - contactHiddenUntilAccepted
+          properties:
+            exactLocationHidden:
+              type: boolean
+            firstMessageTemplates:
+              type: array
+              items:
+                type: string
+                enum:
+                  - liked_track
+                  - walk_together
+                  - cafe_together
+            contactHiddenUntilAccepted:
+              type: boolean
+
+    TravelMateRequestCreateRequest:
+      type: object
+      properties:
+        targetPinId:
+          type: string
+        targetUserId:
+          type: string
+        messageTemplate:
+          type: string
+          enum:
+            - liked_track
+            - walk_together
+            - cafe_together
+          default: liked_track
+
+    TravelMateRequestUpdateRequest:
+      type: object
+      required:
+        - action
+      properties:
+        action:
+          type: string
+          enum:
+            - accept
+            - decline
+            - cancel
+            - expire
+
+    TravelMateRequest:
+      type: object
+      required:
+        - id
+        - requesterId
+        - targetUserId
+        - messageTemplate
+        - status
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+        requesterId:
+          type: string
+        targetUserId:
+          type: string
+        targetPinId:
+          type: string
+        messageTemplate:
+          type: string
+          enum:
+            - liked_track
+            - walk_together
+            - cafe_together
+        status:
+          type: string
+          enum:
+            - pending
+            - accepted
+            - declined
+            - expired
+            - cancelled
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    CommunityReportRequest:
+      type: object
+      required:
+        - reason
+      properties:
+        reason:
+          type: string
+          enum:
+            - safety
+            - spam
+            - inappropriate
+            - other
+        targetUserId:
+          type: string
+        targetPinId:
+          type: string
+        requestId:
+          type: string
+        details:
+          type: string
+          maxLength: 500
+
+    TravelRoomResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          $ref: "#/components/schemas/TravelRoom"
+
+    TravelRoomMomentResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          $ref: "#/components/schemas/TravelRoomMoment"
+
+    SoundMapPinResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          $ref: "#/components/schemas/SoundMapPin"
+
+    SoundMapPinListResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/SoundMapPin"
+
+    MusicMatchListResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/MusicMatch"
+
+    TravelMateRequestResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          $ref: "#/components/schemas/TravelMateRequest"
 
     TravelSessionCreateRequest:
       type: object

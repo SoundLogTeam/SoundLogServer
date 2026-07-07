@@ -27,5 +27,9 @@ export const ERROR_MESSAGES = {
   RESOURCE_NOT_FOUND: '요청한 리소스를 찾을 수 없습니다.',
   ROUTE_NOT_FOUND: '요청한 API 경로를 찾을 수 없습니다.',
   TRACK_NOT_FOUND: '트랙을 찾을 수 없습니다.',
+  TRAVEL_MATE_REQUEST_NOT_FOUND: '동행 매칭 요청을 찾을 수 없습니다.',
+  TRAVEL_MATE_TARGET_REQUIRED: '동행 매칭 대상이 필요합니다.',
+  TRAVEL_ROOM_INVITE_CODE_INVALID: '여행방 초대 코드가 올바르지 않습니다.',
+  TRAVEL_ROOM_NOT_FOUND: '여행방을 찾을 수 없습니다.',
   TRAVEL_SESSION_NOT_FOUND: '여행 세션을 찾을 수 없습니다.',
 } as const;
