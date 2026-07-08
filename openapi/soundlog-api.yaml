@@ -2004,14 +2004,13 @@ components:
     MomentLogCreateForm:
       type: object
       required:
-        - photo
         - createdAt
         - moodTags
       properties:
         photo:
           type: string
           format: binary
-          description: 카메라 촬영 이미지 파일
+          description: 카메라 촬영 이미지 파일. 사진 없이 음악/장소 로그만 저장할 때는 생략할 수 있습니다.
         createdAt:
           type: string
           format: date-time
@@ -2027,6 +2026,10 @@ components:
           type: string
         placeName:
           type: string
+        note:
+          type: string
+          maxLength: 240
+          description: 사용자가 Moment 저장 시 남긴 짧은 메모
         placeCategory:
           type: string
         trackId:
@@ -2046,7 +2049,6 @@ components:
       type: object
       required:
         - id
-        - photoUrl
         - createdAt
         - moodTags
         - syncStatus
@@ -2070,6 +2072,9 @@ components:
           type: string
         placeName:
           type: string
+        note:
+          type: string
+          maxLength: 240
         track:
           $ref: "#/components/schemas/Track"
         travelMode:
@@ -2099,6 +2104,7 @@ components:
         - track_save
         - track_unsave
         - playlist_open
+        - mood_adjusted
         - mood_filter_change
         - live_track_shared
         - nearby_sound_opened

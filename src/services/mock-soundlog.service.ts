@@ -109,6 +109,7 @@ function momentLogToDto(log: (typeof mockDb.momentLogs)[number]) {
     placeCategory: log.placeCategory,
     placeId: log.placeId,
     placeName: log.placeName,
+    note: log.note,
     track: log.trackSnapshot,
     travelMode: log.travelMode,
     moodTags: log.moodTags,
@@ -731,10 +732,11 @@ export const mockSoundlogService = {
     lat?: number;
     lng?: number;
     moodTags: string[];
-    photoPath: string;
+    photoPath?: string;
     placeCategory?: string;
     placeId?: string;
     placeName?: string;
+    note?: string;
     sessionId?: string;
     trackId?: string;
     trackTitle?: string;
@@ -746,7 +748,9 @@ export const mockSoundlogService = {
         const track = findMockTrack(input.trackId);
         const log = {
           id: createPublicId('moment'),
-          photoUrl: `${env.UPLOAD_PUBLIC_BASE_URL}${input.photoPath}`,
+          photoUrl: input.photoPath
+            ? `${env.UPLOAD_PUBLIC_BASE_URL}${input.photoPath}`
+            : undefined,
           createdAt: new Date(input.createdAt),
           sessionId: input.sessionId,
           lat: input.lat,
@@ -754,6 +758,7 @@ export const mockSoundlogService = {
           placeCategory: input.placeCategory,
           placeId: input.placeId,
           placeName: input.placeName,
+          note: input.note,
           trackSnapshot:
             track ??
             (input.trackTitle

@@ -209,6 +209,7 @@ export async function seedDatabase() {
         createdAt: new Date(log.createdAt),
         sessionId: log.sessionId,
         placeName: log.placeName,
+        note: log.note,
         moodTags: [...log.moodTags],
         source: 'camera',
         syncStatus: 'synced',

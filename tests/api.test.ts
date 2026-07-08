@@ -74,6 +74,7 @@ function findSecretLeaks(value: unknown, secret: string, path = '$'): string[] {
 async function createTestMomentLog(input: {
   authHeader: string;
   filename: string;
+  note?: string;
   placeName: string;
   sessionId?: string;
   trackId?: string;
@@ -83,6 +84,7 @@ async function createTestMomentLog(input: {
     .set('Authorization', input.authHeader)
     .field('createdAt', new Date().toISOString())
     .field('moodTags', 'fresh,calm')
+    .field('note', input.note ?? '')
     .field('placeName', input.placeName)
     .field('sessionId', input.sessionId ?? '')
     .field('trackId', input.trackId ?? 'seoul-city')
@@ -376,6 +378,7 @@ describe('Soundlog API', () => {
       .set('Idempotency-Key', idempotencyKey)
       .field('createdAt', new Date().toISOString())
       .field('moodTags', 'fresh,calm')
+      .field('note', '카페 거리에서 남긴 테스트 메모')
       .field('placeName', '테스트 장소')
       .field('trackId', 'seoul-city')
       .attach('photo', Buffer.from('fake-image'), {
@@ -385,6 +388,7 @@ describe('Soundlog API', () => {
 
     expect(created.status).toBe(201);
     expect(created.body.data.photoUrl).toContain('/uploads/');
+    expect(created.body.data.note).toBe('카페 거리에서 남긴 테스트 메모');
 
     const duplicate = await request(app)
       .post('/v1/moment-logs')
@@ -392,6 +396,7 @@ describe('Soundlog API', () => {
       .set('Idempotency-Key', idempotencyKey)
       .field('createdAt', new Date().toISOString())
       .field('moodTags', 'fresh')
+      .field('note', '중복 요청 메모는 반영되지 않아야 함')
       .field('placeName', '중복 요청 장소')
       .field('trackId', 'seoul-city')
       .attach('photo', Buffer.from('fake-image'), {
@@ -400,12 +405,26 @@ describe('Soundlog API', () => {
       });
     expect(duplicate.status).toBe(201);
     expect(duplicate.body.data.id).toBe(created.body.data.id);
+    expect(duplicate.body.data.note).toBe('카페 거리에서 남긴 테스트 메모');
+
+    const textOnlyMoment = await request(app)
+      .post('/v1/moment-logs')
+      .set('Authorization', authHeader)
+      .field('createdAt', new Date().toISOString())
+      .field('moodTags', 'calm')
+      .field('note', '사진 없이 남긴 테스트 메모')
+      .field('placeName', '텍스트 기록 장소')
+      .field('trackTitle', '사진 없는 순간');
+    expect(textOnlyMoment.status).toBe(201);
+    expect(textOnlyMoment.body.data.photoUrl).toBeUndefined();
+    expect(textOnlyMoment.body.data.note).toBe('사진 없이 남긴 테스트 메모');
 
     const list = await request(app)
       .get('/v1/moment-logs')
       .set('Authorization', authHeader);
     expect(list.status).toBe(200);
     expect(list.body.data.length).toBeGreaterThan(0);
+    expect(list.body.data.some((item: { note?: string }) => item.note === '카페 거리에서 남긴 테스트 메모')).toBe(true);
   });
 
   it('accepts recommendation events', async () => {

@@ -840,6 +840,7 @@ function momentLogToDto(log: MomentLog) {
     placeCategory: log.placeCategory ?? undefined,
     placeId: log.placeId ?? undefined,
     placeName: log.placeName ?? undefined,
+    note: log.note ?? undefined,
     track: (log.trackSnapshot as TrackDto | null) ?? undefined,
     travelMode: log.travelMode ?? undefined,
     moodTags: log.moodTags,
@@ -1341,10 +1342,11 @@ export const soundlogService = {
       lat?: number;
       lng?: number;
       moodTags: string[];
-      photoPath: string;
+      photoPath?: string;
       placeCategory?: string;
       placeId?: string;
       placeName?: string;
+      note?: string;
       sessionId?: string;
       trackId?: string;
       trackTitle?: string;
@@ -1358,7 +1360,9 @@ export const soundlogService = {
         const track = input.trackId
           ? await prisma.track.findUnique({ where: { id: input.trackId } })
           : undefined;
-        const photoUrl = normalizePublicUrl(env.UPLOAD_PUBLIC_BASE_URL, input.photoPath);
+        const photoUrl = input.photoPath
+          ? normalizePublicUrl(env.UPLOAD_PUBLIC_BASE_URL, input.photoPath)
+          : undefined;
         const id = createPublicId('moment');
         const log = await prisma.momentLog.create({
           data: {
@@ -1372,6 +1376,7 @@ export const soundlogService = {
             placeCategory: input.placeCategory,
             placeId: input.placeId,
             placeName: input.placeName,
+            note: input.note,
             trackSnapshot:
               track || input.trackTitle
                 ? {
