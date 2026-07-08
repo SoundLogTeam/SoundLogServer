@@ -126,6 +126,14 @@ export async function seedPublicCatalog() {
 }
 
 export async function seedDatabase() {
+  await prisma.communityReport.deleteMany({});
+  await prisma.communityBlock.deleteMany({});
+  await prisma.travelMateRequest.deleteMany({});
+  await prisma.soundMapPin.deleteMany({});
+  await prisma.travelRoomMoment.deleteMany({});
+  await prisma.travelRoomMember.deleteMany({});
+  await prisma.travelRoom.deleteMany({});
+
   const user = await prisma.user.upsert({
     where: {
       provider_providerUserId: defaultUser,

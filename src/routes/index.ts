@@ -2,6 +2,7 @@ import { Router } from 'express';
 
 import {
   authController,
+  communityController,
   devDbTestController,
   homeController,
   libraryController,
@@ -21,6 +22,7 @@ import { momentPhotoUpload } from '../middlewares/upload.middleware.js';
 import { validate } from '../middlewares/validate.middleware.js';
 import {
   authValidators,
+  communityValidators,
   devDbTestValidators,
   homeValidators,
   libraryValidators,
@@ -184,6 +186,116 @@ export function createApiRouter() {
       body: recapValidators.shareEventBody,
     }),
     asyncHandler(recapController.createShareEvent),
+  );
+
+  router.post(
+    '/v1/travel-rooms',
+    authMiddleware,
+    validate({ body: communityValidators.createRoomBody }),
+    asyncHandler(communityController.createTravelRoom),
+  );
+  router.get(
+    '/v1/travel-rooms/:roomId',
+    authMiddleware,
+    validate({ params: communityValidators.roomParams }),
+    asyncHandler(communityController.getTravelRoom),
+  );
+  router.post(
+    '/v1/travel-rooms/:roomId/join',
+    authMiddleware,
+    validate({
+      params: communityValidators.roomParams,
+      body: communityValidators.joinRoomBody,
+    }),
+    asyncHandler(communityController.joinTravelRoom),
+  );
+  router.post(
+    '/v1/travel-rooms/:roomId/moments',
+    authMiddleware,
+    validate({
+      params: communityValidators.roomParams,
+      body: communityValidators.addRoomMomentBody,
+    }),
+    asyncHandler(communityController.addTravelRoomMoment),
+  );
+  router.patch(
+    '/v1/travel-rooms/:roomId/moments/:momentId',
+    authMiddleware,
+    validate({
+      params: communityValidators.roomMomentParams,
+      body: communityValidators.updateRoomMomentBody,
+    }),
+    asyncHandler(communityController.updateTravelRoomMoment),
+  );
+  router.post(
+    '/v1/travel-rooms/:roomId/moments/:momentId/comments',
+    authMiddleware,
+    validate({
+      params: communityValidators.roomMomentParams,
+      body: communityValidators.addRoomMomentCommentBody,
+    }),
+    asyncHandler(communityController.addTravelRoomMomentComment),
+  );
+  router.post(
+    '/v1/travel-rooms/:roomId/recaps',
+    authMiddleware,
+    validate({
+      params: communityValidators.roomParams,
+      body: communityValidators.createRoomRecapBody,
+    }),
+    asyncHandler(communityController.createTravelRoomRecap),
+  );
+
+  router.get(
+    '/v1/sound-map',
+    authMiddleware,
+    validate({ query: communityValidators.soundMapQuery }),
+    asyncHandler(communityController.getSoundMap),
+  );
+  router.post(
+    '/v1/sound-map/current-track',
+    authMiddleware,
+    validate({ body: communityValidators.currentTrackBody }),
+    asyncHandler(communityController.upsertCurrentTrack),
+  );
+  router.get(
+    '/v1/sound-map/nearby',
+    authMiddleware,
+    validate({ query: communityValidators.musicMatchesQuery }),
+    asyncHandler(communityController.getNearbySounds),
+  );
+  router.get(
+    '/v1/music-matches',
+    authMiddleware,
+    validate({ query: communityValidators.musicMatchesQuery }),
+    asyncHandler(communityController.getMusicMatches),
+  );
+  router.post(
+    '/v1/travel-mate-requests',
+    authMiddleware,
+    validate({ body: communityValidators.createMateRequestBody }),
+    asyncHandler(communityController.createTravelMateRequest),
+  );
+  router.patch(
+    '/v1/travel-mate-requests/:requestId',
+    authMiddleware,
+    validate({
+      params: communityValidators.mateRequestParams,
+      body: communityValidators.updateMateRequestBody,
+    }),
+    asyncHandler(communityController.updateTravelMateRequest),
+  );
+  router.post(
+    '/v1/community/blocks',
+    authMiddleware,
+    validate({ body: communityValidators.blockBody }),
+    asyncHandler(communityController.blockCommunityUser),
+  );
+  router.post(
+    '/v1/community/reports',
+    authMiddleware,
+    validate({ body: communityValidators.reportBody }),
+    asyncHandler(communityController.reportCommunityTarget),
   );
 
   router.post(

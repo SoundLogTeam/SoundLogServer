@@ -15,6 +15,10 @@ export function badRequest(message: string, details?: Record<string, unknown>) {
   return new HttpError(400, ERROR_CODES.BAD_REQUEST, message, details);
 }
 
+export function forbidden(message: string = ERROR_MESSAGES.FORBIDDEN) {
+  return new HttpError(403, ERROR_CODES.FORBIDDEN, message);
+}
+
 export function unauthorized(message: string = ERROR_MESSAGES.AUTH_REQUIRED) {
   return new HttpError(401, ERROR_CODES.UNAUTHORIZED, message);
 }

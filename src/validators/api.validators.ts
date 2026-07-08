@@ -80,6 +80,9 @@ const geoPointSchema = z.object({
   lng: z.number().min(-180).max(180),
 });
 
+const optionalLatQuery = z.coerce.number().min(-90).max(90).optional();
+const optionalLngQuery = z.coerce.number().min(-180).max(180).optional();
+
 const recommendationContextSchema = z
   .object({
     moodFilter: z.string().optional(),
@@ -256,6 +259,25 @@ export const recommendationEventValidators = {
             'track_unsave',
             'playlist_open',
             'mood_filter_change',
+            'live_track_shared',
+            'nearby_sound_opened',
+            'sound_map_viewed',
+            'music_match_viewed',
+            'music_match_profile_opened',
+            'travel_mode_enabled',
+            'trip_room_created',
+            'trip_room_joined',
+            'shared_moment_added',
+            'shared_moment_status_updated',
+            'shared_moment_commented',
+            'collab_recap_created',
+            'travel_mate_requested',
+            'travel_mate_accepted',
+            'travel_mate_declined',
+            'travel_mate_cancelled',
+            'travel_mate_expired',
+            'community_user_blocked',
+            'community_user_reported',
             'recommendation_mode_change',
             'top_filter_change',
             'recap_representative_track_select',
@@ -305,6 +327,98 @@ export const travelSessionValidators = {
     endedAt: z.string().datetime().optional(),
     location: geoPointSchema.optional(),
     status: z.enum(['active', 'ended']),
+  }),
+};
+
+export const communityValidators = {
+  roomParams: z.object({
+    roomId: z.string().min(1),
+  }),
+  roomMomentParams: z.object({
+    momentId: z.string().min(1),
+    roomId: z.string().min(1),
+  }),
+  createRoomBody: z.object({
+    sessionId: z.string().optional(),
+    title: z.string().trim().min(1).max(80).default('Soundlog 여행방'),
+    visibility: z.enum(['invite_only', 'companions']).optional().default('invite_only'),
+  }),
+  joinRoomBody: z.object({
+    displayName: z.string().trim().min(1).max(40).optional(),
+    inviteCode: z.string().trim().min(4).max(16).optional(),
+  }),
+  addRoomMomentBody: z.object({
+    artistName: z.string().trim().max(120).optional(),
+    momentLogId: z.string().optional(),
+    note: z.string().trim().max(240).optional(),
+    placeName: z.string().trim().max(120).optional(),
+    status: z.enum(['candidate', 'accepted', 'rejected']).optional().default('candidate'),
+    trackId: z.string().optional(),
+    trackTitle: z.string().trim().max(160).optional(),
+  }),
+  updateRoomMomentBody: z.object({
+    status: z.enum(['candidate', 'accepted', 'rejected']),
+  }),
+  addRoomMomentCommentBody: z.object({
+    body: z.string().trim().min(1).max(300),
+  }),
+  createRoomRecapBody: z.object({
+    representativeTrackId: z.string().optional(),
+    templateId: z.enum(['album', 'film', 'lp']).optional().default('album'),
+    title: z.string().trim().max(120).optional(),
+  }),
+  soundMapQuery: z.object({
+    lat: optionalLatQuery,
+    lng: optionalLngQuery,
+    radiusMeters: z.coerce.number().int().min(100).max(20000).optional().default(3000),
+    visibility: z.enum(['companions', 'nearby']).optional(),
+  }),
+  currentTrackBody: z.object({
+    location: geoPointSchema,
+    moodTags: z.array(moodTagSchema).optional().default([]),
+    placeName: z.string().trim().max(120).optional(),
+    sessionId: z.string().optional(),
+    trackId: z.string().optional(),
+    trackTitle: z.string().trim().max(160).optional(),
+    artistName: z.string().trim().max(120).optional(),
+    travelMode: travelModeSchema.optional(),
+    ttlMinutes: z.number().int().min(5).max(240).optional().default(120),
+    visibility: z.enum(['companions', 'nearby', 'private']),
+  }),
+  musicMatchesQuery: z.object({
+    lat: optionalLatQuery,
+    lng: optionalLngQuery,
+    mood: z.string().optional(),
+    radiusMeters: z.coerce.number().int().min(100).max(20000).optional().default(3000),
+    state: z.string().optional(),
+  }),
+  createMateRequestBody: z.object({
+    messageTemplate: z
+      .enum(['liked_track', 'walk_together', 'cafe_together'])
+      .default('liked_track'),
+    targetPinId: z.string().optional(),
+    targetUserId: z.string().optional(),
+  }),
+  mateRequestParams: z.object({
+    requestId: z.string().min(1),
+  }),
+  updateMateRequestBody: z.object({
+    action: z.enum(['accept', 'decline', 'cancel', 'expire']),
+  }),
+  blockBody: z
+    .object({
+      targetPinId: z.string().optional(),
+      targetUserId: z.string().min(1).optional(),
+    })
+    .refine((value) => Boolean(value.targetUserId || value.targetPinId), {
+      message: ERROR_MESSAGES.TRAVEL_MATE_TARGET_REQUIRED,
+    }),
+  reportBody: z.object({
+    details: z.string().trim().max(500).optional(),
+    reason: z.enum(['safety', 'spam', 'inappropriate', 'other']),
+    requestId: z.string().optional(),
+    targetPinId: z.string().optional(),
+    targetUserId: z.string().optional(),
   }),
 };
 
