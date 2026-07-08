@@ -9,7 +9,8 @@ info:
   description: |
     Soundlog React Native 앱과 백엔드 서버를 연결하기 위한 API 명세입니다.
 
-    MVP 범위는 홈 추천, 관광지 조회, 플레이리스트 상세, 순간 로그, 리캡, 보관함, 추천 피드백 수집을 포함합니다.
+    MVP 범위는 홈 추천, 관광지 조회, 플레이리스트 상세, 순간 로그, 리캡, 보관함, 추천 피드백 수집,
+    여행 세션, 공동 여행방, Live Sound Map, 음악 취향 매칭을 포함합니다.
     한국관광공사 OpenAPI 원본 응답은 서버에서 Soundlog 도메인 모델로 정규화해서 앱에 전달합니다.
 servers:
   - url: http://localhost:4000
@@ -24,7 +25,7 @@ tags:
   - name: Auth
     description: 간편 로그인 및 토큰 관리
   - name: Me
-    description: 사용자 프로필과 음악 플랫폼 설정
+    description: 사용자 프로필과 로컬 데이터 마이그레이션
   - name: Tour
     description: 관광공사 데이터 기반 장소 컨텍스트
   - name: Home
@@ -43,6 +44,8 @@ tags:
     description: 여행 세션 시작/종료
   - name: Trends
     description: 지역 사운드 트렌드
+  - name: Community
+    description: 공동 여행방, Live Sound Map, 취향 매칭, 신고/차단
 security:
   - bearerAuth: []
 paths:
@@ -214,7 +217,7 @@ paths:
       operationId: getMe
       responses:
         "200":
-          description: 로그인 사용자, 취향 프로필, 음악 플랫폼 설정
+          description: 로그인 사용자와 취향 프로필 요약
           content:
             application/json:
               schema:
@@ -777,6 +780,7 @@ paths:
       tags:
         - Community
       summary: 공동 여행방 생성
+      description: 인증된 사용자를 방장(owner)으로 공동 여행방을 생성합니다.
       operationId: createTravelRoom
       requestBody:
         required: true
@@ -799,6 +803,7 @@ paths:
       tags:
         - Community
       summary: 공동 여행방 조회
+      description: 방장 또는 참여자만 공동 여행방 상세, 멤버, 후보 순간, 댓글을 조회할 수 있습니다.
       operationId: getTravelRoom
       parameters:
         - name: roomId
@@ -823,6 +828,7 @@ paths:
       tags:
         - Community
       summary: 공동 여행방 참여
+      description: 이미 참여한 사용자는 바로 방 정보를 받으며, 신규 참여자는 초대 코드가 필요합니다.
       operationId: joinTravelRoom
       parameters:
         - name: roomId
@@ -853,6 +859,7 @@ paths:
       tags:
         - Community
       summary: 공동 Recap 후보 순간 추가
+      description: 방장 또는 참여자만 사진/곡/장소가 붙은 공동 Recap 후보 순간을 추가할 수 있습니다.
       operationId: addTravelRoomMoment
       parameters:
         - name: roomId
@@ -919,6 +926,7 @@ paths:
       tags:
         - Community
       summary: 공동 Recap 후보 댓글 추가
+      description: 방장 또는 참여자만 공동 순간에 댓글을 남길 수 있습니다.
       operationId: addTravelRoomMomentComment
       parameters:
         - name: roomId
@@ -954,6 +962,7 @@ paths:
       tags:
         - Community
       summary: 공동 Recap 생성
+      description: 방장만 공동 Recap을 생성할 수 있으며, accepted 후보 순간이 있으면 accepted만 우선 사용합니다.
       operationId: createTravelRoomRecap
       parameters:
         - name: roomId
@@ -985,6 +994,7 @@ paths:
       tags:
         - Community
       summary: Live Sound Map 핀 조회
+      description: 좌표가 있으면 반경 내 핀을 반환하고, 좌표가 없으면 사용자가 참여 중인 여행방의 동행자 핀만 반환합니다.
       operationId: getSoundMap
       parameters:
         - name: lat
@@ -1020,6 +1030,7 @@ paths:
       tags:
         - Community
       summary: 현재 선택 곡을 지도에 공개
+      description: 서버에 active 여행 세션이 있는 사용자만 현재 선택 곡과 대략 위치를 지도에 공개할 수 있습니다.
       operationId: upsertSoundMapCurrentTrack
       requestBody:
         required: true
@@ -1044,6 +1055,7 @@ paths:
       tags:
         - Community
       summary: 주변 익명 사운드 핀 조회
+      description: 위치 권한 없이 호출하면 낯선 사용자 핀을 노출하지 않고 빈 목록을 반환합니다.
       operationId: getNearbySounds
       parameters:
         - name: lat
@@ -1082,6 +1094,7 @@ paths:
       tags:
         - Community
       summary: 주변 음악 취향 매칭 후보 조회
+      description: 위치 권한 없이 호출하면 낯선 사용자 매칭 후보를 노출하지 않고 빈 목록을 반환합니다.
       operationId: getMusicMatches
       parameters:
         - name: lat
@@ -1120,6 +1133,7 @@ paths:
       tags:
         - Community
       summary: 동행 매칭 요청 생성
+      description: 대상 사용자가 공개한 매칭 후보일 때만 요청을 생성합니다.
       operationId: createTravelMateRequest
       requestBody:
         required: true
@@ -1144,6 +1158,7 @@ paths:
       tags:
         - Community
       summary: 동행 매칭 요청 상태 변경
+      description: 수신자는 accept/decline, 발신자는 cancel, 시스템 또는 운영 도구는 expire 액션을 사용할 수 있습니다.
       operationId: updateTravelMateRequest
       parameters:
         - name: requestId

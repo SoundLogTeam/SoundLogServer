@@ -82,6 +82,11 @@ EXPO_PUBLIC_SOUNDLOG_API_BASE_URL=http://localhost:4000 npm run web
 
 - Swagger UI: `http://localhost:4000/docs`
 - OpenAPI YAML: `http://localhost:4000/openapi.yaml`
+- 운영 API 프록시: `https://soundlog.shop/api/soundlog`
+
+Swagger에서 바로 DB 쓰기를 확인할 때는 인증 없이 호출 가능한 개발용 API를 사용할 수 있습니다.
+
+- `POST /v1/dev/db-test-records`: `DbTestRecord` row 생성 또는 mock 응답 반환
 
 ## Production hardening
 
@@ -118,18 +123,57 @@ pnpm db:seed     # 로컬 seed 데이터 적재
 
 ## API Groups
 
-- System
-- Auth
-- Me
-- Tour
-- Home
-- Playlists
-- Library
-- MomentLogs
-- RecommendationEvents
-- Recaps
-- TravelSessions
+- System / Dev
+  - `GET /v1/health`
+  - `POST /v1/dev/db-test-records`
+- Auth / Me
+  - `POST /v1/auth/register`
+  - `POST /v1/auth/login`
+  - `POST /v1/auth/refresh`
+  - `POST /v1/auth/logout`
+  - `GET /v1/me`
+  - `PATCH /v1/me/profile`
+  - `POST /v1/me/migrate-local-data`
+- Tour / Home / Playlists
+  - `GET /v1/tour/nearby-places`
+  - `GET /v1/home/featured-playlists`
+  - `GET /v1/home/mood-recommendations`
+  - `GET /v1/home/recent-music-logs`
+  - `POST /v1/playlists/contextual`
+  - `GET /v1/playlists/:playlistId`
+- Moment Logs / Library / Recaps
+  - `GET /v1/moment-logs`
+  - `POST /v1/moment-logs`
+  - `GET /v1/library/tracks`
+  - `PUT /v1/library/tracks/:trackId`
+  - `POST /v1/recommendation-events`
+  - `GET /v1/recaps`
+  - `POST /v1/recaps`
+  - `GET /v1/recaps/:recapId/share`
+  - `POST /v1/recaps/:recapId/share-events`
+- Travel Sessions
+  - `POST /v1/travel-sessions`: 서버 기준 여행 모드 시작
+  - `PATCH /v1/travel-sessions/:sessionId`: 여행 모드 상태 변경
+- Community
+  - `POST /v1/travel-rooms`: 방장으로 공동 여행방 생성
+  - `GET /v1/travel-rooms/:roomId`: 방장/참여자만 공동 여행방 조회
+  - `POST /v1/travel-rooms/:roomId/join`: 신규 참여자는 초대 코드 필요
+  - `POST /v1/travel-rooms/:roomId/moments`: 공동 Recap 후보 순간 추가
+  - `PATCH /v1/travel-rooms/:roomId/moments/:momentId`: 방장만 후보 상태 변경
+  - `POST /v1/travel-rooms/:roomId/moments/:momentId/comments`: 공동 순간 댓글 추가
+  - `POST /v1/travel-rooms/:roomId/recaps`: 방장만 공동 Recap 생성
+  - `GET /v1/sound-map`: Live Sound Map 핀 조회
+  - `POST /v1/sound-map/current-track`: active 여행 세션이 있어야 현재 곡 공개 가능
+  - `GET /v1/sound-map/nearby`: 좌표가 없으면 낯선 사용자 핀 없이 빈 목록 반환
+  - `GET /v1/music-matches`: 좌표가 없으면 낯선 사용자 매칭 후보 없이 빈 목록 반환
+  - `POST /v1/travel-mate-requests`: 공개 매칭 후보에게 동행 요청
+  - `PATCH /v1/travel-mate-requests/:requestId`: 수신자/발신자 권한에 따라 요청 상태 변경
+  - `POST /v1/community/blocks`
+  - `POST /v1/community/reports`
 - Trends
+  - `GET /v1/trends/regions/:regionCode/sound`
+
+현재 서버는 스포티파이 재생 제어 API와 `/v1/me/music-platform` API를 제공하지 않습니다. Soundlog는 곡 메타데이터와 외부 링크를 기록/추천/Recap에 연결하는 방식으로 동작합니다.
 
 ## Verification
 
