@@ -33,6 +33,34 @@ export const communityController = {
     );
   },
 
+  async updateTravelRoomMoment(req: Request, res: Response) {
+    const user = requireUser(req);
+    res.json(
+      dataResponse(
+        await apiService.updateTravelRoomMoment(
+          user.id,
+          String(req.params.roomId),
+          String(req.params.momentId),
+          req.body,
+        ),
+      ),
+    );
+  },
+
+  async addTravelRoomMomentComment(req: Request, res: Response) {
+    const user = requireUser(req);
+    res.status(201).json(
+      dataResponse(
+        await apiService.addTravelRoomMomentComment(
+          user.id,
+          String(req.params.roomId),
+          String(req.params.momentId),
+          req.body,
+        ),
+      ),
+    );
+  },
+
   async createTravelRoomRecap(req: Request, res: Response) {
     const user = requireUser(req);
     res.status(201).json(

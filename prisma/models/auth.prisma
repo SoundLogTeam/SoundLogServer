@@ -1,31 +1,32 @@
 model User {
-  id                   String                @id @default(cuid())
-  provider             String
-  providerUserId       String
-  displayName          String?
-  passwordHash         String?
-  createdAt            DateTime              @default(now())
-  updatedAt            DateTime              @updatedAt
-  profile              UserProfile?
-  musicPlatform        MusicPlatform?
-  refreshTokens        RefreshToken[]
-  libraryTrackStates   LibraryTrackState[]
-  momentLogs           MomentLog[]
-  recommendationEvents RecommendationEvent[]
-  recaps               Recap[]
-  travelSessions       TravelSession[]
-  recapShareEvents     RecapShareEvent[]
-  idempotencyRecords   IdempotencyRecord[]
-  ownedTravelRooms     TravelRoom[]          @relation("TravelRoomOwner")
-  travelRoomMembers    TravelRoomMember[]
-  travelRoomMoments    TravelRoomMoment[]
-  soundMapPins         SoundMapPin[]
-  sentMateRequests     TravelMateRequest[]   @relation("TravelMateRequester")
-  receivedMateRequests TravelMateRequest[]   @relation("TravelMateTarget")
-  communityBlocksMade  CommunityBlock[]      @relation("CommunityBlocker")
-  communityBlocksTaken CommunityBlock[]      @relation("CommunityBlocked")
-  communityReports     CommunityReport[]     @relation("CommunityReporter")
-  communityReportsOn   CommunityReport[]     @relation("CommunityReportedUser")
+  id                       String                    @id @default(cuid())
+  provider                 String
+  providerUserId           String
+  displayName              String?
+  passwordHash             String?
+  createdAt                DateTime                  @default(now())
+  updatedAt                DateTime                  @updatedAt
+  profile                  UserProfile?
+  musicPlatform            MusicPlatform?
+  refreshTokens            RefreshToken[]
+  libraryTrackStates       LibraryTrackState[]
+  momentLogs               MomentLog[]
+  recommendationEvents     RecommendationEvent[]
+  recaps                   Recap[]
+  travelSessions           TravelSession[]
+  recapShareEvents         RecapShareEvent[]
+  idempotencyRecords       IdempotencyRecord[]
+  ownedTravelRooms         TravelRoom[]              @relation("TravelRoomOwner")
+  travelRoomMembers        TravelRoomMember[]
+  travelRoomMoments        TravelRoomMoment[]
+  travelRoomMomentComments TravelRoomMomentComment[]
+  soundMapPins             SoundMapPin[]
+  sentMateRequests         TravelMateRequest[]       @relation("TravelMateRequester")
+  receivedMateRequests     TravelMateRequest[]       @relation("TravelMateTarget")
+  communityBlocksMade      CommunityBlock[]          @relation("CommunityBlocker")
+  communityBlocksTaken     CommunityBlock[]          @relation("CommunityBlocked")
+  communityReports         CommunityReport[]         @relation("CommunityReporter")
+  communityReportsOn       CommunityReport[]         @relation("CommunityReportedUser")
 
   @@unique([provider, providerUserId])
 }

@@ -218,6 +218,24 @@ export function createApiRouter() {
     }),
     asyncHandler(communityController.addTravelRoomMoment),
   );
+  router.patch(
+    '/v1/travel-rooms/:roomId/moments/:momentId',
+    authMiddleware,
+    validate({
+      params: communityValidators.roomMomentParams,
+      body: communityValidators.updateRoomMomentBody,
+    }),
+    asyncHandler(communityController.updateTravelRoomMoment),
+  );
+  router.post(
+    '/v1/travel-rooms/:roomId/moments/:momentId/comments',
+    authMiddleware,
+    validate({
+      params: communityValidators.roomMomentParams,
+      body: communityValidators.addRoomMomentCommentBody,
+    }),
+    asyncHandler(communityController.addTravelRoomMomentComment),
+  );
   router.post(
     '/v1/travel-rooms/:roomId/recaps',
     authMiddleware,

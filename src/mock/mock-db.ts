@@ -69,6 +69,7 @@ type MockTravelSession = {
   startedAt?: Date;
   status: 'active' | 'ended' | 'idle';
   travelMode?: string;
+  userId: string;
 };
 
 type MockRefreshToken = {
@@ -112,6 +113,14 @@ type MockTravelRoomMoment = {
   roomId: string;
   status: string;
   trackSnapshot?: MockTrack;
+  userId: string;
+};
+
+type MockTravelRoomMomentComment = {
+  body: string;
+  createdAt: Date;
+  id: string;
+  momentId: string;
   userId: string;
 };
 
@@ -234,6 +243,7 @@ function createMockDb() {
       sessionId: string;
       trackId?: string;
       type: string;
+      userId: string;
       value?: string;
     }>,
     recaps: recaps.map((recap) => ({
@@ -266,6 +276,7 @@ function createMockDb() {
     travelRooms: [] as MockTravelRoom[],
     travelRoomMembers: [] as MockTravelRoomMember[],
     travelRoomMoments: [] as MockTravelRoomMoment[],
+    travelRoomMomentComments: [] as MockTravelRoomMomentComment[],
     soundMapPins: [] as MockSoundMapPin[],
     travelMateRequests: [] as MockTravelMateRequest[],
     communityBlocks: [] as Array<{
