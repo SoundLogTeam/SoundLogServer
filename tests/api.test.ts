@@ -614,7 +614,7 @@ describe('Soundlog API', () => {
             playlistId: 'seoul-night',
             context: { moodFilter: '잔잔한', placeName: '서울 야경 산책' },
             createdAt: new Date().toISOString(),
-            value: 'spotify',
+            value: 'external_link',
           },
           {
             id: `event-track-selected-${Date.now()}`,
