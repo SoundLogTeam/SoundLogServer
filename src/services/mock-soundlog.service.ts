@@ -1840,6 +1840,10 @@ export const mockSoundlogService = {
           moments: moments.map((moment) => ({
             id: moment.id,
             imageUrl: moment.photoUrl,
+            location:
+              moment.lat !== undefined && moment.lng !== undefined
+                ? { lat: moment.lat, lng: moment.lng }
+                : undefined,
             placeName: moment.placeName ?? '위치 없음',
             trackTitle: moment.trackSnapshot?.title ?? '저장된 순간',
             artistName: moment.trackSnapshot?.artist ?? '음악 없음',

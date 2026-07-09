@@ -74,12 +74,14 @@ function findSecretLeaks(value: unknown, secret: string, path = '$'): string[] {
 async function createTestMomentLog(input: {
   authHeader: string;
   filename: string;
+  lat?: number;
+  lng?: number;
   note?: string;
   placeName: string;
   sessionId?: string;
   trackId?: string;
 }) {
-  const response = await request(app)
+  const requestBuilder = request(app)
     .post('/v1/moment-logs')
     .set('Authorization', input.authHeader)
     .field('createdAt', new Date().toISOString())
@@ -87,7 +89,17 @@ async function createTestMomentLog(input: {
     .field('note', input.note ?? '')
     .field('placeName', input.placeName)
     .field('sessionId', input.sessionId ?? '')
-    .field('trackId', input.trackId ?? 'seoul-city')
+    .field('trackId', input.trackId ?? 'seoul-city');
+
+  if (input.lat !== undefined) {
+    requestBuilder.field('lat', String(input.lat));
+  }
+
+  if (input.lng !== undefined) {
+    requestBuilder.field('lng', String(input.lng));
+  }
+
+  const response = await requestBuilder
     .attach('photo', Buffer.from('fake-image'), {
       filename: input.filename,
       contentType: 'image/jpeg',
@@ -659,6 +671,8 @@ describe('Soundlog API', () => {
     await createTestMomentLog({
       authHeader,
       filename: 'recap-moment-1.jpg',
+      lat: 37.5512,
+      lng: 126.9882,
       placeName: '리캡 테스트 장소',
       sessionId: recapSessionId,
       trackId: 'seoul-night-track',
@@ -666,6 +680,8 @@ describe('Soundlog API', () => {
     await createTestMomentLog({
       authHeader,
       filename: 'recap-moment-2.jpg',
+      lat: 37.552,
+      lng: 126.989,
       placeName: '리캡 테스트 장소',
       sessionId: recapSessionId,
       trackId: 'seoul-night-track',
@@ -700,6 +716,10 @@ describe('Soundlog API', () => {
     expect(share.body.data.id).toBe(createdRecapId);
     expect(share.body.data.trackTitle).toBe(created.body.data.representativeTrack.title);
     expect(share.body.data.moments.length).toBeGreaterThan(1);
+    expect(share.body.data.moments[0].location).toEqual({
+      lat: 37.5512,
+      lng: 126.9882,
+    });
 
     const shareEvent = await request(app)
       .post(`/v1/recaps/${createdRecapId}/share-events`)

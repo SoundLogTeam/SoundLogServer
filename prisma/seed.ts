@@ -207,6 +207,8 @@ export async function seedDatabase() {
         userId: user.id,
         photoUrl: log.photoUrl,
         createdAt: new Date(log.createdAt),
+        lat: log.lat,
+        lng: log.lng,
         sessionId: log.sessionId,
         placeName: log.placeName,
         note: log.note,

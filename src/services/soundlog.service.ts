@@ -1057,6 +1057,23 @@ function recapShareToDto(recap: Recap & { representativeTrack: Track }) {
   });
 }
 
+function momentLogToRecapShareMoment(moment: MomentLog) {
+  const momentTrack = (moment.trackSnapshot as TrackDto | null) ?? undefined;
+
+  return compact({
+    id: moment.id,
+    imageUrl: moment.photoUrl,
+    location:
+      moment.lat !== null && moment.lng !== null
+        ? { lat: moment.lat, lng: moment.lng }
+        : undefined,
+    placeName: moment.placeName ?? '위치 없음',
+    trackTitle: momentTrack?.title ?? '저장된 순간',
+    artistName: momentTrack?.artist ?? '음악 없음',
+    recordedAt: moment.createdAt.toISOString(),
+  });
+}
+
 function travelSessionToDto(session: TravelSession) {
   return compact({
     id: session.id,
@@ -2780,17 +2797,7 @@ export const soundlogService = {
             backgroundImageUrl: firstMoment?.photoUrl,
             discImageUrl: firstMoment?.photoUrl,
             recordedAt: firstMoment?.createdAt ?? new Date(),
-            moments: moments.map((moment) => {
-              const momentTrack = (moment.trackSnapshot as TrackDto | null) ?? undefined;
-              return {
-                id: moment.id,
-                imageUrl: moment.photoUrl,
-                placeName: moment.placeName ?? '위치 없음',
-                trackTitle: momentTrack?.title ?? '저장된 순간',
-                artistName: momentTrack?.artist ?? '음악 없음',
-                recordedAt: moment.createdAt.toISOString(),
-              };
-            }) as Prisma.JsonArray,
+            moments: moments.map(momentLogToRecapShareMoment) as Prisma.JsonArray,
           },
           include: { representativeTrack: true },
         });

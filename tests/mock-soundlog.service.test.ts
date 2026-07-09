@@ -243,6 +243,8 @@ describe('mockSoundlogService', () => {
   it('creates recaps, share payloads, share events, and validates representative tracks', async () => {
     const moment = await mockSoundlogService.createMomentLog(ownerId, {
       createdAt: '2026-07-09T10:00:00.000Z',
+      lat: 37.5444,
+      lng: 127.0374,
       moodTags: ['감성적인'],
       photoPath: '/uploads/recap.jpg',
       placeName: '서울숲',
@@ -278,6 +280,10 @@ describe('mockSoundlogService', () => {
     expect(recap.id).toBe(repeated.id);
     expect(recap.title).toBe('서울숲 사운드');
     expect(list.data[0].id).toBe(recapId);
+    expect((share.moments as Array<{ location?: { lat: number; lng: number } }>)[0].location).toEqual({
+      lat: 37.5444,
+      lng: 127.0374,
+    });
     expect(share.moments).toHaveLength(1);
     expect(mockDb.recapShareEvents).toHaveLength(1);
     await expect(
