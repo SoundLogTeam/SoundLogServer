@@ -43,8 +43,8 @@ jobs:
       - name: Check removed Spotify metadata
         run: pnpm run check:no-spotify-metadata
 
-      - name: Run API tests with mock DB
-        run: pnpm run test:api
+      - name: Run API tests with coverage
+        run: pnpm run test:coverage
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/soundlog_ci?schema=public
           JWT_SECRET: soundlog-ci-test-secret

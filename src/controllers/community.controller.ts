@@ -5,6 +5,11 @@ import { apiService } from '../services/api.service.js';
 import { acceptedResponse, dataResponse } from '../utils/response.js';
 
 export const communityController = {
+  async getTravelRooms(req: Request, res: Response) {
+    const user = requireUser(req);
+    res.json(dataResponse(await apiService.getTravelRooms(user.id, req.query)));
+  },
+
   async createTravelRoom(req: Request, res: Response) {
     const user = requireUser(req);
     res.status(201).json(dataResponse(await apiService.createTravelRoom(user.id, req.body)));
@@ -22,6 +27,11 @@ export const communityController = {
         await apiService.joinTravelRoom(user.id, String(req.params.roomId), req.body),
       ),
     );
+  },
+
+  async joinTravelRoomByInviteCode(req: Request, res: Response) {
+    const user = requireUser(req);
+    res.json(dataResponse(await apiService.joinTravelRoomByInviteCode(user.id, req.body)));
   },
 
   async addTravelRoomMoment(req: Request, res: Response) {
@@ -98,6 +108,11 @@ export const communityController = {
   async createTravelMateRequest(req: Request, res: Response) {
     const user = requireUser(req);
     res.status(201).json(dataResponse(await apiService.createTravelMateRequest(user.id, req.body)));
+  },
+
+  async getTravelMateRequests(req: Request, res: Response) {
+    const user = requireUser(req);
+    res.json(dataResponse(await apiService.getTravelMateRequests(user.id, req.query)));
   },
 
   async updateTravelMateRequest(req: Request, res: Response) {

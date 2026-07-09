@@ -52,6 +52,12 @@ const queryBoolean = z.preprocess((value) => {
 
 const limit = z.coerce.number().int().min(1).max(50).optional();
 const cursor = z.string().optional();
+const inviteCodeSchema = z
+  .string()
+  .trim()
+  .min(4)
+  .max(16)
+  .transform((code) => code.toUpperCase());
 
 export const travelModeSchema = z.enum([
   'walk',
@@ -200,6 +206,12 @@ export const playlistValidators = {
     state: mlTravelStateSchema.optional(),
     travelMode: travelModeSchema.optional(),
   }),
+  recommendationQuery: z.object({
+    mood: mlMoodSchema,
+    state: mlTravelStateSchema,
+    x: queryNumber.min(-180).max(180),
+    y: queryNumber.min(-90).max(90),
+  }),
 };
 
 export const libraryValidators = {
@@ -224,6 +236,9 @@ export const momentLogValidators = {
     limit,
     sessionId: z.string().optional(),
   }),
+  momentLogParams: z.object({
+    momentLogId: z.string().min(1),
+  }),
   createBody: z.object({
     artistName: z.string().optional(),
     createdAt: z.string().datetime(),
@@ -238,6 +253,21 @@ export const momentLogValidators = {
     trackId: z.string().optional(),
     trackTitle: z.string().optional(),
     travelMode: travelModeSchema.optional(),
+  }),
+  updateBody: z.object({
+    artistName: z.string().optional(),
+    createdAt: z.string().datetime().optional(),
+    lat: z.union([z.coerce.number(), z.null()]).optional(),
+    lng: z.union([z.coerce.number(), z.null()]).optional(),
+    moodTags: requiredStringArray.pipe(z.array(moodTagSchema)).optional(),
+    note: z.union([z.string().trim().max(240), z.null()]).optional(),
+    placeCategory: z.union([z.string(), z.null()]).optional(),
+    placeId: z.union([z.string(), z.null()]).optional(),
+    placeName: z.union([z.string(), z.null()]).optional(),
+    sessionId: z.union([z.string(), z.null()]).optional(),
+    trackId: z.string().optional(),
+    trackTitle: z.string().optional(),
+    travelMode: z.union([travelModeSchema, z.null()]).optional(),
   }),
 };
 
@@ -254,10 +284,14 @@ export const recommendationEventValidators = {
           trackId: z.string().optional(),
           type: z.enum([
             'track_external_open',
+            'external_music_open_failed',
+            'track_selected',
             'track_like',
             'track_unlike',
             'track_save',
             'track_unsave',
+            'moment_log_saved',
+            'moment_log_sync_failed',
             'playlist_open',
             'mood_adjusted',
             'mood_filter_change',
@@ -345,9 +379,17 @@ export const communityValidators = {
     title: z.string().trim().min(1).max(80).default('Soundlog 여행방'),
     visibility: z.enum(['invite_only', 'companions']).optional().default('invite_only'),
   }),
+  listRoomsQuery: z.object({
+    limit,
+    sessionId: z.string().optional(),
+  }),
   joinRoomBody: z.object({
     displayName: z.string().trim().min(1).max(40).optional(),
-    inviteCode: z.string().trim().min(4).max(16).optional(),
+    inviteCode: inviteCodeSchema.optional(),
+  }),
+  joinRoomByInviteBody: z.object({
+    displayName: z.string().trim().min(1).max(40).optional(),
+    inviteCode: inviteCodeSchema,
   }),
   addRoomMomentBody: z.object({
     artistName: z.string().trim().max(120).optional(),
@@ -400,6 +442,13 @@ export const communityValidators = {
       .default('liked_track'),
     targetPinId: z.string().optional(),
     targetUserId: z.string().optional(),
+  }),
+  listMateRequestsQuery: z.object({
+    box: z.enum(['all', 'inbox', 'sent']).optional().default('all'),
+    limit,
+    status: z
+      .enum(['accepted', 'cancelled', 'declined', 'expired', 'pending'])
+      .optional(),
   }),
   mateRequestParams: z.object({
     requestId: z.string().min(1),
