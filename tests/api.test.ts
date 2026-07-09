@@ -716,10 +716,12 @@ describe('Soundlog API', () => {
     expect(share.body.data.id).toBe(createdRecapId);
     expect(share.body.data.trackTitle).toBe(created.body.data.representativeTrack.title);
     expect(share.body.data.moments.length).toBeGreaterThan(1);
-    expect(share.body.data.moments[0].location).toEqual({
-      lat: 37.5512,
-      lng: 126.9882,
-    });
+    expect(share.body.data.moments.map((moment: { location?: unknown }) => moment.location)).toEqual(
+      expect.arrayContaining([
+        { lat: 37.5512, lng: 126.9882 },
+        { lat: 37.552, lng: 126.989 },
+      ]),
+    );
 
     const shareEvent = await request(app)
       .post(`/v1/recaps/${createdRecapId}/share-events`)
