@@ -17,10 +17,36 @@ type TrackDto = {
   title: string;
 };
 
+type MomentLogUpdateInput = {
+  artistName?: string;
+  createdAt?: string;
+  lat?: number | null;
+  lng?: number | null;
+  moodTags?: string[];
+  note?: string | null;
+  placeCategory?: string | null;
+  placeId?: string | null;
+  placeName?: string | null;
+  sessionId?: string | null;
+  trackId?: string;
+  trackTitle?: string;
+  travelMode?: string | null;
+};
+
+const TRAVEL_MATE_REQUEST_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+const CLOSED_TRAVEL_MATE_REQUEST_STATUSES = ['cancelled', 'declined', 'expired'];
+
 function compact<T extends Record<string, unknown>>(value: T) {
   return Object.fromEntries(
     Object.entries(value).filter(([, item]) => item !== undefined && item !== null),
   ) as Partial<T>;
+}
+
+function hasOwn<T extends object, K extends PropertyKey>(
+  value: T,
+  key: K,
+): value is T & Record<K, unknown> {
+  return Object.prototype.hasOwnProperty.call(value, key);
 }
 
 function trackToDto(
@@ -95,6 +121,51 @@ function playlistToDto(playlist: (typeof mockDb.playlists)[number]) {
   });
 }
 
+type MockPlaylistSummarySource = {
+  backgroundImageUrl?: string;
+  coverImageUrl?: string;
+  description?: string;
+  durationText: string;
+  id: string;
+  placeName?: string;
+  reason?: string;
+  regionName: string;
+  trackCount?: number;
+  trackIds?: string[];
+};
+
+function playlistSummaryToDto(playlist: MockPlaylistSummarySource) {
+  return compact({
+    id: playlist.id,
+    regionName: playlist.regionName,
+    placeName: playlist.placeName,
+    description: playlist.description,
+    reason: playlist.reason,
+    coverImageUrl: playlist.coverImageUrl,
+    backgroundImageUrl: playlist.backgroundImageUrl,
+    trackCount: playlist.trackCount ?? playlist.trackIds?.length ?? 0,
+    durationText: playlist.durationText,
+  });
+}
+
+function withPlaylistContext<T extends Record<string, unknown>>(
+  playlist: T,
+  context: Record<string, unknown>,
+) {
+  const currentContext =
+    playlist.context && typeof playlist.context === 'object'
+      ? (playlist.context as Record<string, unknown>)
+      : {};
+
+  return {
+    ...playlist,
+    context: compact({
+      ...currentContext,
+      ...context,
+    }),
+  };
+}
+
 function momentLogToDto(log: (typeof mockDb.momentLogs)[number]) {
   return compact({
     id: log.id,
@@ -109,6 +180,7 @@ function momentLogToDto(log: (typeof mockDb.momentLogs)[number]) {
     placeCategory: log.placeCategory,
     placeId: log.placeId,
     placeName: log.placeName,
+    note: log.note,
     track: log.trackSnapshot,
     travelMode: log.travelMode,
     moodTags: log.moodTags,
@@ -215,6 +287,36 @@ function getMockUserProfile(userId: string) {
     preferredMoods: mockDb.profile.preferredMoods,
     travelStyles: mockDb.profile.travelStyles,
   };
+}
+
+function getMockCompanionUserIds(userId: string) {
+  const roomIds = mockDb.travelRoomMembers
+    .filter((member) => member.userId === userId)
+    .map((member) => member.roomId);
+
+  return Array.from(
+    new Set(
+      mockDb.travelRoomMembers
+        .filter((member) => roomIds.includes(member.roomId))
+        .map((member) => member.userId),
+    ),
+  );
+}
+
+function getMockCommunityHiddenUserIds(userId: string) {
+  return Array.from(new Set(
+    mockDb.communityBlocks
+      .filter((block) => block.blockerId === userId || block.blockedUserId === userId)
+      .map((block) => (block.blockerId === userId ? block.blockedUserId : block.blockerId)),
+  ));
+}
+
+function hasMockCommunityBlockBetween(userId: string, targetUserId: string) {
+  return mockDb.communityBlocks.some(
+    (block) =>
+      (block.blockerId === userId && block.blockedUserId === targetUserId) ||
+      (block.blockerId === targetUserId && block.blockedUserId === userId),
+  );
 }
 
 function roomToDto(room: (typeof mockDb.travelRooms)[number]) {
@@ -601,7 +703,35 @@ export const mockSoundlogService = {
       throw notFound(ERROR_MESSAGES.PLAYLIST_NOT_FOUND);
     }
 
-    return playlistToDto(playlist);
+    return withPlaylistContext(playlistToDto(playlist), {
+      mood: input.mood,
+      moodTags: input.moodTags,
+      placeId: input.placeId,
+      source: 'seed-fallback',
+      state: input.state,
+      travelMode: input.travelMode,
+    });
+  },
+
+  async getRecommendedPlaylist(_userId: string | undefined, input: {
+    location?: { lat: number; lng: number };
+    mood?: string;
+    state?: string;
+  }) {
+    const playlistId = getDefaultPlaylistId({
+      lat: input.location?.lat,
+    });
+    const playlist = mockDb.playlists.find((item) => item.id === playlistId);
+
+    if (!playlist) {
+      throw notFound(ERROR_MESSAGES.PLAYLIST_NOT_FOUND);
+    }
+
+    return withPlaylistContext(playlistToDto(playlist), {
+      mood: input.mood,
+      source: 'seed-fallback',
+      state: input.state,
+    });
   },
 
   async getPlaylist(_userId: string | undefined, playlistId: string, query: { lat?: number; placeId?: string }) {
@@ -612,7 +742,11 @@ export const mockSoundlogService = {
       throw notFound(ERROR_MESSAGES.PLAYLIST_NOT_FOUND);
     }
 
-    return playlistToDto(playlist);
+    const dto = playlistToDto(playlist);
+
+    return playlistId === 'fallback'
+      ? withPlaylistContext(dto, { source: 'seed-fallback' })
+      : dto;
   },
 
   async getLibraryTracks(_userId: string, params: {
@@ -643,6 +777,17 @@ export const mockSoundlogService = {
           id: state.trackId,
           createdAt: (state.isLiked ? state.likedAt : state.savedAt)?.toISOString() ?? state.updatedAt.toISOString(),
           playlistId: state.playlistId,
+          playlist: state.playlistId
+            ? playlistSummaryToDto(
+                mockDb.playlists.find((playlist) => playlist.id === state.playlistId) ?? {
+                  id: state.playlistId,
+                  regionName: state.playlistId,
+                  reason: '',
+                  trackIds: [],
+                  durationText: '',
+                },
+              )
+            : undefined,
           kind: state.isLiked ? 'liked' : 'saved',
           track: trackToDto(track, state),
         };
@@ -731,10 +876,11 @@ export const mockSoundlogService = {
     lat?: number;
     lng?: number;
     moodTags: string[];
-    photoPath: string;
+    photoPath?: string;
     placeCategory?: string;
     placeId?: string;
     placeName?: string;
+    note?: string;
     sessionId?: string;
     trackId?: string;
     trackTitle?: string;
@@ -746,7 +892,9 @@ export const mockSoundlogService = {
         const track = findMockTrack(input.trackId);
         const log = {
           id: createPublicId('moment'),
-          photoUrl: `${env.UPLOAD_PUBLIC_BASE_URL}${input.photoPath}`,
+          photoUrl: input.photoPath
+            ? `${env.UPLOAD_PUBLIC_BASE_URL}${input.photoPath}`
+            : undefined,
           createdAt: new Date(input.createdAt),
           sessionId: input.sessionId,
           lat: input.lat,
@@ -754,6 +902,7 @@ export const mockSoundlogService = {
           placeCategory: input.placeCategory,
           placeId: input.placeId,
           placeName: input.placeName,
+          note: input.note,
           trackSnapshot:
             track ??
             (input.trackTitle
@@ -774,6 +923,116 @@ export const mockSoundlogService = {
         return momentLogToDto(log);
       },
     );
+  },
+
+  async updateMomentLog(
+    _userId: string,
+    momentLogId: string,
+    input: MomentLogUpdateInput,
+  ) {
+    const log = mockDb.momentLogs.find((moment) => moment.id === momentLogId);
+
+    if (!log) {
+      throw notFound(ERROR_MESSAGES.MOMENT_LOG_NOT_FOUND);
+    }
+
+    if (input.createdAt) {
+      log.createdAt = new Date(input.createdAt);
+    }
+
+    if (hasOwn(input, 'lat')) {
+      log.lat = input.lat ?? undefined;
+    }
+
+    if (hasOwn(input, 'lng')) {
+      log.lng = input.lng ?? undefined;
+    }
+
+    if (input.moodTags) {
+      log.moodTags = [...input.moodTags];
+    }
+
+    if (hasOwn(input, 'note')) {
+      log.note = input.note ?? undefined;
+    }
+
+    if (hasOwn(input, 'placeCategory')) {
+      log.placeCategory = input.placeCategory ?? undefined;
+    }
+
+    if (hasOwn(input, 'placeId')) {
+      log.placeId = input.placeId ?? undefined;
+    }
+
+    if (hasOwn(input, 'placeName')) {
+      log.placeName = input.placeName ?? undefined;
+    }
+
+    if (hasOwn(input, 'sessionId')) {
+      log.sessionId = input.sessionId ?? undefined;
+    }
+
+    if (hasOwn(input, 'travelMode')) {
+      log.travelMode = input.travelMode ?? undefined;
+    }
+
+    const shouldUpdateTrackSnapshot =
+      hasOwn(input, 'trackId') ||
+      hasOwn(input, 'trackTitle') ||
+      hasOwn(input, 'artistName');
+
+    if (shouldUpdateTrackSnapshot) {
+      log.trackSnapshot =
+        findMockTrack(input.trackId) ??
+        (input.trackId || input.trackTitle
+          ? {
+              id: input.trackId ?? createPublicId('track'),
+              title: input.trackTitle ?? '선택한 음악',
+              artist: input.artistName ?? '아티스트 미상',
+            }
+          : undefined);
+    }
+
+    return momentLogToDto(log);
+  },
+
+  async updateMomentLogPhoto(_userId: string, momentLogId: string, photoPath: string) {
+    const log = mockDb.momentLogs.find((moment) => moment.id === momentLogId);
+
+    if (!log) {
+      throw notFound(ERROR_MESSAGES.MOMENT_LOG_NOT_FOUND);
+    }
+
+    log.photoUrl = `${env.UPLOAD_PUBLIC_BASE_URL}${photoPath}`;
+
+    return momentLogToDto(log);
+  },
+
+  async deleteMomentLogPhoto(_userId: string, momentLogId: string) {
+    const log = mockDb.momentLogs.find((moment) => moment.id === momentLogId);
+
+    if (!log) {
+      throw notFound(ERROR_MESSAGES.MOMENT_LOG_NOT_FOUND);
+    }
+
+    log.photoUrl = undefined;
+
+    return momentLogToDto(log);
+  },
+
+  async deleteMomentLog(_userId: string, momentLogId: string) {
+    const index = mockDb.momentLogs.findIndex((moment) => moment.id === momentLogId);
+
+    if (index === -1) {
+      throw notFound(ERROR_MESSAGES.MOMENT_LOG_NOT_FOUND);
+    }
+
+    mockDb.momentLogs.splice(index, 1);
+    mockDb.travelRoomMoments.forEach((moment) => {
+      if (moment.momentLogId === momentLogId) {
+        moment.momentLogId = undefined;
+      }
+    });
   },
 
   async createRecommendationEvents(userId: string, input: {
@@ -834,6 +1093,24 @@ export const mockSoundlogService = {
     return roomToDto(room);
   },
 
+  async getTravelRooms(userId: string, query: {
+    limit?: number;
+    sessionId?: string;
+  }) {
+    const roomIds = new Set(
+      mockDb.travelRoomMembers
+        .filter((member) => member.userId === userId)
+        .map((member) => member.roomId),
+    );
+
+    return mockDb.travelRooms
+      .filter((room) => roomIds.has(room.id))
+      .filter((room) => !query.sessionId || room.sessionId === query.sessionId)
+      .sort((first, second) => second.updatedAt.getTime() - first.updatedAt.getTime())
+      .slice(0, getLimit(query.limit))
+      .map(roomToDto);
+  },
+
   async getTravelRoom(userId: string, roomId: string) {
     const room = mockDb.travelRooms.find((item) => item.id === roomId);
     const isMember = mockDb.travelRoomMembers.some(
@@ -881,6 +1158,7 @@ export const mockSoundlogService = {
         userId,
       });
     }
+    room.updatedAt = new Date();
 
     recordMockCommunityRecommendationEvent(userId, 'trip_room_joined', {
       role: existing?.role ?? 'member',
@@ -888,6 +1166,19 @@ export const mockSoundlogService = {
     }, { sessionId: room.sessionId ?? roomId });
 
     return roomToDto(room);
+  },
+
+  async joinTravelRoomByInviteCode(userId: string, input: {
+    displayName?: string;
+    inviteCode: string;
+  }) {
+    const room = mockDb.travelRooms.find((item) => item.inviteCode === input.inviteCode);
+
+    if (!room) {
+      throw badRequest(ERROR_MESSAGES.TRAVEL_ROOM_INVITE_CODE_INVALID);
+    }
+
+    return this.joinTravelRoom(userId, room.id, input);
   },
 
   async addTravelRoomMoment(userId: string, roomId: string, input: {
@@ -933,6 +1224,10 @@ export const mockSoundlogService = {
       userId,
     };
     mockDb.travelRoomMoments.push(moment);
+    const roomToTouch = mockDb.travelRooms.find((item) => item.id === roomId);
+    if (roomToTouch) {
+      roomToTouch.updatedAt = new Date();
+    }
 
     recordMockCommunityRecommendationEvent(userId, 'shared_moment_added', {
       momentId: moment.id,
@@ -973,6 +1268,7 @@ export const mockSoundlogService = {
     }
 
     moment.status = input.status;
+    room.updatedAt = new Date();
 
     recordMockCommunityRecommendationEvent(userId, 'shared_moment_status_updated', {
       momentId,
@@ -1029,6 +1325,9 @@ export const mockSoundlogService = {
       userId,
     };
     mockDb.travelRoomMomentComments.push(comment);
+    if (room) {
+      room.updatedAt = new Date();
+    }
 
     recordMockCommunityRecommendationEvent(userId, 'shared_moment_commented', {
       momentId,
@@ -1130,11 +1429,15 @@ export const mockSoundlogService = {
     }
 
     const now = new Date();
-    const track = findMockTrack(input.trackId) ?? {
-      id: input.trackId ?? createPublicId('track'),
-      title: input.trackTitle ?? '선택한 음악',
-      artist: input.artistName ?? '아티스트 미상',
-    };
+    const track =
+      findMockTrack(input.trackId) ??
+      (input.trackId || input.trackTitle
+        ? {
+            id: input.trackId ?? createPublicId('track'),
+            title: input.trackTitle ?? '선택한 음악',
+            artist: input.artistName ?? '아티스트 미상',
+          }
+        : undefined);
     const pin = mockDb.soundMapPins.find((item) => item.userId === userId);
     const nextPin = {
       id: pin?.id ?? createPublicId('sound_pin'),
@@ -1178,13 +1481,27 @@ export const mockSoundlogService = {
     radiusMeters?: number;
     visibility?: string;
   }) {
-    const blockedIds = mockDb.communityBlocks
-      .filter((block) => block.blockerId === userId)
-      .map((block) => block.blockedUserId);
+    const hiddenUserIds = getMockCommunityHiddenUserIds(userId);
+    const companionUserIds = getMockCompanionUserIds(userId);
+    const isVisibleToViewer = (pin: (typeof mockDb.soundMapPins)[number]) => {
+      if (query.visibility === 'nearby') {
+        return pin.visibility === 'nearby';
+      }
+
+      if (query.visibility === 'companions') {
+        return pin.userId === userId || (
+          pin.visibility === 'companions' && companionUserIds.includes(pin.userId)
+        );
+      }
+
+      return pin.userId === userId ||
+        pin.visibility === 'nearby' ||
+        (pin.visibility === 'companions' && companionUserIds.includes(pin.userId));
+    };
     const pins = mockDb.soundMapPins
       .filter((pin) => pin.expiresAt > new Date())
-      .filter((pin) => !blockedIds.includes(pin.userId))
-      .filter((pin) => (query.visibility ? pin.visibility === query.visibility : pin.visibility !== 'private'));
+      .filter((pin) => !hiddenUserIds.includes(pin.userId))
+      .filter(isVisibleToViewer);
 
     const scopedPins = hasGeoPoint(query)
       ? filterPinsByRadius(pins, query)
@@ -1215,13 +1532,11 @@ export const mockSoundlogService = {
       return [];
     }
 
-    const blockedIds = mockDb.communityBlocks
-      .filter((block) => block.blockerId === userId)
-      .map((block) => block.blockedUserId);
+    const hiddenUserIds = getMockCommunityHiddenUserIds(userId);
     const pins = mockDb.soundMapPins
       .filter((pin) => pin.expiresAt > new Date())
       .filter((pin) => pin.userId !== userId && pin.visibility === 'nearby')
-      .filter((pin) => !blockedIds.includes(pin.userId));
+      .filter((pin) => !hiddenUserIds.includes(pin.userId));
 
     recordMockCommunityRecommendationEvent(userId, 'nearby_sound_opened', {
       hasLocation: true,
@@ -1283,18 +1598,37 @@ export const mockSoundlogService = {
     if (targetPin && (targetPin.visibility !== 'nearby' || targetPin.expiresAt <= new Date())) {
       throw badRequest(ERROR_MESSAGES.TRAVEL_MATE_TARGET_REQUIRED);
     }
+    if (hasMockCommunityBlockBetween(userId, targetUserId)) {
+      throw forbidden(ERROR_MESSAGES.TRAVEL_MATE_REQUEST_BLOCKED);
+    }
     const existingActiveRequest = mockDb.travelMateRequests
       .filter(
         (request) =>
           request.requesterId === userId &&
           request.targetUserId === targetUserId &&
-          request.targetPinId === input.targetPinId &&
           ['pending', 'accepted'].includes(request.status),
       )
       .sort((first, second) => second.createdAt.getTime() - first.createdAt.getTime())[0];
 
     if (existingActiveRequest) {
       return mateRequestToDto(existingActiveRequest);
+    }
+
+    const recentClosedRequest = mockDb.travelMateRequests
+      .filter(
+        (request) =>
+          request.requesterId === userId &&
+          request.targetUserId === targetUserId &&
+          CLOSED_TRAVEL_MATE_REQUEST_STATUSES.includes(request.status) &&
+          request.updatedAt.getTime() >= Date.now() - TRAVEL_MATE_REQUEST_COOLDOWN_MS,
+      )
+      .sort((first, second) => second.updatedAt.getTime() - first.updatedAt.getTime())[0];
+
+    if (recentClosedRequest) {
+      throw badRequest(ERROR_MESSAGES.TRAVEL_MATE_REQUEST_RATE_LIMITED, {
+        cooldownHours: TRAVEL_MATE_REQUEST_COOLDOWN_MS / 60 / 60 / 1000,
+        requestId: recentClosedRequest.id,
+      });
     }
 
     const now = new Date();
@@ -1315,6 +1649,28 @@ export const mockSoundlogService = {
       targetUserId: request.targetUserId,
     }, { sessionId: request.targetPinId ?? request.id });
     return mateRequestToDto(request);
+  },
+
+  async getTravelMateRequests(userId: string, query: {
+    box?: string;
+    limit?: number;
+    status?: string;
+  }) {
+    return mockDb.travelMateRequests
+      .filter((request) => {
+        const inRequestedBox =
+          query.box === 'inbox'
+            ? request.targetUserId === userId
+            : query.box === 'sent'
+              ? request.requesterId === userId
+              : request.requesterId === userId || request.targetUserId === userId;
+        const inRequestedStatus = query.status ? request.status === query.status : true;
+
+        return inRequestedBox && inRequestedStatus;
+      })
+      .sort((first, second) => second.updatedAt.getTime() - first.updatedAt.getTime())
+      .slice(0, getLimit(query.limit))
+      .map(mateRequestToDto);
   },
 
   async updateTravelMateRequest(userId: string, requestId: string, input: { action: string }) {
@@ -1375,6 +1731,17 @@ export const mockSoundlogService = {
         createdAt: new Date(),
       });
     }
+
+    mockDb.travelMateRequests.forEach((request) => {
+      const isSamePair =
+        (request.requesterId === userId && request.targetUserId === targetUserId) ||
+        (request.requesterId === targetUserId && request.targetUserId === userId);
+
+      if (isSamePair && request.status === 'pending') {
+        request.status = 'cancelled';
+        request.updatedAt = new Date();
+      }
+    });
 
     recordMockCommunityRecommendationEvent(userId, 'community_user_blocked', {
       targetPinId: input.targetPinId,
@@ -1564,6 +1931,17 @@ export const mockSoundlogService = {
         : undefined;
     session.lat = input.location?.lat ?? session.lat;
     session.lng = input.location?.lng ?? session.lng;
+
+    if (session.status === 'ended') {
+      const now = new Date();
+      mockDb.soundMapPins.forEach((pin) => {
+        if (pin.userId === userId && pin.sessionId === sessionId) {
+          pin.expiresAt = now;
+          pin.visibility = 'private';
+          pin.updatedAt = now;
+        }
+      });
+    }
 
     return compact({
       id: session.id,

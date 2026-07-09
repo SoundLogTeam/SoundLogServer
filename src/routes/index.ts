@@ -17,7 +17,7 @@ import {
   trendController,
 } from '../controllers/index.js';
 import { asyncHandler } from '../utils/async-handler.js';
-import { authMiddleware, optionalAuthMiddleware } from '../middlewares/auth.middleware.js';
+import { authMiddleware } from '../middlewares/auth.middleware.js';
 import { momentPhotoUpload } from '../middlewares/upload.middleware.js';
 import { validate } from '../middlewares/validate.middleware.js';
 import {
@@ -84,19 +84,20 @@ export function createApiRouter() {
 
   router.get(
     '/v1/tour/nearby-places',
+    authMiddleware,
     validate({ query: tourValidators.nearbyQuery }),
     asyncHandler(tourController.getNearbyPlaces),
   );
 
   router.get(
     '/v1/home/featured-playlists',
-    optionalAuthMiddleware,
+    authMiddleware,
     validate({ query: homeValidators.featuredQuery }),
     asyncHandler(homeController.getFeaturedPlaylists),
   );
   router.get(
     '/v1/home/mood-recommendations',
-    optionalAuthMiddleware,
+    authMiddleware,
     validate({ query: homeValidators.moodQuery }),
     asyncHandler(homeController.getMoodRecommendations),
   );
@@ -114,8 +115,14 @@ export function createApiRouter() {
     asyncHandler(playlistController.createContextualPlaylist),
   );
   router.get(
+    '/v1/recommendations/playlists',
+    authMiddleware,
+    validate({ query: playlistValidators.recommendationQuery }),
+    asyncHandler(playlistController.getRecommendedPlaylist),
+  );
+  router.get(
     '/v1/playlists/:playlistId',
-    optionalAuthMiddleware,
+    authMiddleware,
     validate({
       params: playlistValidators.detailParams,
       query: playlistValidators.detailQuery,
@@ -151,6 +158,34 @@ export function createApiRouter() {
     momentPhotoUpload.single('photo'),
     validate({ body: momentLogValidators.createBody }),
     asyncHandler(momentLogController.createMomentLog),
+  );
+  router.patch(
+    '/v1/moment-logs/:momentLogId',
+    authMiddleware,
+    validate({
+      params: momentLogValidators.momentLogParams,
+      body: momentLogValidators.updateBody,
+    }),
+    asyncHandler(momentLogController.updateMomentLog),
+  );
+  router.put(
+    '/v1/moment-logs/:momentLogId/photo',
+    authMiddleware,
+    momentPhotoUpload.single('photo'),
+    validate({ params: momentLogValidators.momentLogParams }),
+    asyncHandler(momentLogController.updateMomentLogPhoto),
+  );
+  router.delete(
+    '/v1/moment-logs/:momentLogId/photo',
+    authMiddleware,
+    validate({ params: momentLogValidators.momentLogParams }),
+    asyncHandler(momentLogController.deleteMomentLogPhoto),
+  );
+  router.delete(
+    '/v1/moment-logs/:momentLogId',
+    authMiddleware,
+    validate({ params: momentLogValidators.momentLogParams }),
+    asyncHandler(momentLogController.deleteMomentLog),
   );
 
   router.post(
@@ -193,6 +228,18 @@ export function createApiRouter() {
     authMiddleware,
     validate({ body: communityValidators.createRoomBody }),
     asyncHandler(communityController.createTravelRoom),
+  );
+  router.get(
+    '/v1/travel-rooms',
+    authMiddleware,
+    validate({ query: communityValidators.listRoomsQuery }),
+    asyncHandler(communityController.getTravelRooms),
+  );
+  router.post(
+    '/v1/travel-rooms/join',
+    authMiddleware,
+    validate({ body: communityValidators.joinRoomByInviteBody }),
+    asyncHandler(communityController.joinTravelRoomByInviteCode),
   );
   router.get(
     '/v1/travel-rooms/:roomId',
@@ -270,6 +317,12 @@ export function createApiRouter() {
     validate({ query: communityValidators.musicMatchesQuery }),
     asyncHandler(communityController.getMusicMatches),
   );
+  router.get(
+    '/v1/travel-mate-requests',
+    authMiddleware,
+    validate({ query: communityValidators.listMateRequestsQuery }),
+    asyncHandler(communityController.getTravelMateRequests),
+  );
   router.post(
     '/v1/travel-mate-requests',
     authMiddleware,
@@ -316,6 +369,7 @@ export function createApiRouter() {
 
   router.get(
     '/v1/trends/regions/:regionCode/sound',
+    authMiddleware,
     validate({
       params: trendValidators.params,
       query: trendValidators.query,

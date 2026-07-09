@@ -9,7 +9,8 @@ info:
   description: |
     Soundlog React Native 앱과 백엔드 서버를 연결하기 위한 API 명세입니다.
 
-    MVP 범위는 홈 추천, 관광지 조회, 플레이리스트 상세, 순간 로그, 리캡, 보관함, 추천 피드백 수집을 포함합니다.
+    MVP 범위는 홈 추천, 관광지 조회, 플레이리스트 상세, 순간 로그, 리캡, 보관함, 추천 피드백 수집,
+    여행 세션, 공동 여행방, Live Sound Map, 음악 취향 매칭을 포함합니다.
     한국관광공사 OpenAPI 원본 응답은 서버에서 Soundlog 도메인 모델로 정규화해서 앱에 전달합니다.
 servers:
   - url: http://localhost:4000
@@ -24,7 +25,7 @@ tags:
   - name: Auth
     description: 간편 로그인 및 토큰 관리
   - name: Me
-    description: 사용자 프로필과 음악 플랫폼 설정
+    description: 사용자 프로필과 로컬 데이터 마이그레이션
   - name: Tour
     description: 관광공사 데이터 기반 장소 컨텍스트
   - name: Home
@@ -43,6 +44,8 @@ tags:
     description: 여행 세션 시작/종료
   - name: Trends
     description: 지역 사운드 트렌드
+  - name: Community
+    description: 공동 여행방, Live Sound Map, 취향 매칭, 신고/차단
 security:
   - bearerAuth: []
 paths:
@@ -214,7 +217,7 @@ paths:
       operationId: getMe
       responses:
         "200":
-          description: 로그인 사용자, 취향 프로필, 음악 플랫폼 설정
+          description: 로그인 사용자와 취향 프로필 요약
           content:
             application/json:
               schema:
@@ -267,7 +270,7 @@ paths:
     post:
       tags:
         - Me
-      summary: 게스트 로컬 데이터 계정 이관
+      summary: 로그인 전 로컬 데이터 계정 이관
       description: |
         로그인 전 이 기기에 저장된 순간 로그, 좋아요/저장 음악, Recap 초안을 로그인 계정으로 이관합니다.
         동일한 `Idempotency-Key`로 재시도해도 중복 저장되지 않아야 합니다.
@@ -296,7 +299,6 @@ paths:
     get:
       tags:
         - Tour
-      security: []
       summary: 현재 좌표 주변 관광지 조회
       description: |
         한국관광공사 위치 기반 관광정보를 Soundlog `PlaceContext`로 정규화해서 반환합니다.
@@ -329,6 +331,8 @@ paths:
                 $ref: "#/components/schemas/PlaceContextListResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
 
   /v1/home/featured-playlists:
     get:
@@ -455,6 +459,62 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/MusicLogItemListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/recommendations/playlists:
+    get:
+      tags:
+        - Playlists
+      summary: 현재 위치/상태/무드 기반 추천 플레이리스트 조회
+      description: |
+        앱 홈의 "오늘의 사운드트랙" CTA에서 사용하는 추천 API입니다.
+        프론트는 ML 서버를 직접 호출하지 않고 이 API를 통해 Soundlog 서버의 정규화된 플레이리스트 DTO를 받습니다.
+      operationId: getRecommendedPlaylist
+      parameters:
+        - name: x
+          in: query
+          required: true
+          description: 경도
+          schema:
+            type: number
+            format: double
+            minimum: -180
+            maximum: 180
+          example: 126.9963
+        - name: y
+          in: query
+          required: true
+          description: 위도
+          schema:
+            type: number
+            format: double
+            minimum: -90
+            maximum: 90
+          example: 37.5104
+        - name: state
+          in: query
+          required: true
+          description: 여행 상태
+          schema:
+            $ref: "#/components/schemas/MlTravelState"
+          example: 산책
+        - name: mood
+          in: query
+          required: true
+          description: 원하는 음악 무드
+          schema:
+            $ref: "#/components/schemas/MlMood"
+          example: 잔잔한
+      responses:
+        "200":
+          description: 추천 플레이리스트
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlaylistCurationResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
 
@@ -620,6 +680,7 @@ paths:
       summary: 순간 로그 생성
       description: |
         카메라 버튼으로 촬영한 사진, 현재 위치, 현재 장소, 재생 중인 음악, 무드 태그를 하나의 기록으로 저장합니다.
+        MVP 저장 정책상 사진, 위치, 장소, 곡은 모두 선택값입니다. 음악이나 위치가 없어도 MomentLog는 생성할 수 있습니다.
         사진 업로드는 `multipart/form-data`를 기본으로 정의합니다.
       operationId: createMomentLog
       parameters:
@@ -641,6 +702,123 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+
+  /v1/moment-logs/{momentLogId}:
+    patch:
+      tags:
+        - MomentLogs
+      summary: 순간 로그 수정
+      description: |
+        저장된 MomentLog의 메모, 장소, 무드, 곡 스냅샷 같은 편집 가능한 정보를 부분 수정합니다.
+        사진 파일 교체는 별도 업로드 정책이 필요하므로 이 API에는 포함하지 않습니다.
+      operationId: updateMomentLog
+      parameters:
+        - name: momentLogId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MomentLogUpdateRequest"
+      responses:
+        "200":
+          description: 수정된 순간 로그
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MomentLogResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags:
+        - MomentLogs
+      summary: 순간 로그 삭제
+      description: |
+        사용자의 MomentLog를 삭제합니다. 공동 여행방 후보가 해당 로그를 참조하고 있으면 후보 자체는 남기고 MomentLog 참조만 해제합니다.
+      operationId: deleteMomentLog
+      parameters:
+        - name: momentLogId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "202":
+          description: 삭제 요청 수락
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcceptedResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/moment-logs/{momentLogId}/photo:
+    put:
+      tags:
+        - MomentLogs
+      summary: 순간 로그 사진 교체
+      description: |
+        저장된 MomentLog의 사진만 새 업로드 파일로 교체합니다. 서버가 관리하는 기존 로컬 업로드 파일은 best-effort로 정리합니다.
+      operationId: updateMomentLogPhoto
+      parameters:
+        - name: momentLogId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/MomentLogPhotoUpdateForm"
+      responses:
+        "200":
+          description: 사진이 교체된 순간 로그
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MomentLogResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags:
+        - MomentLogs
+      summary: 순간 로그 사진 삭제
+      description: |
+        MomentLog 자체는 유지하고 연결된 사진만 제거합니다. 서버가 관리하는 로컬 업로드 파일은 best-effort로 정리합니다.
+      operationId: deleteMomentLogPhoto
+      parameters:
+        - name: momentLogId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 사진이 제거된 순간 로그
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MomentLogResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /v1/recommendation-events:
     post:
@@ -773,10 +951,41 @@ paths:
           $ref: "#/components/responses/NotFound"
 
   /v1/travel-rooms:
+    get:
+      tags:
+        - Community
+      summary: 내 공동 여행방 목록 조회
+      description: 인증된 사용자가 방장 또는 참여자로 속한 공동 여행방을 최근 수정순으로 조회합니다. sessionId를 전달하면 현재 여행 세션의 방을 복구할 수 있습니다.
+      operationId: getTravelRooms
+      parameters:
+        - name: sessionId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+      responses:
+        "200":
+          description: 공동 여행방 목록
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TravelRoomListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
     post:
       tags:
         - Community
       summary: 공동 여행방 생성
+      description: 인증된 사용자를 방장(owner)으로 공동 여행방을 생성합니다.
       operationId: createTravelRoom
       requestBody:
         required: true
@@ -794,11 +1003,37 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /v1/travel-rooms/join:
+    post:
+      tags:
+        - Community
+      summary: 초대 코드로 공동 여행방 참여
+      description: roomId 없이 초대 코드만으로 공동 여행방에 참여합니다. 입력한 초대 코드는 서버에서 대문자로 정규화됩니다.
+      operationId: joinTravelRoomByInviteCode
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TravelRoomJoinByInviteRequest"
+      responses:
+        "200":
+          description: 참여 후 공동 여행방
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TravelRoomResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /v1/travel-rooms/{roomId}:
     get:
       tags:
         - Community
       summary: 공동 여행방 조회
+      description: 방장 또는 참여자만 공동 여행방 상세, 멤버, 후보 순간, 댓글을 조회할 수 있습니다.
       operationId: getTravelRoom
       parameters:
         - name: roomId
@@ -823,6 +1058,7 @@ paths:
       tags:
         - Community
       summary: 공동 여행방 참여
+      description: 이미 참여한 사용자는 바로 방 정보를 받으며, 신규 참여자는 초대 코드가 필요합니다.
       operationId: joinTravelRoom
       parameters:
         - name: roomId
@@ -853,6 +1089,7 @@ paths:
       tags:
         - Community
       summary: 공동 Recap 후보 순간 추가
+      description: 방장 또는 참여자만 사진/곡/장소가 붙은 공동 Recap 후보 순간을 추가할 수 있습니다.
       operationId: addTravelRoomMoment
       parameters:
         - name: roomId
@@ -919,6 +1156,7 @@ paths:
       tags:
         - Community
       summary: 공동 Recap 후보 댓글 추가
+      description: 방장 또는 참여자만 공동 순간에 댓글을 남길 수 있습니다.
       operationId: addTravelRoomMomentComment
       parameters:
         - name: roomId
@@ -954,6 +1192,7 @@ paths:
       tags:
         - Community
       summary: 공동 Recap 생성
+      description: 방장만 공동 Recap을 생성할 수 있으며, accepted 후보 순간이 있으면 accepted만 우선 사용합니다.
       operationId: createTravelRoomRecap
       parameters:
         - name: roomId
@@ -985,6 +1224,7 @@ paths:
       tags:
         - Community
       summary: Live Sound Map 핀 조회
+      description: 좌표가 있으면 반경 내 핀을 반환합니다. `nearby` 핀은 주변 익명 공개 사용자에게 보이고, `companions` 핀은 내 핀 또는 나와 같은 공동 여행방에 참여한 사용자에게만 보입니다. `private` 핀은 본인에게만 반환됩니다.
       operationId: getSoundMap
       parameters:
         - name: lat
@@ -1020,6 +1260,7 @@ paths:
       tags:
         - Community
       summary: 현재 선택 곡을 지도에 공개
+      description: 서버에 active 여행 세션이 있는 사용자만 현재 선택 곡과 대략 위치를 지도에 공개할 수 있습니다. visibility를 private으로 보내면 기존 공개 핀을 숨깁니다.
       operationId: upsertSoundMapCurrentTrack
       requestBody:
         required: true
@@ -1044,6 +1285,7 @@ paths:
       tags:
         - Community
       summary: 주변 익명 사운드 핀 조회
+      description: 위치 권한 없이 호출하면 낯선 사용자 핀을 노출하지 않고 빈 목록을 반환합니다.
       operationId: getNearbySounds
       parameters:
         - name: lat
@@ -1082,6 +1324,7 @@ paths:
       tags:
         - Community
       summary: 주변 음악 취향 매칭 후보 조회
+      description: 위치 권한 없이 호출하면 낯선 사용자 매칭 후보를 노출하지 않고 빈 목록을 반환합니다.
       operationId: getMusicMatches
       parameters:
         - name: lat
@@ -1116,10 +1359,57 @@ paths:
           $ref: "#/components/responses/Unauthorized"
 
   /v1/travel-mate-requests:
+    get:
+      tags:
+        - Community
+      summary: 동행 매칭 요청 목록 조회
+      description: 받은 요청함, 보낸 요청함, 전체 요청을 조회합니다. 수락 전에는 연락처와 정확한 위치가 응답에 포함되지 않습니다.
+      operationId: getTravelMateRequests
+      parameters:
+        - name: box
+          in: query
+          schema:
+            type: string
+            enum:
+              - all
+              - inbox
+              - sent
+            default: all
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum:
+              - pending
+              - accepted
+              - declined
+              - expired
+              - cancelled
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+      responses:
+        "200":
+          description: 동행 매칭 요청 목록
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TravelMateRequestListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
     post:
       tags:
         - Community
       summary: 동행 매칭 요청 생성
+      description: >
+        대상 사용자가 주변 익명 공개 핀을 유지 중일 때만 요청을 생성합니다.
+        pending/accepted 요청은 기존 요청을 재사용하고, 거절/취소/만료된 같은 대상 요청은 24시간 동안 재요청을 제한합니다.
+        서로 차단한 관계에서는 요청을 생성할 수 없습니다.
       operationId: createTravelMateRequest
       requestBody:
         required: true
@@ -1138,12 +1428,15 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /v1/travel-mate-requests/{requestId}:
     patch:
       tags:
         - Community
       summary: 동행 매칭 요청 상태 변경
+      description: 수신자는 accept/decline, 발신자는 cancel, 시스템 또는 운영 도구는 expire 액션을 사용할 수 있습니다.
       operationId: updateTravelMateRequest
       parameters:
         - name: requestId
@@ -1249,6 +1542,7 @@ paths:
       tags:
         - TravelSessions
       summary: 여행 세션 상태 변경
+      description: 세션을 ended로 변경하면 해당 세션에서 공개 중이던 사운드맵 핀은 즉시 private 상태로 전환되고 만료됩니다.
       operationId: updateTravelSession
       parameters:
         - name: sessionId
@@ -1280,9 +1574,8 @@ paths:
     get:
       tags:
         - Trends
-      security: []
       summary: 지역 사운드 트렌드 조회
-      description: 초기 사용자 또는 비로그인 사용자에게 제공할 지역 기반 인기 음악/무드 집계입니다.
+      description: 로그인 사용자에게 제공할 지역 기반 인기 음악/무드 집계입니다.
       operationId: getRegionSoundTrend
       parameters:
         - name: regionCode
@@ -1308,6 +1601,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RegionSoundTrendResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -1582,6 +1877,26 @@ components:
         - active
         - local
 
+    MlTravelState:
+      type: string
+      description: ML 추천 서버와 맞춘 여행 상태
+      enum:
+        - 바다
+        - 드라이브
+        - 산책
+        - 카페
+        - 야경
+
+    MlMood:
+      type: string
+      description: ML 추천 서버와 맞춘 음악 무드
+      enum:
+        - 잔잔한
+        - 신나는
+        - 시원한
+        - 설레는
+        - 감성적인
+
     PlaceContext:
       type: object
       required:
@@ -1783,6 +2098,42 @@ components:
         context:
           $ref: "#/components/schemas/RecommendationContext"
 
+    LibraryPlaylistSummary:
+      type: object
+      required:
+        - id
+        - regionName
+        - trackCount
+        - durationText
+      properties:
+        id:
+          type: string
+          example: busan-ocean
+        regionName:
+          type: string
+          example: 부산
+        placeName:
+          type: string
+          example: 광안리 해변
+        description:
+          type: string
+          example: 부산광역시에 어울리는 노래를 추천해드립니다.
+        reason:
+          type: string
+          example: 부산 해변 산책과 어울리는 음악이에요
+        coverImageUrl:
+          type: string
+          format: uri
+        backgroundImageUrl:
+          type: string
+          format: uri
+        trackCount:
+          type: integer
+          example: 5
+        durationText:
+          type: string
+          example: 40:00분
+
     MusicLogItem:
       type: object
       required:
@@ -1901,6 +2252,14 @@ components:
         placeName:
           type: string
           example: 광안리해수욕장
+        source:
+          type: string
+          description: 추천 산출 경로입니다. ML 추천이 실패했거나 위치가 없으면 seed-fallback으로 내려갑니다.
+          enum:
+            - ml-recommendation
+            - seed-fallback
+            - server-contextual
+          example: ml-recommendation
         topFilter:
           type: string
           example: 전체
@@ -1916,8 +2275,13 @@ components:
           type: string
         travelMode:
           $ref: "#/components/schemas/TravelMode"
+        state:
+          $ref: "#/components/schemas/MlTravelState"
+        mood:
+          $ref: "#/components/schemas/MlMood"
         moodTags:
           type: array
+          description: 선택한 무드 태그입니다. 사용자가 무드를 고르지 않으면 빈 배열로 저장될 수 있습니다.
           items:
             $ref: "#/components/schemas/MoodTag"
         preferredGenres:
@@ -1978,6 +2342,9 @@ components:
           format: date-time
         playlistId:
           type: string
+          description: 이 곡이 저장될 때 연결된 추천 플레이리스트 ID입니다.
+        playlist:
+          $ref: "#/components/schemas/LibraryPlaylistSummary"
         kind:
           type: string
           enum:
@@ -1989,14 +2356,13 @@ components:
     MomentLogCreateForm:
       type: object
       required:
-        - photo
         - createdAt
         - moodTags
       properties:
         photo:
           type: string
           format: binary
-          description: 카메라 촬영 이미지 파일
+          description: 카메라 촬영 이미지 파일. 사진 없이 음악/장소 로그만 저장할 때는 생략할 수 있습니다.
         createdAt:
           type: string
           format: date-time
@@ -2012,6 +2378,10 @@ components:
           type: string
         placeName:
           type: string
+        note:
+          type: string
+          maxLength: 240
+          description: 사용자가 Moment 저장 시 남긴 짧은 메모
         placeCategory:
           type: string
         trackId:
@@ -2027,11 +2397,67 @@ components:
           items:
             $ref: "#/components/schemas/MoodTag"
 
+    MomentLogPhotoUpdateForm:
+      type: object
+      required:
+        - photo
+      properties:
+        photo:
+          type: string
+          format: binary
+          description: 새 Moment 사진 파일
+
+    MomentLogUpdateRequest:
+      type: object
+      description: MomentLog 부분 수정 요청. 전달하지 않은 필드는 기존 값을 유지합니다.
+      properties:
+        createdAt:
+          type: string
+          format: date-time
+        sessionId:
+          type: string
+          nullable: true
+        lat:
+          type: number
+          format: double
+          nullable: true
+        lng:
+          type: number
+          format: double
+          nullable: true
+        placeId:
+          type: string
+          nullable: true
+        placeName:
+          type: string
+          nullable: true
+        note:
+          type: string
+          nullable: true
+          maxLength: 240
+          description: null을 보내면 기존 메모를 비웁니다.
+        placeCategory:
+          type: string
+          nullable: true
+        trackId:
+          type: string
+        trackTitle:
+          type: string
+        artistName:
+          type: string
+        travelMode:
+          allOf:
+            - $ref: "#/components/schemas/TravelMode"
+          nullable: true
+        moodTags:
+          type: array
+          items:
+            $ref: "#/components/schemas/MoodTag"
+
     MomentLog:
       type: object
       required:
         - id
-        - photoUrl
         - createdAt
         - moodTags
         - syncStatus
@@ -2055,6 +2481,9 @@ components:
           type: string
         placeName:
           type: string
+        note:
+          type: string
+          maxLength: 240
         track:
           $ref: "#/components/schemas/Track"
         travelMode:
@@ -2079,11 +2508,16 @@ components:
       type: string
       enum:
         - track_external_open
+        - external_music_open_failed
+        - track_selected
         - track_like
         - track_unlike
         - track_save
         - track_unsave
+        - moment_log_saved
+        - moment_log_sync_failed
         - playlist_open
+        - mood_adjusted
         - mood_filter_change
         - live_track_shared
         - nearby_sound_opened
@@ -2287,6 +2721,22 @@ components:
 
     TravelRoomJoinRequest:
       type: object
+      properties:
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 40
+          example: 수경
+        inviteCode:
+          type: string
+          minLength: 4
+          maxLength: 16
+          example: A1B2C3D4
+
+    TravelRoomJoinByInviteRequest:
+      type: object
+      required:
+        - inviteCode
       properties:
         displayName:
           type: string
@@ -2739,6 +3189,16 @@ components:
         data:
           $ref: "#/components/schemas/TravelRoom"
 
+    TravelRoomListResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/TravelRoom"
+
     TravelRoomMomentResponse:
       type: object
       required:
@@ -2790,6 +3250,16 @@ components:
       properties:
         data:
           $ref: "#/components/schemas/TravelMateRequest"
+
+    TravelMateRequestListResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/TravelMateRequest"
 
     TravelSessionCreateRequest:
       type: object

@@ -1,0 +1,1 @@
+ALTER TABLE "MomentLog" ALTER COLUMN "photoUrl" DROP NOT NULL;

@@ -19,6 +19,8 @@ import {
   type UserProfile,
 } from '@prisma/client';
 import crypto from 'node:crypto';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 
 import { env } from '../config/env.js';
 import { ERROR_MESSAGES } from '../constants/error.constants.js';
@@ -78,6 +80,9 @@ type MlRecommendationResponse = {
   tracks?: unknown;
 };
 
+const TRAVEL_MATE_REQUEST_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+const CLOSED_TRAVEL_MATE_REQUEST_STATUSES = ['cancelled', 'declined', 'expired'];
+
 type ContextualPlaylistInput = {
   excludeTrackIds?: string[];
   location?: { lat: number; lng: number };
@@ -90,10 +95,33 @@ type ContextualPlaylistInput = {
   travelMode?: string;
 };
 
+type MomentLogUpdateInput = {
+  artistName?: string;
+  createdAt?: string;
+  lat?: number | null;
+  lng?: number | null;
+  moodTags?: string[];
+  note?: string | null;
+  placeCategory?: string | null;
+  placeId?: string | null;
+  placeName?: string | null;
+  sessionId?: string | null;
+  trackId?: string;
+  trackTitle?: string;
+  travelMode?: string | null;
+};
+
 function compact<T extends Record<string, unknown>>(value: T) {
   return Object.fromEntries(
     Object.entries(value).filter(([, item]) => item !== undefined && item !== null),
   ) as Partial<T>;
+}
+
+function hasOwn<T extends object, K extends PropertyKey>(
+  value: T,
+  key: K,
+): value is T & Record<K, unknown> {
+  return Object.prototype.hasOwnProperty.call(value, key);
 }
 
 function toInputJson(value: unknown): Prisma.InputJsonValue {
@@ -301,6 +329,60 @@ async function recordCommunityRecommendationEvent(
   });
 }
 
+async function touchTravelRoom(roomId: string) {
+  await prisma.travelRoom.update({
+    where: { id: roomId },
+    data: { updatedAt: new Date() },
+  });
+}
+
+async function getCompanionUserIds(userId: string) {
+  const memberships = await prisma.travelRoomMember.findMany({
+    where: {
+      room: {
+        members: {
+          some: { userId },
+        },
+      },
+    },
+    select: { userId: true },
+  });
+
+  return Array.from(new Set(memberships.map((membership) => membership.userId)));
+}
+
+async function getCommunityHiddenUserIds(userId: string) {
+  const blocks = await prisma.communityBlock.findMany({
+    select: {
+      blockedUserId: true,
+      blockerId: true,
+    },
+    where: {
+      OR: [
+        { blockerId: userId },
+        { blockedUserId: userId },
+      ],
+    },
+  });
+
+  return Array.from(new Set(blocks.map((block) =>
+    block.blockerId === userId ? block.blockedUserId : block.blockerId,
+  )));
+}
+
+async function hasCommunityBlockBetween(userId: string, targetUserId: string) {
+  const block = await prisma.communityBlock.findFirst({
+    where: {
+      OR: [
+        { blockedUserId: targetUserId, blockerId: userId },
+        { blockedUserId: userId, blockerId: targetUserId },
+      ],
+    },
+  });
+
+  return Boolean(block);
+}
+
 function mateRequestToDto(request: TravelMateRequest) {
   return {
     id: request.id,
@@ -406,6 +488,33 @@ async function withIdempotency<T>(
 
 function normalizePublicUrl(baseUrl: string, path: string) {
   return `${baseUrl.replace(/\/$/, '')}/${path.replace(/^\//, '')}`;
+}
+
+function getLocalUploadedFilePath(photoUrl?: string | null) {
+  if (!photoUrl) {
+    return undefined;
+  }
+
+  const uploadPublicRoot = normalizePublicUrl(env.UPLOAD_PUBLIC_BASE_URL, env.UPLOAD_PUBLIC_PATH);
+  const fileName = photoUrl.startsWith(`${uploadPublicRoot}/`)
+    ? photoUrl.slice(uploadPublicRoot.length + 1)
+    : undefined;
+
+  if (!fileName || fileName.includes('/') || fileName.includes('\\')) {
+    return undefined;
+  }
+
+  return path.join(env.UPLOAD_DIRECTORY, fileName);
+}
+
+async function deleteLocalUploadedFile(photoUrl?: string | null) {
+  const filePath = getLocalUploadedFilePath(photoUrl);
+
+  if (!filePath) {
+    return;
+  }
+
+  await fs.unlink(filePath).catch(() => undefined);
 }
 
 function asString(value: unknown) {
@@ -773,6 +882,47 @@ type PlaylistWithTracks = Playlist & {
   tracks: Array<PlaylistTrack & { track: Track }>;
 };
 
+type PlaylistSummarySource = Pick<
+  Playlist,
+  | 'backgroundImageUrl'
+  | 'coverImageUrl'
+  | 'description'
+  | 'durationText'
+  | 'id'
+  | 'placeName'
+  | 'reason'
+  | 'regionName'
+  | 'trackCount'
+>;
+
+function createFallbackPlaylistSummary(playlistId: string): PlaylistSummarySource {
+  return {
+    id: playlistId,
+    regionName: playlistId,
+    description: null,
+    placeName: null,
+    reason: '',
+    coverImageUrl: null,
+    backgroundImageUrl: null,
+    trackCount: 0,
+    durationText: '',
+  };
+}
+
+function playlistSummaryToDto(playlist: PlaylistSummarySource) {
+  return compact({
+    id: playlist.id,
+    regionName: playlist.regionName,
+    placeName: playlist.placeName ?? undefined,
+    description: playlist.description ?? undefined,
+    reason: playlist.reason,
+    coverImageUrl: playlist.coverImageUrl ?? undefined,
+    backgroundImageUrl: playlist.backgroundImageUrl ?? undefined,
+    trackCount: playlist.trackCount,
+    durationText: playlist.durationText,
+  });
+}
+
 async function getTrackStates(userId: string | undefined, trackIds: string[]) {
   if (!userId || trackIds.length === 0) {
     return new Map<string, LibraryTrackState>();
@@ -828,6 +978,24 @@ function profileToDto(profile: UserProfile) {
   });
 }
 
+function withPlaylistContext<T extends Record<string, unknown>>(
+  playlist: T,
+  context: Record<string, unknown>,
+) {
+  const currentContext =
+    playlist.context && typeof playlist.context === 'object'
+      ? (playlist.context as Record<string, unknown>)
+      : {};
+
+  return {
+    ...playlist,
+    context: compact({
+      ...currentContext,
+      ...context,
+    }),
+  };
+}
+
 function momentLogToDto(log: MomentLog) {
   return compact({
     id: log.id,
@@ -840,6 +1008,7 @@ function momentLogToDto(log: MomentLog) {
     placeCategory: log.placeCategory ?? undefined,
     placeId: log.placeId ?? undefined,
     placeName: log.placeName ?? undefined,
+    note: log.note ?? undefined,
     track: (log.trackSnapshot as TrackDto | null) ?? undefined,
     travelMode: log.travelMode ?? undefined,
     moodTags: log.moodTags,
@@ -1185,20 +1354,52 @@ export const soundlogService = {
           throw notFound();
         }
 
-        await prisma.playlist.update({
-          where: { id: playlist.id },
-          data: {
-            context: compact({
-              moodTags: input.moodTags,
-              placeId: input.placeId,
-              travelMode: input.travelMode,
-            }),
-          },
+        return withPlaylistContext(await playlistToDto(playlist, userId), {
+          mood: input.mood,
+          moodTags: input.moodTags,
+          placeId: input.placeId,
+          source: 'seed-fallback',
+          state: input.state,
+          travelMode: input.travelMode,
         });
-
-        return playlistToDto(playlist, userId);
       },
     );
+  },
+
+  async getRecommendedPlaylist(
+    userId: string | undefined,
+    input: ContextualPlaylistInput,
+  ) {
+    const mlPlaylist = await fetchMlRecommendationPlaylist(input);
+
+    if (mlPlaylist) {
+      return mlPlaylist;
+    }
+
+    const playlistId = await findDefaultPlaylist({
+      lat: input.location?.lat,
+      placeId: input.placeId,
+    });
+    const playlist = await prisma.playlist.findUnique({
+      where: { id: playlistId },
+      include: {
+        tracks: {
+          include: { track: true },
+        },
+      },
+    });
+
+    if (!playlist) {
+      throw notFound();
+    }
+
+    return withPlaylistContext(await playlistToDto(playlist, userId), {
+      mood: input.mood,
+      placeId: input.placeId,
+      source: 'seed-fallback',
+      state: input.state,
+      travelMode: input.travelMode,
+    });
   },
 
   async getPlaylist(
@@ -1220,7 +1421,11 @@ export const soundlogService = {
       throw notFound(ERROR_MESSAGES.PLAYLIST_NOT_FOUND);
     }
 
-    return playlistToDto(playlist, userId);
+    const dto = await playlistToDto(playlist, userId);
+
+    return playlistId === 'fallback'
+      ? withPlaylistContext(dto, { source: 'seed-fallback' })
+      : dto;
   },
 
   async getLibraryTracks(
@@ -1240,10 +1445,22 @@ export const soundlogService = {
       include: { track: true },
       orderBy: { updatedAt: 'desc' },
     });
+    const playlistIds = Array.from(
+      new Set(states.map((state) => state.playlistId).filter(Boolean) as string[]),
+    );
+    const playlists = playlistIds.length > 0
+      ? await prisma.playlist.findMany({ where: { id: { in: playlistIds } } })
+      : [];
+    const playlistById = new Map(playlists.map((playlist) => [playlist.id, playlist]));
     const records = states.map((state) => ({
       id: state.trackId,
       createdAt: (state.isLiked ? state.likedAt : state.savedAt)?.toISOString() ?? state.updatedAt.toISOString(),
       playlistId: state.playlistId ?? undefined,
+      playlist: state.playlistId
+        ? playlistSummaryToDto(
+            playlistById.get(state.playlistId) ?? createFallbackPlaylistSummary(state.playlistId),
+          )
+        : undefined,
       kind: state.isLiked ? 'liked' : 'saved',
       track: trackToDto(state.track, state),
     }));
@@ -1341,10 +1558,11 @@ export const soundlogService = {
       lat?: number;
       lng?: number;
       moodTags: string[];
-      photoPath: string;
+      photoPath?: string;
       placeCategory?: string;
       placeId?: string;
       placeName?: string;
+      note?: string;
       sessionId?: string;
       trackId?: string;
       trackTitle?: string;
@@ -1358,7 +1576,9 @@ export const soundlogService = {
         const track = input.trackId
           ? await prisma.track.findUnique({ where: { id: input.trackId } })
           : undefined;
-        const photoUrl = normalizePublicUrl(env.UPLOAD_PUBLIC_BASE_URL, input.photoPath);
+        const photoUrl = input.photoPath
+          ? normalizePublicUrl(env.UPLOAD_PUBLIC_BASE_URL, input.photoPath)
+          : undefined;
         const id = createPublicId('moment');
         const log = await prisma.momentLog.create({
           data: {
@@ -1372,6 +1592,7 @@ export const soundlogService = {
             placeCategory: input.placeCategory,
             placeId: input.placeId,
             placeName: input.placeName,
+            note: input.note,
             trackSnapshot:
               track || input.trackTitle
                 ? {
@@ -1392,6 +1613,168 @@ export const soundlogService = {
         return momentLogToDto(log);
       },
     );
+  },
+
+  async updateMomentLog(
+    userId: string,
+    momentLogId: string,
+    input: MomentLogUpdateInput,
+  ) {
+    const existing = await prisma.momentLog.findFirst({
+      where: {
+        id: momentLogId,
+        userId,
+      },
+    });
+
+    if (!existing) {
+      throw notFound(ERROR_MESSAGES.MOMENT_LOG_NOT_FOUND);
+    }
+
+    const data: Prisma.MomentLogUpdateInput = {};
+
+    if (input.createdAt) {
+      data.createdAt = new Date(input.createdAt);
+    }
+
+    if (hasOwn(input, 'lat')) {
+      data.lat = input.lat ?? null;
+    }
+
+    if (hasOwn(input, 'lng')) {
+      data.lng = input.lng ?? null;
+    }
+
+    if (input.moodTags) {
+      data.moodTags = input.moodTags;
+    }
+
+    if (hasOwn(input, 'note')) {
+      data.note = input.note ?? null;
+    }
+
+    if (hasOwn(input, 'placeCategory')) {
+      data.placeCategory = input.placeCategory ?? null;
+    }
+
+    if (hasOwn(input, 'placeId')) {
+      data.placeId = input.placeId ?? null;
+    }
+
+    if (hasOwn(input, 'placeName')) {
+      data.placeName = input.placeName ?? null;
+    }
+
+    if (hasOwn(input, 'sessionId')) {
+      data.sessionId = input.sessionId ?? null;
+    }
+
+    if (hasOwn(input, 'travelMode')) {
+      data.travelMode = input.travelMode ?? null;
+    }
+
+    const shouldUpdateTrackSnapshot =
+      hasOwn(input, 'trackId') ||
+      hasOwn(input, 'trackTitle') ||
+      hasOwn(input, 'artistName');
+
+    if (shouldUpdateTrackSnapshot) {
+      const track = input.trackId
+        ? await prisma.track.findUnique({ where: { id: input.trackId } })
+        : undefined;
+      const trackSnapshot = createTrackSnapshot(track, {
+        artistName: input.artistName,
+        trackId: input.trackId,
+        trackTitle: input.trackTitle,
+      });
+
+      data.trackSnapshot = trackSnapshot ? toInputJson(trackSnapshot) : Prisma.JsonNull;
+    }
+
+    if (Object.keys(data).length === 0) {
+      return momentLogToDto(existing);
+    }
+
+    const updated = await prisma.momentLog.update({
+      where: { id: existing.id },
+      data,
+    });
+
+    return momentLogToDto(updated);
+  },
+
+  async updateMomentLogPhoto(userId: string, momentLogId: string, photoPath: string) {
+    const nextPhotoUrl = normalizePublicUrl(env.UPLOAD_PUBLIC_BASE_URL, photoPath);
+    const existing = await prisma.momentLog.findFirst({
+      where: {
+        id: momentLogId,
+        userId,
+      },
+    });
+
+    if (!existing) {
+      await deleteLocalUploadedFile(nextPhotoUrl);
+      throw notFound(ERROR_MESSAGES.MOMENT_LOG_NOT_FOUND);
+    }
+
+    const updated = await prisma.momentLog.update({
+      where: { id: existing.id },
+      data: { photoUrl: nextPhotoUrl },
+    });
+
+    await deleteLocalUploadedFile(existing.photoUrl);
+
+    return momentLogToDto(updated);
+  },
+
+  async deleteMomentLogPhoto(userId: string, momentLogId: string) {
+    const existing = await prisma.momentLog.findFirst({
+      where: {
+        id: momentLogId,
+        userId,
+      },
+    });
+
+    if (!existing) {
+      throw notFound(ERROR_MESSAGES.MOMENT_LOG_NOT_FOUND);
+    }
+
+    if (!existing.photoUrl) {
+      return momentLogToDto(existing);
+    }
+
+    const updated = await prisma.momentLog.update({
+      where: { id: existing.id },
+      data: { photoUrl: null },
+    });
+
+    await deleteLocalUploadedFile(existing.photoUrl);
+
+    return momentLogToDto(updated);
+  },
+
+  async deleteMomentLog(userId: string, momentLogId: string) {
+    const existing = await prisma.momentLog.findFirst({
+      where: {
+        id: momentLogId,
+        userId,
+      },
+      select: { id: true, photoUrl: true },
+    });
+
+    if (!existing) {
+      throw notFound(ERROR_MESSAGES.MOMENT_LOG_NOT_FOUND);
+    }
+
+    await prisma.$transaction([
+      prisma.travelRoomMoment.updateMany({
+        where: { momentLogId: existing.id },
+        data: { momentLogId: null },
+      }),
+      prisma.momentLog.delete({ where: { id: existing.id } }),
+    ]);
+
+    await deleteLocalUploadedFile(existing.photoUrl);
   },
 
   async createRecommendationEvents(
@@ -1470,6 +1853,29 @@ export const soundlogService = {
     return roomToDto(room);
   },
 
+  async getTravelRooms(userId: string, query: {
+    limit?: number;
+    sessionId?: string;
+  }) {
+    const rooms = await prisma.travelRoom.findMany({
+      where: {
+        ...(query.sessionId ? { sessionId: query.sessionId } : {}),
+        members: { some: { userId } },
+      },
+      include: {
+        members: true,
+        moments: {
+          include: { comments: { orderBy: { createdAt: 'asc' } } },
+          orderBy: { createdAt: 'desc' },
+        },
+      },
+      orderBy: { updatedAt: 'desc' },
+      take: getLimit(query.limit),
+    });
+
+    return rooms.map(roomToDto);
+  },
+
   async getTravelRoom(userId: string, roomId: string) {
     const room = await prisma.travelRoom.findFirst({
       where: {
@@ -1538,6 +1944,7 @@ export const soundlogService = {
         role: 'member',
       },
     });
+    await touchTravelRoom(roomId);
 
     await recordCommunityRecommendationEvent(userId, 'trip_room_joined', {
       roomId,
@@ -1545,6 +1952,21 @@ export const soundlogService = {
     }, { sessionId: room.sessionId ?? roomId });
 
     return this.getTravelRoom(userId, roomId);
+  },
+
+  async joinTravelRoomByInviteCode(userId: string, input: {
+    displayName?: string;
+    inviteCode: string;
+  }) {
+    const room = await prisma.travelRoom.findUnique({
+      where: { inviteCode: input.inviteCode },
+    });
+
+    if (!room) {
+      throw badRequest(ERROR_MESSAGES.TRAVEL_ROOM_INVITE_CODE_INVALID);
+    }
+
+    return this.joinTravelRoom(userId, room.id, input);
   },
 
   async addTravelRoomMoment(userId: string, roomId: string, input: {
@@ -1598,6 +2020,7 @@ export const soundlogService = {
         trackSnapshot: trackSnapshot ? toInputJson(trackSnapshot) : undefined,
       },
     });
+    await touchTravelRoom(roomId);
 
     await recordCommunityRecommendationEvent(userId, 'shared_moment_added', {
       roomId,
@@ -1647,6 +2070,7 @@ export const soundlogService = {
       data: { status: input.status },
       include: { comments: { orderBy: { createdAt: 'asc' } } },
     });
+    await touchTravelRoom(roomId);
 
     await recordCommunityRecommendationEvent(userId, 'shared_moment_status_updated', {
       roomId,
@@ -1705,6 +2129,7 @@ export const soundlogService = {
         userId,
       },
     });
+    await touchTravelRoom(roomId);
 
     await recordCommunityRecommendationEvent(userId, 'shared_moment_commented', {
       roomId,
@@ -1835,6 +2260,7 @@ export const soundlogService = {
       trackId: input.trackId,
       trackTitle: input.trackTitle,
     });
+    const trackSnapshotValue = trackSnapshot ? toInputJson(trackSnapshot) : Prisma.JsonNull;
     const expiresAt = new Date(Date.now() + (input.ttlMinutes ?? 120) * 60_000);
     const pin = await prisma.soundMapPin.upsert({
       where: { userId },
@@ -1847,7 +2273,7 @@ export const soundlogService = {
         moodTags: input.moodTags ?? [],
         placeName: input.placeName,
         sessionId: session.id,
-        trackSnapshot: trackSnapshot ? toInputJson(trackSnapshot) : undefined,
+        trackSnapshot: trackSnapshotValue,
         travelMode: input.travelMode ?? session.travelMode,
         visibility: input.visibility,
       },
@@ -1861,7 +2287,7 @@ export const soundlogService = {
         moodTags: input.moodTags ?? [],
         placeName: input.placeName,
         sessionId: session.id,
-        trackSnapshot: trackSnapshot ? toInputJson(trackSnapshot) : undefined,
+        trackSnapshot: trackSnapshotValue,
         travelMode: input.travelMode ?? session.travelMode,
         userId,
         visibility: input.visibility,
@@ -1900,18 +2326,39 @@ export const soundlogService = {
     radiusMeters?: number;
     visibility?: string;
   }) {
-    const blockedUsers = await prisma.communityBlock.findMany({
-      select: { blockedUserId: true },
-      where: { blockerId: userId },
-    });
+    const [hiddenUserIds, companionUserIds] = await Promise.all([
+      getCommunityHiddenUserIds(userId),
+      getCompanionUserIds(userId),
+    ]);
+    const visibilityScope =
+      query.visibility === 'nearby'
+        ? { visibility: 'nearby' }
+        : query.visibility === 'companions'
+          ? {
+              OR: [
+                { userId },
+                {
+                  userId: { in: companionUserIds },
+                  visibility: 'companions',
+                },
+              ],
+            }
+          : {
+              OR: [
+                { userId },
+                { visibility: 'nearby' },
+                {
+                  userId: { in: companionUserIds },
+                  visibility: 'companions',
+                },
+              ],
+            };
     const pins = await prisma.soundMapPin.findMany({
       where: {
         AND: [
           { expiresAt: { gt: new Date() } },
-          { userId: { notIn: blockedUsers.map((block) => block.blockedUserId) } },
-          query.visibility
-            ? { visibility: query.visibility }
-            : { OR: [{ userId }, { visibility: { not: 'private' } }] },
+          { userId: { notIn: hiddenUserIds } },
+          visibilityScope,
         ],
       },
       include: {
@@ -1960,15 +2407,12 @@ export const soundlogService = {
       return [];
     }
 
-    const blockedUsers = await prisma.communityBlock.findMany({
-      select: { blockedUserId: true },
-      where: { blockerId: userId },
-    });
+    const hiddenUserIds = await getCommunityHiddenUserIds(userId);
     const pins = await prisma.soundMapPin.findMany({
       where: {
         AND: [
           { userId: { not: userId } },
-          { userId: { notIn: blockedUsers.map((block) => block.blockedUserId) } },
+          { userId: { notIn: hiddenUserIds } },
         ],
         expiresAt: { gt: new Date() },
         visibility: 'nearby',
@@ -2058,11 +2502,14 @@ export const soundlogService = {
       throw badRequest(ERROR_MESSAGES.TRAVEL_MATE_TARGET_REQUIRED);
     }
 
+    if (await hasCommunityBlockBetween(userId, targetUserId)) {
+      throw forbidden(ERROR_MESSAGES.TRAVEL_MATE_REQUEST_BLOCKED);
+    }
+
     const existingActiveRequest = await prisma.travelMateRequest.findFirst({
       where: {
         requesterId: userId,
         status: { in: ['pending', 'accepted'] },
-        targetPinId: input.targetPinId,
         targetUserId,
       },
       orderBy: { createdAt: 'desc' },
@@ -2070,6 +2517,25 @@ export const soundlogService = {
 
     if (existingActiveRequest) {
       return mateRequestToDto(existingActiveRequest);
+    }
+
+    const recentClosedRequest = await prisma.travelMateRequest.findFirst({
+      where: {
+        requesterId: userId,
+        status: { in: CLOSED_TRAVEL_MATE_REQUEST_STATUSES },
+        targetUserId,
+        updatedAt: {
+          gte: new Date(Date.now() - TRAVEL_MATE_REQUEST_COOLDOWN_MS),
+        },
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+
+    if (recentClosedRequest) {
+      throw badRequest(ERROR_MESSAGES.TRAVEL_MATE_REQUEST_RATE_LIMITED, {
+        cooldownHours: TRAVEL_MATE_REQUEST_COOLDOWN_MS / 60 / 60 / 1000,
+        requestId: recentClosedRequest.id,
+      });
     }
 
     const request = await prisma.travelMateRequest.create({
@@ -2090,6 +2556,35 @@ export const soundlogService = {
     }, { sessionId: request.targetPinId ?? request.id });
 
     return mateRequestToDto(request);
+  },
+
+  async getTravelMateRequests(userId: string, query: {
+    box?: string;
+    limit?: number;
+    status?: string;
+  }) {
+    const ownershipWhere =
+      query.box === 'inbox'
+        ? { targetUserId: userId }
+        : query.box === 'sent'
+          ? { requesterId: userId }
+          : {
+              OR: [
+                { requesterId: userId },
+                { targetUserId: userId },
+              ],
+            };
+
+    const requests = await prisma.travelMateRequest.findMany({
+      where: {
+        ...ownershipWhere,
+        ...(query.status ? { status: query.status } : {}),
+      },
+      orderBy: { updatedAt: 'desc' },
+      take: getLimit(query.limit),
+    });
+
+    return requests.map(mateRequestToDto);
   },
 
   async updateTravelMateRequest(userId: string, requestId: string, input: { action: string }) {
@@ -2158,6 +2653,17 @@ export const soundlogService = {
         blockedUserId: targetUserId,
         blockerId: userId,
       },
+    });
+
+    await prisma.travelMateRequest.updateMany({
+      where: {
+        OR: [
+          { requesterId: userId, targetUserId },
+          { requesterId: targetUserId, targetUserId: userId },
+        ],
+        status: 'pending',
+      },
+      data: { status: 'cancelled' },
     });
 
     await recordCommunityRecommendationEvent(userId, 'community_user_blocked', {
@@ -2405,6 +2911,19 @@ export const soundlogService = {
         lng: input.location?.lng,
       },
     });
+
+    if (updated.status === 'ended') {
+      await prisma.soundMapPin.updateMany({
+        where: {
+          sessionId,
+          userId,
+        },
+        data: {
+          expiresAt: new Date(),
+          visibility: 'private',
+        },
+      });
+    }
 
     return travelSessionToDto(updated);
   },

@@ -25,10 +25,11 @@ type MockMomentLog = {
   lat?: number;
   lng?: number;
   moodTags: string[];
-  photoUrl: string;
+  photoUrl?: string;
   placeCategory?: string;
   placeId?: string;
   placeName?: string;
+  note?: string;
   sessionId?: string;
   source: 'camera';
   syncStatus: 'failed' | 'pending' | 'synced';
@@ -230,6 +231,7 @@ function createMockDb() {
       createdAt: new Date(log.createdAt),
       sessionId: log.sessionId,
       placeName: log.placeName,
+      note: log.note,
       moodTags: [...log.moodTags],
       source: 'camera' as const,
       syncStatus: 'synced' as const,
