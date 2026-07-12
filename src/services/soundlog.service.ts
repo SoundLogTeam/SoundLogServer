@@ -45,6 +45,15 @@ type TrackDto = {
 
 type RecommendationContext = Record<string, unknown>;
 type CommunityVisibility = 'companions' | 'nearby' | 'private';
+type RecapListScope = 'all' | 'mine' | 'others';
+type RecapMapScope = 'mine' | 'public';
+type RecapVisibility = 'private' | 'public';
+type RoutePointDto = {
+  accuracyMeters?: number;
+  lat: number;
+  lng: number;
+  recordedAt: string;
+};
 type RoomWithCommunity = TravelRoom & {
   members: TravelRoomMember[];
   moments: Array<TravelRoomMoment & { comments?: TravelRoomMomentComment[] }>;
@@ -75,6 +84,8 @@ type TourApiResponse = {
 
 type MlTravelState = '바다' | '드라이브' | '산책' | '카페' | '야경';
 type MlMood = '잔잔한' | '신나는' | '시원한' | '설레는' | '감성적인';
+
+const RECAP_DISCOVERY_RADIUS_METERS = 300;
 
 type MlRecommendationResponse = {
   tracks?: unknown;
@@ -111,6 +122,14 @@ type MomentLogUpdateInput = {
   travelMode?: string | null;
 };
 
+type RecapWithMarkerRelations = Recap & {
+  representativeTrack: Track;
+  user: {
+    displayName: string | null;
+    id: string;
+  };
+};
+
 function compact<T extends Record<string, unknown>>(value: T) {
   return Object.fromEntries(
     Object.entries(value).filter(([, item]) => item !== undefined && item !== null),
@@ -126,6 +145,83 @@ function hasOwn<T extends object, K extends PropertyKey>(
 
 function toInputJson(value: unknown): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(value ?? { accepted: true })) as Prisma.InputJsonValue;
+}
+
+function isRoutePoint(value: unknown): value is RoutePointDto {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+
+  const candidate = value as {
+    accuracyMeters?: unknown;
+    lat?: unknown;
+    lng?: unknown;
+    recordedAt?: unknown;
+  };
+
+  return (
+    typeof candidate.lat === 'number' &&
+    typeof candidate.lng === 'number' &&
+    typeof candidate.recordedAt === 'string' &&
+    (
+      candidate.accuracyMeters === undefined ||
+      typeof candidate.accuracyMeters === 'number'
+    )
+  );
+}
+
+function routePointsToDto(value?: Prisma.JsonValue | null) {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const routePoints = value.filter(isRoutePoint).map((point): RoutePointDto => {
+    const routePoint: RoutePointDto = {
+      lat: point.lat,
+      lng: point.lng,
+      recordedAt: point.recordedAt,
+    };
+
+    if (point.accuracyMeters !== undefined) {
+      routePoint.accuracyMeters = point.accuracyMeters;
+    }
+
+    return routePoint;
+  });
+
+  return routePoints.length ? routePoints : undefined;
+}
+
+function normalizeRoutePoints(routePoints?: RoutePointDto[]) {
+  if (!routePoints) {
+    return undefined;
+  }
+
+  return routePoints.map((point) =>
+    compact({
+      accuracyMeters: point.accuracyMeters,
+      lat: point.lat,
+      lng: point.lng,
+      recordedAt: point.recordedAt,
+    }),
+  ) as Prisma.InputJsonArray;
+}
+
+function createInitialRoutePoints(
+  location: { lat: number; lng: number } | undefined,
+  recordedAt: Date,
+) {
+  if (!location) {
+    return undefined;
+  }
+
+  return normalizeRoutePoints([
+    {
+      lat: location.lat,
+      lng: location.lng,
+      recordedAt: recordedAt.toISOString(),
+    },
+  ]);
 }
 
 function normalizeApproxCoordinate(value: number) {
@@ -1040,10 +1136,13 @@ function recapItemToDto(recap: Recap & { representativeTrack: Track }) {
     createdAt: recap.createdAt.toISOString(),
     momentCount: recap.momentCount ?? undefined,
     sessionId: recap.sessionId ?? undefined,
+    visibility: recap.visibility,
   });
 }
 
-function recapShareToDto(recap: Recap & { representativeTrack: Track }) {
+function recapShareToDto(recap: Recap & { representativeTrack: Track }, viewerId?: string) {
+  const canViewRoutePoints = recap.userId === viewerId;
+
   return compact({
     id: recap.id,
     placeName: recap.placeName,
@@ -1053,7 +1152,79 @@ function recapShareToDto(recap: Recap & { representativeTrack: Track }) {
     discImageUrl: recap.discImageUrl ?? undefined,
     moments: (recap.moments as Prisma.JsonArray | null) ?? undefined,
     recordedAt: (recap.recordedAt ?? recap.createdAt).toISOString(),
+    routePoints: canViewRoutePoints ? routePointsToDto(recap.routePoints) : undefined,
     shareImageUrl: recap.shareImageUrl ?? undefined,
+    visibility: recap.visibility,
+  });
+}
+
+function getRecapMomentLocation(recap: Recap) {
+  const moments = Array.isArray(recap.moments)
+    ? (recap.moments as Array<{ location?: { lat?: unknown; lng?: unknown } }>)
+    : [];
+  const location = moments.find(
+    (moment) =>
+      typeof moment.location?.lat === 'number' &&
+      typeof moment.location?.lng === 'number',
+  )?.location;
+
+  if (!location || typeof location.lat !== 'number' || typeof location.lng !== 'number') {
+    return undefined;
+  }
+
+  return {
+    lat: location.lat,
+    lng: location.lng,
+  };
+}
+
+function getRecapLocation(recap: Recap) {
+  if (recap.lat !== null && recap.lng !== null) {
+    return {
+      lat: recap.lat,
+      lng: recap.lng,
+    };
+  }
+
+  return getRecapMomentLocation(recap);
+}
+
+function assertPublicRecapHasLocation(
+  visibility: RecapVisibility | undefined,
+  location: { lat: number; lng: number } | undefined,
+) {
+  if (visibility === 'public' && !location) {
+    throw badRequest(ERROR_MESSAGES.RECAP_PUBLIC_LOCATION_REQUIRED);
+  }
+}
+
+function recapMapMarkerToDto(
+  recap: RecapWithMarkerRelations,
+  viewerId: string,
+  origin?: { lat: number; lng: number },
+) {
+  const location = getRecapLocation(recap);
+
+  if (!location) {
+    return undefined;
+  }
+
+  const isMine = recap.userId === viewerId;
+
+  return compact({
+    id: `marker-${recap.id}`,
+    recapId: recap.id,
+    title: recap.title,
+    placeName: recap.placeName,
+    ownerAlias: isMine ? '나' : recap.user.displayName ?? 'Soundlog 여행자',
+    location,
+    trackTitle: recap.representativeTrack.title,
+    artistName: recap.representativeTrack.artist,
+    templateId: recap.templateId,
+    visibility: recap.visibility as RecapVisibility,
+    distanceMeters: origin ? Math.round(distanceMeters(origin, location)) : undefined,
+    imageUrl: recap.backgroundImageUrl ?? undefined,
+    createdAt: recap.createdAt.toISOString(),
   });
 }
 
@@ -1080,6 +1251,7 @@ function travelSessionToDto(session: TravelSession) {
     status: session.status,
     startedAt: session.startedAt?.toISOString(),
     endedAt: session.endedAt?.toISOString(),
+    routePoints: routePointsToDto(session.routePoints),
     travelMode: session.travelMode ?? undefined,
   });
 }
@@ -2211,6 +2383,8 @@ export const soundlogService = {
             momentCount: recapMoments.length,
             sessionId: room.sessionId,
             recordedAt: recapMoments[0]?.createdAt ?? new Date(),
+            templateId: input.templateId ?? 'album',
+            visibility: 'private',
             moments: recapMoments.map((moment) => {
               const momentTrack = (moment.trackSnapshot as TrackDto | null) ?? undefined;
               return {
@@ -2715,9 +2889,25 @@ export const soundlogService = {
     }, { sessionId: input.requestId ?? input.targetPinId ?? input.targetUserId ?? 'community' });
   },
 
-  async getRecaps(userId: string, params: { cursor?: string; limit?: number }) {
+  async getRecaps(userId: string, params: {
+    cursor?: string;
+    limit?: number;
+    scope?: RecapListScope;
+  }) {
+    const scope = params.scope ?? 'mine';
+    const where: Prisma.RecapWhereInput =
+      scope === 'mine'
+        ? { userId }
+        : scope === 'others'
+          ? { userId: { not: userId }, visibility: 'public' }
+          : {
+              OR: [
+                { userId },
+                { userId: { not: userId }, visibility: 'public' },
+              ],
+            };
     const recaps = await prisma.recap.findMany({
-      where: { userId },
+      where,
       include: { representativeTrack: true },
       orderBy: { createdAt: 'desc' },
     });
@@ -2733,14 +2923,55 @@ export const soundlogService = {
     };
   },
 
+  async getRecapMarkers(
+    userId: string,
+    params: {
+      lat?: number;
+      lng?: number;
+      radiusMeters?: number;
+      scope?: RecapMapScope;
+    },
+  ) {
+    const scope = params.scope ?? 'public';
+    const origin = hasGeoPoint(params) ? { lat: params.lat!, lng: params.lng! } : undefined;
+    const radiusMeters = RECAP_DISCOVERY_RADIUS_METERS;
+    const recaps = await prisma.recap.findMany({
+      where: scope === 'mine'
+        ? { userId }
+        : { visibility: 'public' },
+      include: {
+        representativeTrack: true,
+        user: {
+          select: {
+            displayName: true,
+            id: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return recaps
+      .flatMap((recap) => {
+        const marker = recapMapMarkerToDto(recap, userId, origin);
+
+        return marker ? [marker] : [];
+      })
+      .filter((marker) =>
+        origin ? typeof marker.distanceMeters === 'number' && marker.distanceMeters <= radiusMeters : true,
+      );
+  },
+
   async createRecap(
     userId: string,
     input: {
       momentLogIds?: string[];
       representativeTrackId?: string;
+      routePoints?: RoutePointDto[];
       sessionId?: string;
       templateId: string;
       title?: string;
+      visibility?: RecapVisibility;
     },
     idempotencyKey?: string,
   ) {
@@ -2755,6 +2986,18 @@ export const soundlogService = {
           },
           orderBy: { createdAt: 'asc' },
         });
+        const travelSession = input.sessionId
+          ? await prisma.travelSession.findFirst({
+              where: {
+                id: input.sessionId,
+                userId,
+              },
+            })
+          : undefined;
+        const sessionRoutePoints = routePointsToDto(travelSession?.routePoints);
+        const routePoints =
+          normalizeRoutePoints(input.routePoints) ??
+          normalizeRoutePoints(sessionRoutePoints);
         const candidateTrackIds = input.representativeTrackId
           ? [input.representativeTrackId]
           : Array.from(
@@ -2785,6 +3028,25 @@ export const soundlogService = {
         }
 
         const firstMoment = moments[0];
+        const firstMomentLocation =
+          firstMoment?.lat !== null &&
+          firstMoment?.lat !== undefined &&
+          firstMoment?.lng !== null &&
+          firstMoment?.lng !== undefined
+            ? {
+                lat: firstMoment.lat,
+                lng: firstMoment.lng,
+              }
+            : undefined;
+        const firstRoutePoint = input.routePoints?.[0] ?? sessionRoutePoints?.[0];
+        const recapLocation = firstMomentLocation ?? (
+          firstRoutePoint
+            ? { lat: firstRoutePoint.lat, lng: firstRoutePoint.lng }
+            : undefined
+        );
+
+        assertPublicRecapHasLocation(input.visibility, recapLocation);
+
         const recap = await prisma.recap.create({
           data: {
             id: createPublicId('recap'),
@@ -2798,6 +3060,11 @@ export const soundlogService = {
             discImageUrl: firstMoment?.photoUrl,
             recordedAt: firstMoment?.createdAt ?? new Date(),
             moments: moments.map(momentLogToRecapShareMoment) as Prisma.JsonArray,
+            routePoints,
+            templateId: input.templateId,
+            visibility: input.visibility ?? 'private',
+            lat: recapLocation?.lat,
+            lng: recapLocation?.lng,
           },
           include: { representativeTrack: true },
         });
@@ -2811,7 +3078,10 @@ export const soundlogService = {
     const recap = await prisma.recap.findFirst({
       where: {
         id: recapId,
-        userId,
+        OR: [
+          { userId },
+          { visibility: 'public' },
+        ],
       },
       include: { representativeTrack: true },
     });
@@ -2820,7 +3090,34 @@ export const soundlogService = {
       throw notFound(ERROR_MESSAGES.RECAP_NOT_FOUND);
     }
 
-    return recapShareToDto(recap);
+    return recapShareToDto(recap, userId);
+  },
+
+  async updateRecapVisibility(
+    userId: string,
+    recapId: string,
+    input: { visibility: RecapVisibility },
+  ) {
+    const recap = await prisma.recap.findFirst({
+      where: {
+        id: recapId,
+        userId,
+      },
+    });
+
+    if (!recap) {
+      throw notFound(ERROR_MESSAGES.RECAP_NOT_FOUND);
+    }
+
+    assertPublicRecapHasLocation(input.visibility, getRecapLocation(recap));
+
+    const updatedRecap = await prisma.recap.update({
+      where: { id: recapId },
+      data: { visibility: input.visibility },
+      include: { representativeTrack: true },
+    });
+
+    return recapItemToDto(updatedRecap);
   },
 
   async createRecapShareEvent(
@@ -2861,19 +3158,26 @@ export const soundlogService = {
     userId: string,
     input: {
       location?: { lat: number; lng: number };
+      routePoints?: RoutePointDto[];
       startedAt?: string;
       travelMode?: string;
     },
   ) {
+    const startedAt = input.startedAt ? new Date(input.startedAt) : new Date();
+    const routePoints =
+      normalizeRoutePoints(input.routePoints) ??
+      createInitialRoutePoints(input.location, startedAt);
+
     const session = await prisma.travelSession.create({
       data: {
         id: createPublicId('session'),
         userId,
         status: 'active',
-        startedAt: input.startedAt ? new Date(input.startedAt) : new Date(),
+        startedAt,
         travelMode: input.travelMode,
         lat: input.location?.lat,
         lng: input.location?.lng,
+        routePoints,
       },
     });
 
@@ -2886,6 +3190,7 @@ export const soundlogService = {
     input: {
       endedAt?: string;
       location?: { lat: number; lng: number };
+      routePoints?: RoutePointDto[];
       status: 'active' | 'ended';
     },
   ) {
@@ -2904,6 +3209,8 @@ export const soundlogService = {
       throw badRequest(ERROR_MESSAGES.ENDED_TRAVEL_SESSION_CANNOT_ACTIVATE);
     }
 
+    const routePoints = normalizeRoutePoints(input.routePoints);
+
     const updated = await prisma.travelSession.update({
       where: { id: sessionId },
       data: {
@@ -2916,6 +3223,7 @@ export const soundlogService = {
             : undefined,
         lat: input.location?.lat,
         lng: input.location?.lng,
+        routePoints,
       },
     });
 

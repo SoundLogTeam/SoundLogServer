@@ -33,6 +33,17 @@ type MomentLogUpdateInput = {
   travelMode?: string | null;
 };
 
+type RecapListScope = 'all' | 'mine' | 'others';
+type RecapMapScope = 'mine' | 'public';
+type RecapVisibility = 'private' | 'public';
+type RoutePointDto = {
+  accuracyMeters?: number;
+  lat: number;
+  lng: number;
+  recordedAt: string;
+};
+
+const RECAP_DISCOVERY_RADIUS_METERS = 300;
 const TRAVEL_MATE_REQUEST_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 const CLOSED_TRAVEL_MATE_REQUEST_STATUSES = ['cancelled', 'declined', 'expired'];
 
@@ -40,6 +51,38 @@ function compact<T extends Record<string, unknown>>(value: T) {
   return Object.fromEntries(
     Object.entries(value).filter(([, item]) => item !== undefined && item !== null),
   ) as Partial<T>;
+}
+
+function normalizeRoutePoints(routePoints?: RoutePointDto[]) {
+  if (!routePoints) {
+    return undefined;
+  }
+
+  return routePoints.map((point) =>
+    compact({
+      accuracyMeters: point.accuracyMeters,
+      lat: point.lat,
+      lng: point.lng,
+      recordedAt: point.recordedAt,
+    }) as RoutePointDto,
+  );
+}
+
+function createInitialRoutePoints(
+  location: { lat: number; lng: number } | undefined,
+  recordedAt: Date,
+) {
+  if (!location) {
+    return undefined;
+  }
+
+  return normalizeRoutePoints([
+    {
+      lat: location.lat,
+      lng: location.lng,
+      recordedAt: recordedAt.toISOString(),
+    },
+  ]);
 }
 
 function hasOwn<T extends object, K extends PropertyKey>(
@@ -216,15 +259,18 @@ function recapItemToDto(recap: (typeof mockDb.recaps)[number]) {
     createdAt: recap.createdAt.toISOString(),
     momentCount: recap.momentCount,
     sessionId: recap.sessionId,
+    visibility: recap.visibility,
   });
 }
 
-function recapShareToDto(recap: (typeof mockDb.recaps)[number]) {
+function recapShareToDto(recap: (typeof mockDb.recaps)[number], viewerId?: string) {
   const track = findMockTrack(recap.representativeTrackId);
 
   if (!track) {
     throw notFound(ERROR_MESSAGES.REPRESENTATIVE_TRACK_NOT_FOUND);
   }
+
+  const canViewRoutePoints = recap.userId === viewerId;
 
   return compact({
     id: recap.id,
@@ -235,7 +281,80 @@ function recapShareToDto(recap: (typeof mockDb.recaps)[number]) {
     discImageUrl: recap.discImageUrl,
     moments: recap.moments,
     recordedAt: (recap.recordedAt ?? recap.createdAt).toISOString(),
+    routePoints: canViewRoutePoints ? recap.routePoints : undefined,
     shareImageUrl: recap.shareImageUrl,
+    visibility: recap.visibility,
+  });
+}
+
+function getMockRecapMomentLocation(recap: (typeof mockDb.recaps)[number]) {
+  const moments = Array.isArray(recap.moments)
+    ? (recap.moments as Array<{ location?: { lat?: unknown; lng?: unknown } }>)
+    : [];
+  const location = moments.find(
+    (moment) =>
+      typeof moment.location?.lat === 'number' &&
+      typeof moment.location?.lng === 'number',
+  )?.location;
+
+  if (!location || typeof location.lat !== 'number' || typeof location.lng !== 'number') {
+    return undefined;
+  }
+
+  return {
+    lat: location.lat,
+    lng: location.lng,
+  };
+}
+
+function getMockRecapLocation(recap: (typeof mockDb.recaps)[number]) {
+  if (recap.lat !== undefined && recap.lng !== undefined) {
+    return {
+      lat: recap.lat,
+      lng: recap.lng,
+    };
+  }
+
+  return getMockRecapMomentLocation(recap);
+}
+
+function assertMockPublicRecapHasLocation(
+  visibility: RecapVisibility | undefined,
+  location: { lat: number; lng: number } | undefined,
+) {
+  if (visibility === 'public' && !location) {
+    throw badRequest(ERROR_MESSAGES.RECAP_PUBLIC_LOCATION_REQUIRED);
+  }
+}
+
+function mockRecapMapMarkerToDto(
+  recap: (typeof mockDb.recaps)[number],
+  viewerId: string,
+  origin?: { lat: number; lng: number },
+) {
+  const location = getMockRecapLocation(recap);
+  const track = findMockTrack(recap.representativeTrackId);
+
+  if (!location || !track) {
+    return undefined;
+  }
+
+  const isMine = recap.userId === viewerId;
+
+  return compact({
+    id: `marker-${recap.id}`,
+    recapId: recap.id,
+    title: recap.title,
+    placeName: recap.placeName,
+    ownerAlias: isMine ? '나' : 'Soundlog 여행자',
+    location,
+    trackTitle: track.title,
+    artistName: track.artist,
+    templateId: recap.templateId,
+    visibility: recap.visibility,
+    distanceMeters: origin ? Math.round(distanceMeters(origin, location)) : undefined,
+    imageUrl: recap.backgroundImageUrl,
+    createdAt: recap.createdAt.toISOString(),
   });
 }
 
@@ -1369,6 +1488,7 @@ export const mockSoundlogService = {
 
         const recap = {
           id: createPublicId('recap'),
+          userId,
           title: input.title ?? `${room.title} 공동 Recap`,
           placeName: recapMoments[0]?.placeName ?? room.title,
           representativeTrackId,
@@ -1376,6 +1496,8 @@ export const mockSoundlogService = {
           momentCount: recapMoments.length,
           sessionId: room.sessionId,
           recordedAt: recapMoments[0]?.createdAt ?? new Date(),
+          templateId: input.templateId ?? 'album',
+          visibility: 'private' as const,
           moments: recapMoments.map((moment) => ({
             id: moment.id,
             placeName: moment.placeName ?? '위치 없음',
@@ -1774,10 +1896,23 @@ export const mockSoundlogService = {
     }, { sessionId: input.requestId ?? input.targetPinId ?? input.targetUserId ?? 'community' });
   },
 
-  async getRecaps(_userId: string, params: { cursor?: string; limit?: number }) {
-    const recaps = [...mockDb.recaps].sort(
-      (first, second) => second.createdAt.getTime() - first.createdAt.getTime(),
-    );
+  async getRecaps(userId: string, params: {
+    cursor?: string;
+    limit?: number;
+    scope?: RecapListScope;
+  }) {
+    const scope = params.scope ?? 'mine';
+    const recaps = mockDb.recaps
+      .filter((recap) =>
+        scope === 'mine'
+          ? recap.userId === userId
+          : scope === 'others'
+            ? recap.userId !== userId && recap.visibility === 'public'
+            : recap.userId === userId || recap.visibility === 'public',
+      )
+      .sort(
+        (first, second) => second.createdAt.getTime() - first.createdAt.getTime(),
+      );
     const limit = getLimit(params.limit);
     const page = paginateByCursor(recaps, limit, params.cursor);
 
@@ -1790,11 +1925,43 @@ export const mockSoundlogService = {
     };
   },
 
+  async getRecapMarkers(userId: string, params: {
+    lat?: number;
+    lng?: number;
+    radiusMeters?: number;
+    scope?: RecapMapScope;
+  }) {
+    const scope = params.scope ?? 'public';
+    const origin =
+      params.lat !== undefined && params.lng !== undefined
+        ? { lat: params.lat, lng: params.lng }
+        : undefined;
+    const radiusMeters = RECAP_DISCOVERY_RADIUS_METERS;
+
+    return mockDb.recaps
+      .filter((recap) =>
+        scope === 'mine'
+          ? recap.userId === userId
+          : recap.visibility === 'public',
+      )
+      .flatMap((recap) => {
+        const marker = mockRecapMapMarkerToDto(recap, userId, origin);
+
+        return marker ? [marker] : [];
+      })
+      .filter((marker) =>
+        origin ? typeof marker.distanceMeters === 'number' && marker.distanceMeters <= radiusMeters : true,
+      );
+  },
+
   async createRecap(userId: string, input: {
     momentLogIds?: string[];
     representativeTrackId?: string;
+    routePoints?: RoutePointDto[];
     sessionId?: string;
+    templateId?: string;
     title?: string;
+    visibility?: RecapVisibility;
   }, idempotencyKey?: string) {
     return withMockIdempotency(
       { idempotencyKey, scope: 'recap.create', userId },
@@ -1826,8 +1993,30 @@ export const mockSoundlogService = {
           throw notFound(ERROR_MESSAGES.REPRESENTATIVE_TRACK_NOT_FOUND);
         }
 
+        const firstMomentLocation =
+          firstMoment?.lat !== undefined && firstMoment?.lng !== undefined
+            ? { lat: firstMoment.lat, lng: firstMoment.lng }
+            : undefined;
+        const travelSession = input.sessionId
+          ? mockDb.travelSessions.find(
+              (session) => session.id === input.sessionId && session.userId === userId,
+            )
+          : undefined;
+        const routePoints =
+          normalizeRoutePoints(input.routePoints) ??
+          normalizeRoutePoints(travelSession?.routePoints);
+        const firstRoutePoint = input.routePoints?.[0] ?? travelSession?.routePoints?.[0];
+        const recapLocation = firstMomentLocation ?? (
+          firstRoutePoint
+            ? { lat: firstRoutePoint.lat, lng: firstRoutePoint.lng }
+            : undefined
+        );
+
+        assertMockPublicRecapHasLocation(input.visibility, recapLocation);
+
         const recap = {
           id: createPublicId('recap'),
+          userId,
           title: input.title ?? `${firstMoment?.placeName ?? '여행'}의 사운드`,
           placeName: firstMoment?.placeName ?? 'Soundlog',
           representativeTrackId,
@@ -1836,7 +2025,12 @@ export const mockSoundlogService = {
           sessionId: input.sessionId,
           backgroundImageUrl: firstMoment?.photoUrl,
           discImageUrl: firstMoment?.photoUrl,
+          lat: recapLocation?.lat,
+          lng: recapLocation?.lng,
           recordedAt: firstMoment?.createdAt ?? new Date(),
+          routePoints,
+          templateId: input.templateId ?? 'album',
+          visibility: input.visibility ?? 'private',
           moments: moments.map((moment) => ({
             id: moment.id,
             imageUrl: moment.photoUrl,
@@ -1858,21 +2052,41 @@ export const mockSoundlogService = {
     );
   },
 
-  async getRecapShare(_userId: string, recapId: string) {
-    const recap = mockDb.recaps.find((item) => item.id === recapId);
+  async getRecapShare(userId: string, recapId: string) {
+    const recap = mockDb.recaps.find(
+      (item) => item.id === recapId && (item.userId === userId || item.visibility === 'public'),
+    );
 
     if (!recap) {
       throw notFound(ERROR_MESSAGES.RECAP_NOT_FOUND);
     }
 
-    return recapShareToDto(recap);
+    return recapShareToDto(recap, userId);
   },
 
-  async createRecapShareEvent(_userId: string, recapId: string, input: {
+  async updateRecapVisibility(
+    userId: string,
+    recapId: string,
+    input: { visibility: RecapVisibility },
+  ) {
+    const recap = mockDb.recaps.find((item) => item.id === recapId && item.userId === userId);
+
+    if (!recap) {
+      throw notFound(ERROR_MESSAGES.RECAP_NOT_FOUND);
+    }
+
+    assertMockPublicRecapHasLocation(input.visibility, getMockRecapLocation(recap));
+
+    recap.visibility = input.visibility;
+
+    return recapItemToDto(recap);
+  },
+
+  async createRecapShareEvent(userId: string, recapId: string, input: {
     createdAt: string;
     type: string;
   }, _idempotencyKey?: string) {
-    if (!mockDb.recaps.some((recap) => recap.id === recapId)) {
+    if (!mockDb.recaps.some((recap) => recap.id === recapId && recap.userId === userId)) {
       throw notFound(ERROR_MESSAGES.RECAP_NOT_FOUND);
     }
 
@@ -1886,16 +2100,22 @@ export const mockSoundlogService = {
 
   async createTravelSession(userId: string, input: {
     location?: { lat: number; lng: number };
+    routePoints?: RoutePointDto[];
     startedAt?: string;
     travelMode?: string;
   }) {
+    const startedAt = input.startedAt ? new Date(input.startedAt) : new Date();
+    const routePoints =
+      normalizeRoutePoints(input.routePoints) ??
+      createInitialRoutePoints(input.location, startedAt);
     const session = {
       id: createPublicId('session'),
       status: 'active' as const,
-      startedAt: input.startedAt ? new Date(input.startedAt) : new Date(),
+      startedAt,
       travelMode: input.travelMode,
       lat: input.location?.lat,
       lng: input.location?.lng,
+      routePoints,
       userId,
     };
 
@@ -1905,6 +2125,7 @@ export const mockSoundlogService = {
       id: session.id,
       status: session.status,
       startedAt: session.startedAt.toISOString(),
+      routePoints: session.routePoints,
       travelMode: session.travelMode,
     };
   },
@@ -1912,6 +2133,7 @@ export const mockSoundlogService = {
   async updateTravelSession(userId: string, sessionId: string, input: {
     endedAt?: string;
     location?: { lat: number; lng: number };
+    routePoints?: RoutePointDto[];
     status: 'active' | 'ended';
   }) {
     const session = mockDb.travelSessions.find(
@@ -1935,6 +2157,7 @@ export const mockSoundlogService = {
         : undefined;
     session.lat = input.location?.lat ?? session.lat;
     session.lng = input.location?.lng ?? session.lng;
+    session.routePoints = normalizeRoutePoints(input.routePoints) ?? session.routePoints;
 
     if (session.status === 'ended') {
       const now = new Date();
@@ -1952,6 +2175,7 @@ export const mockSoundlogService = {
       status: session.status,
       startedAt: session.startedAt?.toISOString(),
       endedAt: session.endedAt?.toISOString(),
+      routePoints: session.routePoints,
       travelMode: session.travelMode,
     });
   },

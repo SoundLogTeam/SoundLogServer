@@ -286,6 +286,35 @@ describe('mockSoundlogService', () => {
     });
     expect(share.moments).toHaveLength(1);
     expect(mockDb.recapShareEvents).toHaveLength(1);
+
+    const otherMoment = await mockSoundlogService.createMomentLog('other-user', {
+      createdAt: '2026-07-09T10:20:00.000Z',
+      lat: 37.5446,
+      lng: 127.0375,
+      moodTags: ['감성적인'],
+      photoPath: '/uploads/other-recap.jpg',
+      placeName: '다른 사람 서울숲',
+      sessionId: 'other-recap-session',
+      trackId: 'seoul-city',
+    });
+    const otherPublicRecap = await mockSoundlogService.createRecap('other-user', {
+      momentLogIds: [requireValue(otherMoment.id)],
+      sessionId: 'other-recap-session',
+      title: '다른 사람 공개 로그',
+      visibility: 'public',
+    });
+    const mineList = await mockSoundlogService.getRecaps(ownerId, { scope: 'mine' });
+    const othersList = await mockSoundlogService.getRecaps(ownerId, { scope: 'others' });
+    const allList = await mockSoundlogService.getRecaps(ownerId, { scope: 'all' });
+
+    expect(mineList.data.map((item) => item.id)).toContain(recapId);
+    expect(mineList.data.map((item) => item.id)).not.toContain(otherPublicRecap.id);
+    expect(othersList.data.map((item) => item.id)).toContain(otherPublicRecap.id);
+    expect(othersList.data.map((item) => item.id)).not.toContain(recapId);
+    expect(allList.data.map((item) => item.id)).toEqual(
+      expect.arrayContaining([recapId, otherPublicRecap.id]),
+    );
+
     await expect(
       mockSoundlogService.createRecap(ownerId, { representativeTrackId: 'missing-track' }),
     ).rejects.toSatisfy((error) => {
@@ -561,6 +590,10 @@ describe('mockSoundlogService', () => {
   it('updates travel sessions and returns regional sound trends', async () => {
     const session = await mockSoundlogService.createTravelSession(ownerId, {
       location: { lat: 35.1532, lng: 129.1186 },
+      routePoints: [
+        { lat: 35.1532, lng: 129.1186, recordedAt: '2026-07-09T09:00:00.000Z' },
+        { lat: 35.156, lng: 129.119, recordedAt: '2026-07-09T09:20:00.000Z' },
+      ],
       startedAt: '2026-07-09T09:00:00.000Z',
       travelMode: '바다',
     });
@@ -575,9 +608,21 @@ describe('mockSoundlogService', () => {
       lng: 129.1186,
       radiusMeters: 3000,
     });
+    const synced = await mockSoundlogService.updateTravelSession(ownerId, session.id, {
+      location: { lat: 35.158, lng: 129.1195 },
+      routePoints: [
+        ...(session.routePoints ?? []),
+        { lat: 35.158, lng: 129.1195, recordedAt: '2026-07-09T10:00:00.000Z' },
+      ],
+      status: 'active',
+    });
     const ended = await mockSoundlogService.updateTravelSession(ownerId, session.id, {
       endedAt: '2026-07-09T11:00:00.000Z',
       location: { lat: 35.16, lng: 129.12 },
+      routePoints: [
+        ...(synced.routePoints ?? []),
+        { lat: 35.16, lng: 129.12, recordedAt: '2026-07-09T10:30:00.000Z' },
+      ],
       status: 'ended',
     });
     const pinsAfterEnding = await mockSoundlogService.getSoundMapPins(ownerId, {
@@ -591,9 +636,13 @@ describe('mockSoundlogService', () => {
     });
 
     expect(session.status).toBe('active');
+    expect(session.routePoints).toHaveLength(2);
+    expect(synced.status).toBe('active');
+    expect(synced.routePoints).toHaveLength(3);
     expect(pinsBeforeEnding.map((pin) => pin.id)).toContain(livePin.id);
     expect(ended.status).toBe('ended');
     expect(ended.endedAt).toBe('2026-07-09T11:00:00.000Z');
+    expect(ended.routePoints).toHaveLength(4);
     expect(pinsAfterEnding.map((pin) => pin.id)).not.toContain(livePin.id);
     expect(trend.topTracks.length).toBeGreaterThan(0);
     await expect(

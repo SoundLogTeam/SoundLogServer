@@ -9,7 +9,7 @@ info:
   description: |
     Soundlog React Native 앱과 백엔드 서버를 연결하기 위한 API 명세입니다.
 
-    MVP 범위는 홈 추천, 관광지 조회, 플레이리스트 상세, 순간 로그, 리캡, 보관함, 추천 피드백 수집,
+    MVP 범위는 홈 추천, 관광지 조회, 플레이리스트 상세, 리캡 캡처, 여행 로그, 보관함, 추천 피드백 수집,
     여행 세션, 공동 여행방, Live Sound Map, 음악 취향 매칭을 포함합니다.
     한국관광공사 OpenAPI 원본 응답은 서버에서 Soundlog 도메인 모델로 정규화해서 앱에 전달합니다.
 servers:
@@ -33,9 +33,11 @@ tags:
   - name: Playlists
     description: 장소/무드 기반 플레이리스트
   - name: MomentLogs
-    description: 사진, 장소, 음악, 시간 기반 순간 기록
+    description: 레거시 순간 기록 API. 신규 클라이언트는 RecapCaptures를 사용합니다.
+  - name: RecapCaptures
+    description: 카메라로 남기는 단발성 리캡 저장 API
   - name: Recaps
-    description: 여행 리캡 리스트와 공유 콘텐츠
+    description: 여행 로그와 공개/낱개 리캡 리스트 및 공유 콘텐츠
   - name: Library
     description: 좋아요/저장 음악 보관함
   - name: RecommendationEvents
@@ -652,11 +654,182 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /v1/recap-captures:
+    get:
+      tags:
+        - RecapCaptures
+      summary: 리캡 캡처 목록 조회
+      description: 카메라로 저장한 리캡 캡처를 조회합니다. `sessionId`가 있으면 여행 로그에 묶이는 리캡이고, 없으면 낱개 리캡입니다.
+      operationId: getRecapCaptures
+      parameters:
+        - name: sessionId
+          in: query
+          schema:
+            type: string
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: 리캡 캡처 목록
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MomentLogListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags:
+        - RecapCaptures
+      summary: 리캡 캡처 생성
+      description: |
+        카메라 버튼으로 촬영한 사진, 현재 위치, 현재 장소, 재생 중인 음악, 무드 태그를 하나의 리캡으로 저장합니다.
+        여행모드 중 `sessionId`가 포함되면 해당 여행 로그에 묶이고, `sessionId`가 없으면 낱개 리캡으로 남습니다.
+        MVP 저장 정책상 사진, 위치, 장소, 곡은 모두 선택값입니다. 음악이나 위치가 없어도 리캡 캡처는 생성할 수 있습니다.
+        사진 업로드는 `multipart/form-data`를 기본으로 정의합니다.
+      operationId: createRecapCapture
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/MomentLogCreateForm"
+      responses:
+        "201":
+          description: 생성된 리캡 캡처
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MomentLogResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/recap-captures/{momentLogId}:
+    patch:
+      tags:
+        - RecapCaptures
+      summary: 리캡 캡처 수정
+      description: 저장된 리캡 캡처의 메모, 장소, 무드, 곡 스냅샷 같은 편집 가능한 정보를 부분 수정합니다.
+      operationId: updateRecapCapture
+      parameters:
+        - name: momentLogId
+          in: path
+          required: true
+          description: 내부 저장 모델의 MomentLog ID입니다.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MomentLogUpdateRequest"
+      responses:
+        "200":
+          description: 수정된 리캡 캡처
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MomentLogResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags:
+        - RecapCaptures
+      summary: 리캡 캡처 삭제
+      description: 사용자의 리캡 캡처를 삭제합니다. 공동 여행방 후보가 해당 캡처를 참조하고 있으면 후보 자체는 남기고 참조만 해제합니다.
+      operationId: deleteRecapCapture
+      parameters:
+        - name: momentLogId
+          in: path
+          required: true
+          description: 내부 저장 모델의 MomentLog ID입니다.
+          schema:
+            type: string
+      responses:
+        "202":
+          description: 삭제 요청 수락
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcceptedResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/recap-captures/{momentLogId}/photo:
+    put:
+      tags:
+        - RecapCaptures
+      summary: 리캡 캡처 사진 교체
+      description: 저장된 리캡 캡처의 사진만 새 업로드 파일로 교체합니다. 서버가 관리하는 기존 로컬 업로드 파일은 best-effort로 정리합니다.
+      operationId: updateRecapCapturePhoto
+      parameters:
+        - name: momentLogId
+          in: path
+          required: true
+          description: 내부 저장 모델의 MomentLog ID입니다.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/MomentLogPhotoUpdateForm"
+      responses:
+        "200":
+          description: 사진이 교체된 리캡 캡처
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MomentLogResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags:
+        - RecapCaptures
+      summary: 리캡 캡처 사진 삭제
+      description: 리캡 캡처 자체는 유지하고 연결된 사진만 제거합니다. 서버가 관리하는 로컬 업로드 파일은 best-effort로 정리합니다.
+      operationId: deleteRecapCapturePhoto
+      parameters:
+        - name: momentLogId
+          in: path
+          required: true
+          description: 내부 저장 모델의 MomentLog ID입니다.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 사진이 제거된 리캡 캡처
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MomentLogResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /v1/moment-logs:
     get:
       tags:
         - MomentLogs
-      summary: 순간 로그 목록 조회
+      deprecated: true
+      summary: 레거시 순간 로그 목록 조회
+      description: 기존 클라이언트 호환을 위해 유지합니다. 신규 클라이언트는 `GET /v1/recap-captures`를 사용합니다.
       operationId: getMomentLogs
       parameters:
         - name: sessionId
@@ -677,8 +850,10 @@ paths:
     post:
       tags:
         - MomentLogs
-      summary: 순간 로그 생성
+      deprecated: true
+      summary: 레거시 순간 로그 생성
       description: |
+        기존 클라이언트 호환을 위해 유지합니다. 신규 클라이언트는 `POST /v1/recap-captures`를 사용합니다.
         카메라 버튼으로 촬영한 사진, 현재 위치, 현재 장소, 재생 중인 음악, 무드 태그를 하나의 기록으로 저장합니다.
         MVP 저장 정책상 사진, 위치, 장소, 곡은 모두 선택값입니다. 음악이나 위치가 없어도 MomentLog는 생성할 수 있습니다.
         사진 업로드는 `multipart/form-data`를 기본으로 정의합니다.
@@ -707,8 +882,10 @@ paths:
     patch:
       tags:
         - MomentLogs
-      summary: 순간 로그 수정
+      deprecated: true
+      summary: 레거시 순간 로그 수정
       description: |
+        기존 클라이언트 호환을 위해 유지합니다. 신규 클라이언트는 `PATCH /v1/recap-captures/{momentLogId}`를 사용합니다.
         저장된 MomentLog의 메모, 장소, 무드, 곡 스냅샷 같은 편집 가능한 정보를 부분 수정합니다.
         사진 파일 교체는 별도 업로드 정책이 필요하므로 이 API에는 포함하지 않습니다.
       operationId: updateMomentLog
@@ -740,8 +917,10 @@ paths:
     delete:
       tags:
         - MomentLogs
-      summary: 순간 로그 삭제
+      deprecated: true
+      summary: 레거시 순간 로그 삭제
       description: |
+        기존 클라이언트 호환을 위해 유지합니다. 신규 클라이언트는 `DELETE /v1/recap-captures/{momentLogId}`를 사용합니다.
         사용자의 MomentLog를 삭제합니다. 공동 여행방 후보가 해당 로그를 참조하고 있으면 후보 자체는 남기고 MomentLog 참조만 해제합니다.
       operationId: deleteMomentLog
       parameters:
@@ -766,8 +945,10 @@ paths:
     put:
       tags:
         - MomentLogs
-      summary: 순간 로그 사진 교체
+      deprecated: true
+      summary: 레거시 순간 로그 사진 교체
       description: |
+        기존 클라이언트 호환을 위해 유지합니다. 신규 클라이언트는 `PUT /v1/recap-captures/{momentLogId}/photo`를 사용합니다.
         저장된 MomentLog의 사진만 새 업로드 파일로 교체합니다. 서버가 관리하는 기존 로컬 업로드 파일은 best-effort로 정리합니다.
       operationId: updateMomentLogPhoto
       parameters:
@@ -798,8 +979,10 @@ paths:
     delete:
       tags:
         - MomentLogs
-      summary: 순간 로그 사진 삭제
+      deprecated: true
+      summary: 레거시 순간 로그 사진 삭제
       description: |
+        기존 클라이언트 호환을 위해 유지합니다. 신규 클라이언트는 `DELETE /v1/recap-captures/{momentLogId}/photo`를 사용합니다.
         MomentLog 자체는 유지하고 연결된 사진만 제거합니다. 서버가 관리하는 로컬 업로드 파일은 best-effort로 정리합니다.
       operationId: deleteMomentLogPhoto
       parameters:
@@ -848,16 +1031,75 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /v1/recap-markers:
+    get:
+      tags:
+        - Recaps
+      summary: 여행모드 지도 리캡 마커 조회
+      description: 현재 위치 기준 300m 이내의 공개 리캡 또는 내 리캡 마커를 조회합니다. `radiusMeters`는 이전 클라이언트 호환을 위해 받을 수 있지만 서버 정책상 항상 300m로 고정됩니다.
+      operationId: getRecapMarkers
+      parameters:
+        - name: lat
+          in: query
+          required: false
+          schema:
+            type: number
+            format: double
+        - name: lng
+          in: query
+          required: false
+          schema:
+            type: number
+            format: double
+        - name: radiusMeters
+          in: query
+          deprecated: true
+          description: 이전 클라이언트 호환용 값입니다. 전달해도 서버는 항상 300m 기준으로 필터링합니다.
+          required: false
+          schema:
+            type: integer
+            minimum: 50
+            maximum: 5000
+            default: 300
+        - name: scope
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - public
+              - mine
+            default: public
+      responses:
+        "200":
+          description: 지도에 표시할 리캡 마커 목록
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecapMapMarkerListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /v1/recaps:
     get:
       tags:
         - Recaps
-      summary: 리캡 리스트 조회
-      description: Recap 탭에서 여행별 리캡을 리스트 형태로 보여줍니다.
+      summary: 로그/리캡 리스트 조회
+      description: 로그 탭에서 여행모드 리캡 묶음인 여행 로그, 여행모드 밖에서 만든 낱개 리캡, 공개 리캡을 리스트 형태로 보여줍니다. `mine`은 내 로그, `others`는 다른 사용자의 전체공개 로그, `all`은 내 로그와 다른 사용자의 전체공개 로그를 함께 반환합니다.
       operationId: getRecaps
       parameters:
         - $ref: "#/components/parameters/Cursor"
         - $ref: "#/components/parameters/Limit"
+        - name: scope
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - mine
+              - others
+              - all
+            default: mine
       responses:
         "200":
           description: 리캡 리스트
@@ -870,8 +1112,8 @@ paths:
     post:
       tags:
         - Recaps
-      summary: 리캡 생성
-      description: 여행 세션 또는 순간 로그 묶음을 기반으로 앨범/LP/필름형 리캡을 생성합니다.
+      summary: 여행 로그 생성
+      description: 여행 세션 또는 리캡 캡처 묶음을 기반으로 앨범/LP/필름/지도형 여행 로그를 생성합니다. visibility를 public으로 보내려면 대표 위치가 있는 리캡 캡처가 필요합니다.
       operationId: createRecap
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -898,6 +1140,7 @@ paths:
       tags:
         - Recaps
       summary: 공유용 리캡 상세 조회
+      description: 내 리캡 또는 전체공개 리캡의 공유/상세 데이터를 조회합니다. private 리캡은 소유자만 조회할 수 있습니다.
       operationId: getRecapShare
       parameters:
         - name: recapId
@@ -912,6 +1155,39 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RecapShareResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/recaps/{recapId}/visibility:
+    patch:
+      tags:
+        - Recaps
+      summary: 리캡 공개 범위 변경
+      description: 리캡을 나만보기 또는 전체공개로 변경합니다. 전체공개 리캡은 대표 위치가 있어야 하며, 위치가 없으면 BAD_REQUEST를 반환합니다.
+      operationId: updateRecapVisibility
+      parameters:
+        - name: recapId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecapVisibilityUpdateRequest"
+      responses:
+        "200":
+          description: 공개 범위가 변경된 리캡
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecapItemResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
@@ -1849,6 +2125,23 @@ components:
           format: double
           example: 129.1186
 
+    RoutePoint:
+      allOf:
+        - $ref: "#/components/schemas/GeoPoint"
+        - type: object
+          required:
+            - recordedAt
+          properties:
+            recordedAt:
+              type: string
+              format: date-time
+              example: "2026-07-12T04:38:00.000Z"
+            accuracyMeters:
+              type: number
+              format: double
+              minimum: 0
+              example: 12
+
     TravelMode:
       type: string
       description: 여행 상황 모드
@@ -2355,6 +2648,7 @@ components:
 
     MomentLogCreateForm:
       type: object
+      description: 내부 저장 모델명은 MomentLog지만 외부 계약에서는 리캡 캡처 생성 폼으로 사용합니다.
       required:
         - createdAt
         - moodTags
@@ -2362,7 +2656,7 @@ components:
         photo:
           type: string
           format: binary
-          description: 카메라 촬영 이미지 파일. 사진 없이 음악/장소 로그만 저장할 때는 생략할 수 있습니다.
+          description: 카메라 촬영 이미지 파일. 사진 없이 음악/장소 리캡만 저장할 때는 생략할 수 있습니다.
         createdAt:
           type: string
           format: date-time
@@ -2381,7 +2675,7 @@ components:
         note:
           type: string
           maxLength: 240
-          description: 사용자가 Moment 저장 시 남긴 짧은 메모
+          description: 사용자가 리캡 저장 시 남긴 짧은 메모
         placeCategory:
           type: string
         trackId:
@@ -2405,11 +2699,11 @@ components:
         photo:
           type: string
           format: binary
-          description: 새 Moment 사진 파일
+          description: 새 리캡 사진 파일
 
     MomentLogUpdateRequest:
       type: object
-      description: MomentLog 부분 수정 요청. 전달하지 않은 필드는 기존 값을 유지합니다.
+      description: 리캡 캡처 부분 수정 요청. 전달하지 않은 필드는 기존 값을 유지합니다. 내부 저장 모델명은 MomentLog입니다.
       properties:
         createdAt:
           type: string
@@ -2456,6 +2750,7 @@ components:
 
     MomentLog:
       type: object
+      description: 카메라로 저장한 리캡 캡처 DTO입니다. 내부 DB 모델명은 MomentLog로 유지됩니다.
       required:
         - id
         - createdAt
@@ -2570,6 +2865,7 @@ components:
 
     RecapItem:
       type: object
+      description: 로그 탭에 표시되는 여행 로그 또는 낱개 리캡 요약입니다.
       required:
         - id
         - title
@@ -2596,6 +2892,8 @@ components:
           example: 8
         sessionId:
           type: string
+        visibility:
+          $ref: "#/components/schemas/RecapVisibility"
 
     RecapTemplateId:
       type: string
@@ -2603,10 +2901,19 @@ components:
         - album
         - film
         - lp
+        - map
         - video
+
+    RecapVisibility:
+      type: string
+      enum:
+        - private
+        - public
+      description: private는 나만보기, public은 여행모드 지도에서 현재 위치 300m 이내 사용자에게 노출되는 공개 상태입니다.
 
     RecapCreateRequest:
       type: object
+      description: 여행 로그 생성 요청입니다. visibility가 public이면 대표 위치를 만들 수 있는 리캡 캡처 위치가 필요합니다.
       required:
         - templateId
       properties:
@@ -2622,6 +2929,75 @@ components:
           type: string
         representativeTrackId:
           type: string
+        routePoints:
+          type: array
+          description: 여행모드 동안 클라이언트가 foreground에서 수집한 이동 경로 좌표입니다. 서버 폴링 없이 디바운스된 클라이언트 푸시, 앱 상태 전환, 여행 종료 또는 Recap 생성 시 저장합니다.
+          maxItems: 500
+          items:
+            $ref: "#/components/schemas/RoutePoint"
+        visibility:
+          $ref: "#/components/schemas/RecapVisibility"
+
+    RecapVisibilityUpdateRequest:
+      type: object
+      description: public으로 변경하려면 해당 리캡에 대표 위치가 있어야 합니다.
+      required:
+        - visibility
+      properties:
+        visibility:
+          $ref: "#/components/schemas/RecapVisibility"
+
+    RecapMapMarker:
+      type: object
+      required:
+        - id
+        - recapId
+        - title
+        - placeName
+        - ownerAlias
+        - location
+        - trackTitle
+        - artistName
+        - templateId
+        - visibility
+        - createdAt
+      properties:
+        id:
+          type: string
+          example: marker-recap_001
+        recapId:
+          type: string
+          example: recap_001
+        title:
+          type: string
+          example: 광안리의 밤 산책
+        placeName:
+          type: string
+          example: 광안리해수욕장
+        ownerAlias:
+          type: string
+          example: Soundlog 여행자
+        location:
+          $ref: "#/components/schemas/GeoPoint"
+        trackTitle:
+          type: string
+          example: Ocean Drive
+        artistName:
+          type: string
+          example: Soundlog Curator
+        templateId:
+          $ref: "#/components/schemas/RecapTemplateId"
+        visibility:
+          $ref: "#/components/schemas/RecapVisibility"
+        distanceMeters:
+          type: integer
+          example: 142
+        imageUrl:
+          type: string
+          format: uri
+        createdAt:
+          type: string
+          format: date-time
 
     RecapShareMoment:
       type: object
@@ -2637,6 +3013,8 @@ components:
         imageUrl:
           type: string
           format: uri
+        location:
+          $ref: "#/components/schemas/GeoPoint"
         placeName:
           type: string
           example: 광안리해수욕장
@@ -2677,12 +3055,19 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/RecapShareMoment"
+        routePoints:
+          type: array
+          description: 리캡 지도에서 선으로 표시할 여행 이동 경로입니다. 정확한 이동 경로 보호를 위해 리캡 소유자에게만 내려갑니다.
+          items:
+            $ref: "#/components/schemas/RoutePoint"
         recordedAt:
           type: string
           format: date-time
         shareImageUrl:
           type: string
           format: uri
+        visibility:
+          $ref: "#/components/schemas/RecapVisibility"
 
     RecapShareEventRequest:
       type: object
@@ -3269,6 +3654,11 @@ components:
           format: date-time
         location:
           $ref: "#/components/schemas/GeoPoint"
+        routePoints:
+          type: array
+          maxItems: 500
+          items:
+            $ref: "#/components/schemas/RoutePoint"
         travelMode:
           $ref: "#/components/schemas/TravelMode"
 
@@ -3287,6 +3677,11 @@ components:
           format: date-time
         location:
           $ref: "#/components/schemas/GeoPoint"
+        routePoints:
+          type: array
+          maxItems: 500
+          items:
+            $ref: "#/components/schemas/RoutePoint"
 
     TravelSession:
       type: object
@@ -3309,6 +3704,10 @@ components:
         endedAt:
           type: string
           format: date-time
+        routePoints:
+          type: array
+          items:
+            $ref: "#/components/schemas/RoutePoint"
         travelMode:
           $ref: "#/components/schemas/TravelMode"
 
@@ -3625,6 +4024,16 @@ components:
       properties:
         data:
           $ref: "#/components/schemas/RecapShare"
+
+    RecapMapMarkerListResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecapMapMarker"
 
     TravelSessionResponse:
       type: object

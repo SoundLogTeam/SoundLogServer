@@ -241,8 +241,12 @@ export async function seedDatabase() {
         sessionId: recap.sessionId,
         backgroundImageUrl: recap.backgroundImageUrl,
         discImageUrl: recap.discImageUrl,
+        lat: recap.lat,
+        lng: recap.lng,
         recordedAt: new Date(recap.recordedAt),
         moments: recap.moments,
+        templateId: recap.templateId,
+        visibility: recap.visibility,
       },
     });
   }

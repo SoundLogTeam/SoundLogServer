@@ -86,6 +86,13 @@ const geoPointSchema = z.object({
   lng: z.number().min(-180).max(180),
 });
 
+const routePointSchema = geoPointSchema.extend({
+  accuracyMeters: z.number().min(0).max(10000).optional(),
+  recordedAt: z.string().datetime(),
+});
+
+const routePointsSchema = z.array(routePointSchema).max(500);
+
 const optionalLatQuery = z.coerce.number().min(-90).max(90).optional();
 const optionalLngQuery = z.coerce.number().min(-180).max(180).optional();
 
@@ -327,19 +334,31 @@ export const recommendationEventValidators = {
 };
 
 export const recapValidators = {
+  markerQuery: z.object({
+    lat: optionalLatQuery,
+    lng: optionalLngQuery,
+    radiusMeters: z.coerce.number().int().min(50).max(5000).optional().default(300),
+    scope: z.enum(['public', 'mine']).optional().default('public'),
+  }),
   listQuery: z.object({
     cursor,
     limit,
+    scope: z.enum(['all', 'mine', 'others']).optional().default('mine'),
   }),
   createBody: z.object({
     momentLogIds: z.array(z.string()).optional(),
     representativeTrackId: z.string().optional(),
+    routePoints: routePointsSchema.optional(),
     sessionId: z.string().optional(),
-    templateId: z.enum(['album', 'film', 'lp', 'video']),
+    templateId: z.enum(['album', 'film', 'lp', 'map', 'video']),
     title: z.string().optional(),
+    visibility: z.enum(['private', 'public']).optional().default('private'),
   }),
   recapParams: z.object({
     recapId: z.string().min(1),
+  }),
+  visibilityBody: z.object({
+    visibility: z.enum(['private', 'public']),
   }),
   shareEventBody: z.object({
     createdAt: z.string().datetime(),
@@ -351,6 +370,7 @@ export const travelSessionValidators = {
   createBody: z
     .object({
       location: geoPointSchema.optional(),
+      routePoints: routePointsSchema.optional(),
       startedAt: z.string().datetime().optional(),
       travelMode: travelModeSchema.optional(),
     })
@@ -362,6 +382,7 @@ export const travelSessionValidators = {
   updateBody: z.object({
     endedAt: z.string().datetime().optional(),
     location: geoPointSchema.optional(),
+    routePoints: routePointsSchema.optional(),
     status: z.enum(['active', 'ended']),
   }),
 };

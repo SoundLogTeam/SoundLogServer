@@ -24,6 +24,7 @@ export const ERROR_MESSAGES = {
   MOMENT_LOG_NOT_FOUND: 'Moment Log를 찾을 수 없습니다.',
   USER_ALREADY_EXISTS: '이미 가입된 이메일입니다.',
   RECAP_NOT_FOUND: '리캡을 찾을 수 없습니다.',
+  RECAP_PUBLIC_LOCATION_REQUIRED: '전체공개 리캡은 대표 위치가 필요합니다.',
   RECOMMENDATION_TRACK_NOT_FOUND: '추천 트랙을 찾을 수 없습니다.',
   REGION_SOUND_TREND_NOT_FOUND: '지역 사운드 트렌드를 찾을 수 없습니다.',
   REPRESENTATIVE_TRACK_NOT_FOUND: '대표 트랙을 찾을 수 없습니다.',

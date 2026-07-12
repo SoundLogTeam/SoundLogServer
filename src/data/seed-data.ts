@@ -256,7 +256,11 @@ export const recaps = [
     sessionId: 'seed-session',
     backgroundImageUrl: 'https://tong.visitkorea.or.kr/cms/resource_photo/96/4033396_image2_1.jpg',
     discImageUrl: 'https://tong.visitkorea.or.kr/cms/resource_photo/97/4033397_image2_1.jpg',
+    lat: 35.1532,
+    lng: 129.1187,
     recordedAt: '2024-04-24T18:20:00.000+09:00',
+    templateId: 'lp',
+    visibility: 'public',
     moments: [
       {
         id: 'log-1',
@@ -279,7 +283,11 @@ export const recaps = [
     sessionId: 'seed-session',
     backgroundImageUrl: 'https://tong.visitkorea.or.kr/cms/resource_photo/96/4033396_image2_1.jpg',
     discImageUrl: 'https://tong.visitkorea.or.kr/cms/resource_photo/97/4033397_image2_1.jpg',
+    lat: 35.1532,
+    lng: 129.1187,
     recordedAt: '2026-05-25T00:00:00.000Z',
+    templateId: 'album',
+    visibility: 'private',
     moments: [
       {
         id: 'log-1',

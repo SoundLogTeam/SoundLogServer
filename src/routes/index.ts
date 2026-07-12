@@ -147,6 +147,48 @@ export function createApiRouter() {
   );
 
   router.get(
+    '/v1/recap-captures',
+    authMiddleware,
+    validate({ query: momentLogValidators.listQuery }),
+    asyncHandler(momentLogController.getMomentLogs),
+  );
+  router.post(
+    '/v1/recap-captures',
+    authMiddleware,
+    momentPhotoUpload.single('photo'),
+    validate({ body: momentLogValidators.createBody }),
+    asyncHandler(momentLogController.createMomentLog),
+  );
+  router.patch(
+    '/v1/recap-captures/:momentLogId',
+    authMiddleware,
+    validate({
+      params: momentLogValidators.momentLogParams,
+      body: momentLogValidators.updateBody,
+    }),
+    asyncHandler(momentLogController.updateMomentLog),
+  );
+  router.put(
+    '/v1/recap-captures/:momentLogId/photo',
+    authMiddleware,
+    momentPhotoUpload.single('photo'),
+    validate({ params: momentLogValidators.momentLogParams }),
+    asyncHandler(momentLogController.updateMomentLogPhoto),
+  );
+  router.delete(
+    '/v1/recap-captures/:momentLogId/photo',
+    authMiddleware,
+    validate({ params: momentLogValidators.momentLogParams }),
+    asyncHandler(momentLogController.deleteMomentLogPhoto),
+  );
+  router.delete(
+    '/v1/recap-captures/:momentLogId',
+    authMiddleware,
+    validate({ params: momentLogValidators.momentLogParams }),
+    asyncHandler(momentLogController.deleteMomentLog),
+  );
+
+  router.get(
     '/v1/moment-logs',
     authMiddleware,
     validate({ query: momentLogValidators.listQuery }),
@@ -196,6 +238,12 @@ export function createApiRouter() {
   );
 
   router.get(
+    '/v1/recap-markers',
+    authMiddleware,
+    validate({ query: recapValidators.markerQuery }),
+    asyncHandler(recapController.getRecapMarkers),
+  );
+  router.get(
     '/v1/recaps',
     authMiddleware,
     validate({ query: recapValidators.listQuery }),
@@ -212,6 +260,15 @@ export function createApiRouter() {
     authMiddleware,
     validate({ params: recapValidators.recapParams }),
     asyncHandler(recapController.getRecapShare),
+  );
+  router.patch(
+    '/v1/recaps/:recapId/visibility',
+    authMiddleware,
+    validate({
+      params: recapValidators.recapParams,
+      body: recapValidators.visibilityBody,
+    }),
+    asyncHandler(recapController.updateRecapVisibility),
   );
   router.post(
     '/v1/recaps/:recapId/share-events',

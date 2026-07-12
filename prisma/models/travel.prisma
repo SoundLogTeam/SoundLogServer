@@ -43,5 +43,6 @@ model TravelSession {
   travelMode String?
   lat        Float?
   lng        Float?
+  routePoints Json?
   user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 }

@@ -12,6 +12,11 @@ model Recap {
   recordedAt            DateTime?
   shareImageUrl         String?
   moments               Json?
+  routePoints           Json?
+  templateId            String            @default("album")
+  visibility            String            @default("private")
+  lat                   Float?
+  lng                   Float?
   user                  User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   representativeTrack   Track             @relation("RepresentativeTrack", fields: [representativeTrackId], references: [id])
   shareEvents           RecapShareEvent[]
