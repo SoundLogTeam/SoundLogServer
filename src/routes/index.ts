@@ -68,6 +68,7 @@ export function createApiRouter() {
   );
 
   router.get('/v1/me', authMiddleware, asyncHandler(meController.getMe));
+  router.delete('/v1/me', authMiddleware, asyncHandler(meController.deleteAccount));
   router.get('/v1/me/profile', authMiddleware, asyncHandler(meController.getProfile));
   router.put(
     '/v1/me/profile',
@@ -83,10 +84,22 @@ export function createApiRouter() {
   );
 
   router.get(
+    '/v1/tour/places',
+    authMiddleware,
+    validate({ query: tourValidators.searchQuery }),
+    asyncHandler(tourController.searchPlaces),
+  );
+  router.get(
     '/v1/tour/nearby-places',
     authMiddleware,
     validate({ query: tourValidators.nearbyQuery }),
     asyncHandler(tourController.getNearbyPlaces),
+  );
+  router.get(
+    '/v1/tour/reverse-geocode',
+    authMiddleware,
+    validate({ query: tourValidators.reverseGeocodeQuery }),
+    asyncHandler(tourController.reverseGeocodeLocation),
   );
 
   router.get(
@@ -269,6 +282,15 @@ export function createApiRouter() {
       body: recapValidators.visibilityBody,
     }),
     asyncHandler(recapController.updateRecapVisibility),
+  );
+  router.patch(
+    '/v1/recaps/:recapId/thumbnail',
+    authMiddleware,
+    validate({
+      params: recapValidators.recapParams,
+      body: recapValidators.thumbnailBody,
+    }),
+    asyncHandler(recapController.updateRecapThumbnail),
   );
   router.post(
     '/v1/recaps/:recapId/share-events',

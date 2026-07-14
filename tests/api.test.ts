@@ -1,6 +1,6 @@
 import bcrypt from 'bcrypt';
 import request from 'supertest';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { createApp } from '../src/app.js';
 import { prisma } from '../src/config/prisma.js';
@@ -72,6 +72,7 @@ function findSecretLeaks(value: unknown, secret: string, path = '$'): string[] {
 }
 
 async function createTestMomentLog(input: {
+  artistName?: string;
   authHeader: string;
   filename: string;
   lat?: number;
@@ -79,7 +80,9 @@ async function createTestMomentLog(input: {
   note?: string;
   placeName: string;
   sessionId?: string;
-  trackId?: string;
+  trackId?: string | null;
+  trackTitle?: string;
+  visibility?: 'private' | 'public';
 }) {
   const requestBuilder = request(app)
     .post('/v1/moment-logs')
@@ -89,7 +92,19 @@ async function createTestMomentLog(input: {
     .field('note', input.note ?? '')
     .field('placeName', input.placeName)
     .field('sessionId', input.sessionId ?? '')
-    .field('trackId', input.trackId ?? 'seoul-city');
+    .field('visibility', input.visibility ?? 'private');
+
+  if (input.trackId !== null) {
+    requestBuilder.field('trackId', input.trackId ?? 'seoul-city');
+  }
+
+  if (input.artistName) {
+    requestBuilder.field('artistName', input.artistName);
+  }
+
+  if (input.trackTitle) {
+    requestBuilder.field('trackTitle', input.trackTitle);
+  }
 
   if (input.lat !== undefined) {
     requestBuilder.field('lat', String(input.lat));
@@ -107,6 +122,16 @@ async function createTestMomentLog(input: {
 
   expect(response.status).toBe(201);
   return response.body.data;
+}
+
+async function createTestTravelSession(authHeader: string) {
+  const response = await request(app)
+    .post('/v1/travel-sessions')
+    .set('Authorization', authHeader)
+    .send({ startedAt: new Date().toISOString(), travelMode: 'walk' });
+
+  expect(response.status).toBe(201);
+  return response.body.data.id as string;
 }
 
 describe('Soundlog API', () => {
@@ -285,6 +310,38 @@ describe('Soundlog API', () => {
     expect(logout.body.data.accepted).toBe(true);
   });
 
+  it('deletes the authenticated account and invalidates its credentials', async () => {
+    const email = `delete-${Date.now()}@soundlog.test`;
+    const password = 'delete-account-password';
+    const register = await request(app).post('/v1/auth/register').send({
+      displayName: 'Delete Account User',
+      email,
+      password,
+    });
+    const accessToken = register.body.data.accessToken as string;
+
+    expect(register.status).toBe(201);
+
+    const deleted = await request(app)
+      .delete('/v1/me')
+      .set('Authorization', `Bearer ${accessToken}`);
+
+    expect(deleted.status).toBe(200);
+    expect(deleted.body.data).toEqual({ deleted: true });
+
+    const meAfterDeletion = await request(app)
+      .get('/v1/me')
+      .set('Authorization', `Bearer ${accessToken}`);
+    expect(meAfterDeletion.status).toBe(401);
+
+    const loginAfterDeletion = await request(app).post('/v1/auth/login').send({
+      email,
+      password,
+    });
+    expect(loginAfterDeletion.status).toBe(401);
+    expect(await getStoredPasswordHash(email)).toBeUndefined();
+  });
+
   it('handles profile APIs', async () => {
     const profile = await request(app)
       .get('/v1/me/profile')
@@ -306,6 +363,19 @@ describe('Soundlog API', () => {
   });
 
   it('returns tour and home data', async () => {
+    const searchedPlaces = await request(app)
+      .get('/v1/tour/places')
+      .set('Authorization', authHeader)
+      .query({ query: '광안리', limit: 5 });
+    expect(searchedPlaces.status).toBe(200);
+    expect(searchedPlaces.body.data).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          title: expect.stringContaining('광안리'),
+        }),
+      ]),
+    );
+
     const tour = await request(app)
       .get('/v1/tour/nearby-places')
       .set('Authorization', authHeader)
@@ -318,12 +388,85 @@ describe('Soundlog API', () => {
     expect(tour.body.data[0].id).toContain('seed-');
     expect(tour.body.data[0].source).toBe('seed');
 
+    const distantTour = await request(app)
+      .get('/v1/tour/nearby-places')
+      .set('Authorization', authHeader)
+      .query({
+        lat: 37.785834,
+        lng: -122.406417,
+        radiusMeters: 2000,
+      });
+    expect(distantTour.status).toBe(200);
+    expect(distantTour.body.data).toEqual([]);
+
+    const reverseGeocodeFetch = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          address: {
+            city: '샌프란시스코',
+            country: '미국',
+            state: '캘리포니아주',
+          },
+          display_name: '샌프란시스코, 캘리포니아주, 미국',
+          namedetails: {
+            'name:ko': '샌프란시스코',
+          },
+          place_id: 12345,
+        }),
+        {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        },
+      ),
+    );
+
+    try {
+      const reverseGeocoded = await request(app)
+        .get('/v1/tour/reverse-geocode')
+        .set('Authorization', authHeader)
+        .query({ lat: 37.785834, lng: -122.406417 });
+
+      expect(reverseGeocoded.status).toBe(200);
+      expect(reverseGeocoded.body.data).toEqual(
+        expect.objectContaining({
+          address: expect.stringContaining('샌프란시스코'),
+          attribution: '© OpenStreetMap contributors',
+          source: 'reverse-geocode',
+          title: '샌프란시스코',
+        }),
+      );
+      expect(reverseGeocodeFetch).toHaveBeenCalledWith(
+        expect.stringContaining('accept-language=ko%2Cen'),
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            'Accept-Language': 'ko,en;q=0.8',
+          }),
+        }),
+      );
+
+      const cachedReverseGeocoded = await request(app)
+        .get('/v1/tour/reverse-geocode')
+        .set('Authorization', authHeader)
+        .query({ lat: 37.785834, lng: -122.406417 });
+
+      expect(cachedReverseGeocoded.status).toBe(200);
+      expect(cachedReverseGeocoded.body.data.title).toBe('샌프란시스코');
+      expect(reverseGeocodeFetch).toHaveBeenCalledTimes(1);
+    } finally {
+      reverseGeocodeFetch.mockRestore();
+    }
+
     const featured = await request(app)
       .get('/v1/home/featured-playlists')
       .set('Authorization', authHeader)
       .query({ locationRecommendationEnabled: true, lat: 35.1532, lng: 129.1186 });
     expect(featured.status).toBe(200);
     expect(featured.body.data.length).toBeGreaterThan(0);
+    expect(
+      featured.body.data.some((playlist: { source?: string }) =>
+        playlist.source === 'personalized',
+      ),
+    ).toBe(false);
 
     const unauthenticatedFeatured = await request(app)
       .get('/v1/home/featured-playlists')
@@ -331,12 +474,55 @@ describe('Soundlog API', () => {
     expect(unauthenticatedFeatured.status).toBe(401);
     expect(unauthenticatedFeatured.body.error.code).toBe('UNAUTHORIZED');
 
-    const mood = await request(app)
+    const playlistIds = new Set<string>();
+
+    for (const moodFilter of ['잔잔한', '신나는', '시원한', '설레는', '감성적인']) {
+      const mood = await request(app)
+        .get('/v1/home/mood-recommendations')
+        .set('Authorization', authHeader)
+        .query({ moodFilter, preferredGenres: 'K-POP' });
+
+      expect(mood.status).toBe(200);
+      expect(mood.body.data.length).toBeGreaterThan(0);
+      expect(
+        mood.body.data.every((item: { moods: string[] }) =>
+          item.moods.includes(moodFilter),
+        ),
+      ).toBe(true);
+
+      for (const item of mood.body.data as Array<{
+        imageUrl?: string;
+        playlistId?: string;
+        track?: unknown;
+      }>) {
+        expect(item.imageUrl).toEqual(expect.any(String));
+        expect(item.playlistId).toEqual(expect.any(String));
+        expect(item.track).toBeDefined();
+        playlistIds.add(item.playlistId as string);
+      }
+    }
+
+    const legacyMood = await request(app)
       .get('/v1/home/mood-recommendations')
       .set('Authorization', authHeader)
-      .query({ topFilter: '청량한', moodFilter: '전체', preferredGenres: 'K-POP' });
-    expect(mood.status).toBe(200);
-    expect(mood.body.data[0].track).toBeDefined();
+      .query({ moodFilter: '청량한' });
+    expect(legacyMood.status).toBe(200);
+    expect(legacyMood.body.data.length).toBeGreaterThan(0);
+    expect(
+      legacyMood.body.data.every((item: { moods: string[] }) =>
+        item.moods.includes('시원한'),
+      ),
+    ).toBe(true);
+
+    for (const playlistId of playlistIds) {
+      const playlist = await request(app)
+        .get(`/v1/playlists/${playlistId}`)
+        .set('Authorization', authHeader);
+
+      expect(playlist.status).toBe(200);
+      expect(playlist.body.data.id).toBe(playlistId);
+      expect(playlist.body.data.tracks.length).toBeGreaterThan(0);
+    }
 
     await createTestMomentLog({
       authHeader,
@@ -398,6 +584,22 @@ describe('Soundlog API', () => {
     expect(recommended.body.data.tracks.length).toBeGreaterThan(0);
     expect(['ml-recommendation', 'seed-fallback']).toContain(
       recommended.body.data.context.source,
+    );
+
+    const recommendedTrack = recommended.body.data.tracks[0];
+    const savedRecommendation = await request(app)
+      .put(`/v1/library/tracks/${recommendedTrack.id}`)
+      .set('Authorization', authHeader)
+      .send({ action: 'save', playlistId: recommended.body.data.id });
+    expect(savedRecommendation.status).toBe(200);
+    expect(savedRecommendation.body.data.isSaved).toBe(true);
+
+    const recommendedDetail = await request(app)
+      .get(`/v1/playlists/${recommended.body.data.id}`)
+      .set('Authorization', authHeader);
+    expect(recommendedDetail.status).toBe(200);
+    expect(recommendedDetail.body.data.tracks).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: recommendedTrack.id })]),
     );
 
     const invalidRecommendation = await request(app)
@@ -716,11 +918,14 @@ describe('Soundlog API', () => {
   });
 
   it('handles recap APIs', async () => {
-    const recapSessionId = `recap-session-${Date.now()}`;
-    const farRecapSessionId = `recap-session-far-${Date.now()}`;
-    const noLocationRecapSessionId = `recap-session-no-location-${Date.now()}`;
+    const recapSessionId = await createTestTravelSession(authHeader);
+    const farRecapSessionId = await createTestTravelSession(authHeader);
+    const noLocationRecapSessionId = await createTestTravelSession(authHeader);
+    const mlRecapSessionId = await createTestTravelSession(authHeader);
+    const noMusicRecapSessionId = await createTestTravelSession(authHeader);
+    const mlTrackId = `ml-track-${Date.now()}`;
 
-    await createTestMomentLog({
+    const firstRecapMoment = await createTestMomentLog({
       authHeader,
       filename: 'recap-moment-1.jpg',
       lat: 37.5512,
@@ -728,8 +933,9 @@ describe('Soundlog API', () => {
       placeName: '리캡 테스트 장소',
       sessionId: recapSessionId,
       trackId: 'seoul-night-track',
+      visibility: 'public',
     });
-    await createTestMomentLog({
+    const secondRecapMoment = await createTestMomentLog({
       authHeader,
       filename: 'recap-moment-2.jpg',
       lat: 37.552,
@@ -737,6 +943,7 @@ describe('Soundlog API', () => {
       placeName: '리캡 테스트 장소',
       sessionId: recapSessionId,
       trackId: 'seoul-night-track',
+      visibility: 'public',
     });
     await createTestMomentLog({
       authHeader,
@@ -753,7 +960,68 @@ describe('Soundlog API', () => {
       placeName: '멀리 있는 공개 리캡',
       sessionId: farRecapSessionId,
       trackId: 'seoul-night-track',
+      visibility: 'public',
     });
+    const mlMoment = await createTestMomentLog({
+      artistName: 'ML Artist',
+      authHeader,
+      filename: 'recap-moment-ml.jpg',
+      lat: 37.5514,
+      lng: 126.9884,
+      placeName: 'ML 추천 리캡 테스트',
+      sessionId: mlRecapSessionId,
+      trackId: mlTrackId,
+      trackTitle: 'ML Recommended Track',
+    });
+
+    const mlTrackRecap = await request(app)
+      .post('/v1/recaps')
+      .set('Authorization', authHeader)
+      .send({
+        momentLogIds: [mlMoment.id],
+        representativeTrackId: mlTrackId,
+        sessionId: mlRecapSessionId,
+        templateId: 'album',
+        title: 'ML 추천곡 리캡',
+      });
+    expect(mlTrackRecap.status).toBe(201);
+    expect(mlTrackRecap.body.data.representativeTrack).toMatchObject({
+      artist: 'ML Artist',
+      id: mlTrackId,
+      title: 'ML Recommended Track',
+    });
+    const noMusicMoment = await createTestMomentLog({
+      authHeader,
+      filename: 'recap-moment-no-music.jpg',
+      lat: 37.5515,
+      lng: 126.9885,
+      placeName: '음악 없는 리캡 테스트',
+      sessionId: noMusicRecapSessionId,
+      trackId: null,
+    });
+
+    const noMusicRecap = await request(app)
+      .post('/v1/recaps')
+      .set('Authorization', authHeader)
+      .send({
+        momentLogIds: [noMusicMoment.id],
+        sessionId: noMusicRecapSessionId,
+        templateId: 'album',
+        title: '음악 없는 리캡',
+      });
+    expect(noMusicRecap.status).toBe(201);
+    expect(noMusicRecap.body.data.representativeTrack).toMatchObject({
+      artist: 'Soundlog',
+      id: 'soundlog-no-music',
+      title: '음악 없음',
+    });
+
+    const emptyRecap = await request(app)
+      .post('/v1/recaps')
+      .set('Authorization', authHeader)
+      .send({ templateId: 'album', title: '빈 로그' });
+    expect(emptyRecap.status).toBe(400);
+    expect(emptyRecap.body.error.code).toBe('BAD_REQUEST');
 
     const publicNoLocationCreate = await request(app)
       .post('/v1/recaps')
@@ -803,11 +1071,18 @@ describe('Soundlog API', () => {
     expect(created.status).toBe(201);
     createdRecapId = created.body.data.id;
     expect(created.body.data.representativeTrack.id).toBe('seoul-night-track');
+    expect(created.body.data.thumbnailMomentId).toBe(firstRecapMoment.id);
+    expect(created.body.data.backgroundImageUrl).toBe(firstRecapMoment.photoUrl);
     expect(created.body.data.visibility).toBe('private');
 
     const list = await request(app).get('/v1/recaps').set('Authorization', authHeader);
     expect(list.status).toBe(200);
     expect(list.body.data.some((recap: { id: string }) => recap.id === createdRecapId)).toBe(true);
+    expect(
+      list.body.data.every(
+        (recap: { sessionId?: string }) => typeof recap.sessionId === 'string',
+      ),
+    ).toBe(true);
 
     const mineMarkers = await request(app)
       .get('/v1/recap-markers')
@@ -846,6 +1121,15 @@ describe('Soundlog API', () => {
     expect(farCreated.status).toBe(201);
     expect(farCreated.body.data.visibility).toBe('public');
 
+    const allMineMarkers = await request(app)
+      .get('/v1/recap-markers')
+      .query({ scope: 'mine' })
+      .set('Authorization', authHeader);
+    expect(allMineMarkers.status).toBe(200);
+    expect(
+      allMineMarkers.body.data.map((marker: { recapId: string }) => marker.recapId),
+    ).toEqual(expect.arrayContaining([createdRecapId, farCreated.body.data.id]));
+
     const otherEmail = `public-log-${Date.now()}@soundlog.test`;
     const otherRegister = await request(app).post('/v1/auth/register').send({
       displayName: 'Public Log Traveler',
@@ -859,9 +1143,9 @@ describe('Soundlog API', () => {
     });
     expect(otherLogin.status).toBe(200);
     const otherAuthHeader = `Bearer ${otherLogin.body.data.accessToken}`;
-    const otherRecapSessionId = `other-recap-session-${Date.now()}`;
+    const otherRecapSessionId = await createTestTravelSession(otherAuthHeader);
 
-    await createTestMomentLog({
+    const otherFirstPublicMoment = await createTestMomentLog({
       authHeader: otherAuthHeader,
       filename: 'other-public-recap.jpg',
       lat: 37.5513,
@@ -869,6 +1153,27 @@ describe('Soundlog API', () => {
       placeName: '다른 사람 공개 리캡',
       sessionId: otherRecapSessionId,
       trackId: 'seoul-city',
+      visibility: 'public',
+    });
+    const otherPrivateMoment = await createTestMomentLog({
+      authHeader: otherAuthHeader,
+      filename: 'other-private-recap.jpg',
+      lat: 37.5514,
+      lng: 126.9884,
+      placeName: '비공개 장소 이름',
+      sessionId: otherRecapSessionId,
+      trackId: 'moon-seoul',
+      visibility: 'private',
+    });
+    await createTestMomentLog({
+      authHeader: otherAuthHeader,
+      filename: 'other-latest-public-recap.jpg',
+      lat: 37.5515,
+      lng: 126.9885,
+      placeName: '마지막 공개 리캡',
+      sessionId: otherRecapSessionId,
+      trackId: 'hangang',
+      visibility: 'public',
     });
 
     const otherPublicCreated = await request(app)
@@ -931,6 +1236,16 @@ describe('Soundlog API', () => {
           marker.recapId === createdRecapId && marker.visibility === 'public',
       ),
     ).toBe(true);
+    const mixedVisibilityMarker = publicMarkersAfterUpdate.body.data.find(
+      (marker: { recapId: string }) => marker.recapId === otherPublicCreated.body.data.id,
+    );
+    expect(mixedVisibilityMarker).toMatchObject({
+      artistName: '폴킴',
+      location: { lat: 37.5515, lng: 126.9885 },
+      placeName: '마지막 공개 리캡',
+      trackTitle: '한강에서',
+    });
+    expect(JSON.stringify(mixedVisibilityMarker)).not.toContain('비공개 장소 이름');
 
     const fixedRadiusMarkers = await request(app)
       .get('/v1/recap-markers')
@@ -956,8 +1271,13 @@ describe('Soundlog API', () => {
       .set('Authorization', authHeader);
     expect(share.status).toBe(200);
     expect(share.body.data.id).toBe(createdRecapId);
+    expect(share.body.data.isMine).toBe(true);
     expect(share.body.data.trackTitle).toBe(created.body.data.representativeTrack.title);
+    expect(share.body.data.templateId).toBe('album');
     expect(share.body.data.visibility).toBe('public');
+    expect(share.body.data.sessionId).toBe(recapSessionId);
+    expect(share.body.data.thumbnailMomentId).toBe(firstRecapMoment.id);
+    expect(share.body.data.backgroundImageUrl).toBe(firstRecapMoment.photoUrl);
     expect(share.body.data.moments.length).toBeGreaterThan(1);
     expect(share.body.data.routePoints).toEqual(routePoints);
     expect(share.body.data.moments.map((moment: { location?: unknown }) => moment.location)).toEqual(
@@ -967,11 +1287,117 @@ describe('Soundlog API', () => {
       ]),
     );
 
+    const thumbnailUpdate = await request(app)
+      .patch(`/v1/recaps/${createdRecapId}/thumbnail`)
+      .set('Authorization', authHeader)
+      .send({ momentId: secondRecapMoment.id });
+    expect(thumbnailUpdate.status).toBe(200);
+    expect(thumbnailUpdate.body.data.thumbnailMomentId).toBe(secondRecapMoment.id);
+    expect(thumbnailUpdate.body.data.backgroundImageUrl).toBe(secondRecapMoment.photoUrl);
+
+    const invalidThumbnailUpdate = await request(app)
+      .patch(`/v1/recaps/${createdRecapId}/thumbnail`)
+      .set('Authorization', authHeader)
+      .send({ momentId: 'moment-not-in-this-log' });
+    expect(invalidThumbnailUpdate.status).toBe(400);
+
+    const forbiddenThumbnailUpdate = await request(app)
+      .patch(`/v1/recaps/${createdRecapId}/thumbnail`)
+      .set('Authorization', otherAuthHeader)
+      .send({ momentId: secondRecapMoment.id });
+    expect(forbiddenThumbnailUpdate.status).toBe(404);
+
     const publicShareAsOther = await request(app)
       .get(`/v1/recaps/${createdRecapId}/share`)
       .set('Authorization', otherAuthHeader);
     expect(publicShareAsOther.status).toBe(200);
+    expect(publicShareAsOther.body.data.isMine).toBe(false);
     expect(publicShareAsOther.body.data.routePoints).toBeUndefined();
+    expect(publicShareAsOther.body.data.thumbnailMomentId).toBe(secondRecapMoment.id);
+    expect(publicShareAsOther.body.data.backgroundImageUrl).toBe(secondRecapMoment.photoUrl);
+
+    const mixedVisibilityShare = await request(app)
+      .get(`/v1/recaps/${otherPublicCreated.body.data.id}/share`)
+      .set('Authorization', authHeader);
+    expect(mixedVisibilityShare.status).toBe(200);
+    expect(mixedVisibilityShare.body.data.moments).toHaveLength(2);
+    expect(
+      mixedVisibilityShare.body.data.moments.every(
+        (moment: { visibility: string }) => moment.visibility === 'public',
+      ),
+    ).toBe(true);
+    expect(JSON.stringify(mixedVisibilityShare.body.data)).not.toContain('비공개 장소 이름');
+
+    const privateThumbnailSelection = await request(app)
+      .patch(`/v1/recaps/${otherPublicCreated.body.data.id}/thumbnail`)
+      .set('Authorization', otherAuthHeader)
+      .send({ momentId: otherPrivateMoment.id });
+    expect(privateThumbnailSelection.status).toBe(200);
+    expect(privateThumbnailSelection.body.data.thumbnailMomentId).toBe(otherPrivateMoment.id);
+
+    const publicShareAfterPrivateThumbnail = await request(app)
+      .get(`/v1/recaps/${otherPublicCreated.body.data.id}/share`)
+      .set('Authorization', authHeader);
+    expect(publicShareAfterPrivateThumbnail.status).toBe(200);
+    expect(publicShareAfterPrivateThumbnail.body.data.thumbnailMomentId).toBe(
+      otherFirstPublicMoment.id,
+    );
+    expect(publicShareAfterPrivateThumbnail.body.data.backgroundImageUrl).toBe(
+      otherFirstPublicMoment.photoUrl,
+    );
+    expect(JSON.stringify(publicShareAfterPrivateThumbnail.body.data)).not.toContain(
+      otherPrivateMoment.photoUrl,
+    );
+
+    const aggregateUpdate = await request(app)
+      .patch(`/v1/moment-logs/${secondRecapMoment.id}`)
+      .set('Authorization', authHeader)
+      .send({ placeName: '수정된 리캡 장소' });
+    expect(aggregateUpdate.status).toBe(200);
+
+    const refreshedShare = await request(app)
+      .get(`/v1/recaps/${createdRecapId}/share`)
+      .set('Authorization', authHeader);
+    expect(refreshedShare.status).toBe(200);
+    expect(refreshedShare.body.data.placeName).toBe('수정된 리캡 장소');
+    expect(refreshedShare.body.data.thumbnailMomentId).toBe(secondRecapMoment.id);
+
+    const aggregateDelete = await request(app)
+      .delete(`/v1/moment-logs/${secondRecapMoment.id}`)
+      .set('Authorization', authHeader);
+    expect(aggregateDelete.status).toBe(202);
+
+    const shareAfterDelete = await request(app)
+      .get(`/v1/recaps/${createdRecapId}/share`)
+      .set('Authorization', authHeader);
+    expect(shareAfterDelete.status).toBe(200);
+    expect(shareAfterDelete.body.data.moments).toHaveLength(1);
+    expect(shareAfterDelete.body.data.moments[0].id).toBe(firstRecapMoment.id);
+    expect(shareAfterDelete.body.data.thumbnailMomentId).toBe(firstRecapMoment.id);
+    expect(shareAfterDelete.body.data.backgroundImageUrl).toBe(firstRecapMoment.photoUrl);
+
+    const recoveredSessionId = `offline-session-${Date.now()}`;
+    const offlineMoment = await createTestMomentLog({
+      authHeader,
+      filename: 'offline-session-recap.jpg',
+      lat: 37.5518,
+      lng: 126.9888,
+      placeName: '오프라인 여행 기록',
+      sessionId: recoveredSessionId,
+      trackId: 'seoul-city',
+    });
+    const recoveredLog = await request(app)
+      .post('/v1/recaps')
+      .set('Authorization', authHeader)
+      .set('Idempotency-Key', `travel-log:${recoveredSessionId}`)
+      .send({
+        momentLogIds: [offlineMoment.id],
+        sessionId: recoveredSessionId,
+        templateId: 'album',
+        title: '복구된 오프라인 로그',
+      });
+    expect(recoveredLog.status).toBe(201);
+    expect(recoveredLog.body.data.sessionId).toBe(recoveredSessionId);
 
     const shareEvent = await request(app)
       .post(`/v1/recaps/${createdRecapId}/share-events`)

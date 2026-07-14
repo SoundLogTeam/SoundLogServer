@@ -44,8 +44,9 @@ export async function authMiddleware(req: Request, _res: Response, next: NextFun
 
     if (env.USE_MOCK_DB) {
       const passwordUser = mockDb.passwordUsers.find((user) => user.id === userId);
+      const isDefaultMockUser = userId === 'mock-user-local';
 
-      if (userId !== mockDb.user.id && !passwordUser) {
+      if (!isDefaultMockUser && !passwordUser) {
         throw unauthorized(ERROR_MESSAGES.INVALID_TOKEN);
       }
 
@@ -55,7 +56,11 @@ export async function authMiddleware(req: Request, _res: Response, next: NextFun
             provider: 'email',
             providerUserId: passwordUser.email,
           }
-        : mockDb.user;
+        : {
+            id: 'mock-user-local',
+            provider: mockDb.user.provider,
+            providerUserId: mockDb.user.providerUserId,
+          };
       next();
       return;
     }

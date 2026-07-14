@@ -2,7 +2,9 @@
 
 SoundLog React Native/Expo 앱과 연동되는 Express + TypeScript API 서버입니다.
 
-API 구현 기준은 `SoundLogTeam/api-docs`의 `openapi/soundlog-api.yaml`이며, MVP/확장 endpoint 25개를 제공합니다.
+API 구현 기준은 `openapi/soundlog-api.yaml`이며, 현재 Express와 OpenAPI에 동기화된 61개 HTTP 연산을 제공합니다.
+
+리캡, 여행 로그, 여행 세션, GPS 경로를 변경할 때는 [Recap / Log 서버 도메인 계약](docs/recap-log-domain-contract.md)을 먼저 확인합니다.
 
 ## Stack
 
@@ -116,6 +118,7 @@ pnpm dev         # 개발 서버
 pnpm build       # TypeScript build
 pnpm typecheck   # 타입 검사
 pnpm test:api    # API 테스트
+pnpm check:openapi-sync # Express 라우트와 OpenAPI 메서드/경로 동기화 검사
 pnpm check:production-env # 운영 환경변수 점검
 pnpm db:migrate  # Prisma migration
 pnpm db:seed     # 로컬 seed 데이터 적재
@@ -136,20 +139,29 @@ pnpm db:seed     # 로컬 seed 데이터 적재
   - `POST /v1/me/migrate-local-data`
 - Tour / Home / Playlists
   - `GET /v1/tour/nearby-places`
+  - `GET /v1/tour/reverse-geocode`
   - `GET /v1/home/featured-playlists`
   - `GET /v1/home/mood-recommendations`
   - `GET /v1/home/recent-music-logs`
   - `POST /v1/playlists/contextual`
   - `GET /v1/playlists/:playlistId`
 - Moment Logs / Library / Recaps
+  - `GET /v1/recap-captures`
+  - `POST /v1/recap-captures`
+  - `PATCH /v1/recap-captures/:momentLogId`
+  - `DELETE /v1/recap-captures/:momentLogId`
+  - `PUT /v1/recap-captures/:momentLogId/photo`
+  - `DELETE /v1/recap-captures/:momentLogId/photo`
   - `GET /v1/moment-logs`
   - `POST /v1/moment-logs`
   - `GET /v1/library/tracks`
   - `PUT /v1/library/tracks/:trackId`
   - `POST /v1/recommendation-events`
+  - `GET /v1/recap-markers`
   - `GET /v1/recaps`
   - `POST /v1/recaps`
   - `GET /v1/recaps/:recapId/share`
+  - `PATCH /v1/recaps/:recapId/visibility`
   - `POST /v1/recaps/:recapId/share-events`
 - Travel Sessions
   - `POST /v1/travel-sessions`: 서버 기준 여행 모드 시작
@@ -189,4 +201,4 @@ pnpm db:seed     # 로컬 seed 데이터 적재
   - `GET /v1/home/recent-music-logs`
   - `POST /v1/playlists/contextual` -> ML 추천 서버 `ML_RECOMMENDATION_API_URL`
   - `GET /v1/playlists/busan-ocean`
-  - `GET /v1/recaps/log-1/share`
+  - `GET /v1/recaps/seoul-night/share`

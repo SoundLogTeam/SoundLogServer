@@ -46,6 +46,19 @@ export const recapController = {
     );
   },
 
+  async updateRecapThumbnail(req: Request, res: Response) {
+    const user = requireUser(req);
+    res.json(
+      dataResponse(
+        await apiService.updateRecapThumbnail(
+          user.id,
+          String(req.params.recapId),
+          req.body,
+        ),
+      ),
+    );
+  },
+
   async createShareEvent(req: Request, res: Response) {
     const user = requireUser(req);
     await apiService.createRecapShareEvent(

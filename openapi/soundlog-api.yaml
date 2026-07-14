@@ -37,7 +37,7 @@ tags:
   - name: RecapCaptures
     description: 카메라로 남기는 단발성 리캡 저장 API
   - name: Recaps
-    description: 여행 로그와 공개/낱개 리캡 리스트 및 공유 콘텐츠
+    description: 여행 로그 목록, 리캡 지도 마커 및 공유 콘텐츠
   - name: Library
     description: 좋아요/저장 음악 보관함
   - name: RecommendationEvents
@@ -226,6 +226,32 @@ paths:
                 $ref: "#/components/schemas/MeResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
+    delete:
+      tags:
+        - Me
+      summary: 내 계정과 연결 데이터 즉시 삭제
+      description: 사용자 계정, 토큰, 프로필, 여행 기록, 리캡, 보관함 및 커뮤니티 데이터를 삭제합니다.
+      operationId: deleteMyAccount
+      responses:
+        "200":
+          description: 계정 삭제 완료
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                properties:
+                  data:
+                    type: object
+                    required:
+                      - deleted
+                    properties:
+                      deleted:
+                        type: boolean
+                        const: true
+        "401":
+          $ref: "#/components/responses/Unauthorized"
 
   /v1/me/profile:
     get:
@@ -297,6 +323,35 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /v1/tour/places:
+    get:
+      tags:
+        - Tour
+      summary: 수동 장소 검색
+      description: 위치 권한 없이 사용자가 입력한 장소명, 주소 또는 카테고리로 Soundlog 장소를 검색합니다.
+      operationId: searchPlaces
+      parameters:
+        - name: query
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 80
+          example: 광안리
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: 검색된 장소 목록
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlaceContextListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /v1/tour/nearby-places:
     get:
       tags:
@@ -331,6 +386,31 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/PlaceContextListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/tour/reverse-geocode:
+    get:
+      tags:
+        - Tour
+      summary: 현재 좌표의 한국어 지역명 조회
+      description: |
+        주변 관광공사 장소가 없을 때 사용할 한국어 지역명과 주소를 반환합니다.
+        서버에서 OpenStreetMap Nominatim을 프록시하고 동일 좌표 결과를 캐시합니다.
+        결과가 없거나 외부 서비스가 응답하지 않으면 `data`는 `null`입니다.
+      operationId: reverseGeocodeLocation
+      parameters:
+        - $ref: "#/components/parameters/Lat"
+        - $ref: "#/components/parameters/Lng"
+      responses:
+        "200":
+          description: 한국어 지역명 또는 null
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlaceContextNullableResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -386,27 +466,20 @@ paths:
       tags:
         - Home
       summary: 홈 무드 추천 카드 조회
-      description: 선택된 상단 필터, 무드 필터, 온보딩 취향을 기반으로 추천 카드를 정렬합니다.
+      description: 선택한 무드와 정확히 일치하는 카드를 조회하고, 온보딩 취향을 기반으로 결과를 정렬합니다. 전체를 선택하면 모든 카드를 반환합니다.
       operationId: getMoodRecommendations
       parameters:
-        - name: topFilter
-          in: query
-          required: true
-          schema:
-            type: string
-            default: 전체
-          example: 청량한
         - name: moodFilter
           in: query
           required: true
           schema:
             type: string
             default: 전체
-          example: 청량한
+          example: 시원한
         - name: recommendationMode
           in: query
           required: true
-          description: 홈 상단 토글에서 선택한 추천 모드.
+          description: 음악추천 화면의 추천 모드.
           schema:
             $ref: "#/components/schemas/MusicRecommendationMode"
           example: everyday
@@ -421,7 +494,7 @@ paths:
           description: 온보딩 선호 무드. 쉼표 구분.
           schema:
             type: string
-          example: "청량한,잔잔한"
+          example: "시원한,잔잔한"
         - name: travelStyles
           in: query
           description: 여행 스타일. 쉼표 구분.
@@ -1036,7 +1109,7 @@ paths:
       tags:
         - Recaps
       summary: 여행모드 지도 리캡 마커 조회
-      description: 현재 위치 기준 300m 이내의 공개 리캡 또는 내 리캡 마커를 조회합니다. `radiusMeters`는 이전 클라이언트 호환을 위해 받을 수 있지만 서버 정책상 항상 300m로 고정됩니다.
+      description: "`scope=public`은 현재 위치 기준 300m 이내의 공개 리캡을 조회합니다. `scope=mine`은 위치와 공개 여부에 관계없이 좌표가 있는 내 전체 리캡 마커를 조회하며 `lat`, `lng`, `radiusMeters`를 적용하지 않습니다."
       operationId: getRecapMarkers
       parameters:
         - name: lat
@@ -1054,7 +1127,7 @@ paths:
         - name: radiusMeters
           in: query
           deprecated: true
-          description: 이전 클라이언트 호환용 값입니다. 전달해도 서버는 항상 300m 기준으로 필터링합니다.
+          description: 공개 리캡의 이전 클라이언트 호환용 값입니다. `scope=public`은 전달값과 관계없이 300m, `scope=mine`은 거리 제한 없이 조회합니다.
           required: false
           schema:
             type: integer
@@ -1084,8 +1157,8 @@ paths:
     get:
       tags:
         - Recaps
-      summary: 로그/리캡 리스트 조회
-      description: 로그 탭에서 여행모드 리캡 묶음인 여행 로그, 여행모드 밖에서 만든 낱개 리캡, 공개 리캡을 리스트 형태로 보여줍니다. `mine`은 내 로그, `others`는 다른 사용자의 전체공개 로그, `all`은 내 로그와 다른 사용자의 전체공개 로그를 함께 반환합니다.
+      summary: 여행 로그 리스트 조회
+      description: 여행모드에서 생성된 리캡 묶음만 로그 단위로 반환합니다. `sessionId`가 없는 독립 리캡은 로그 목록에서 제외하며 `GET /v1/recap-captures` 또는 지도 마커 API에서 조회합니다. `mine`은 내 로그, `others`는 다른 사용자의 전체공개 로그, `all`은 내 로그와 다른 사용자의 전체공개 로그를 함께 반환합니다.
       operationId: getRecaps
       parameters:
         - $ref: "#/components/parameters/Cursor"
@@ -1182,6 +1255,39 @@ paths:
       responses:
         "200":
           description: 공개 범위가 변경된 리캡
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecapItemResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/recaps/{recapId}/thumbnail:
+    patch:
+      tags:
+        - Recaps
+      summary: 로그 썸네일 리캡 지정
+      description: 내 여행 로그에 포함된 리캡 하나를 대표 썸네일로 지정합니다. 지정하지 않은 로그는 시간순 첫 리캡을 기본 썸네일로 사용합니다.
+      operationId: updateRecapThumbnail
+      parameters:
+        - name: recapId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecapThumbnailUpdateRequest"
+      responses:
+        "200":
+          description: 썸네일이 변경된 여행 로그
           content:
             application/json:
               schema:
@@ -2225,12 +2331,17 @@ components:
         overview:
           type: string
           example: 부산을 대표하는 도심 해변 관광지입니다.
+        attribution:
+          type: string
+          description: 외부 위치 데이터 표시 의무가 있을 때 사용하는 출처 문구
+          example: © OpenStreetMap contributors
         source:
           type: string
           enum:
             - tour-api
             - seed
             - user
+            - reverse-geocode
 
     Track:
       type: object
@@ -2330,12 +2441,16 @@ components:
           example:
             - 팝
             - K-POP
+        imageUrl:
+          type: string
+          format: uri
+          description: 무드 추천 카드 대표 이미지.
         moods:
           type: array
           items:
             type: string
           example:
-            - 청량한
+            - 시원한
             - 신나는
         travelStyles:
           type: array
@@ -2553,9 +2668,6 @@ components:
             - seed-fallback
             - server-contextual
           example: ml-recommendation
-        topFilter:
-          type: string
-          example: 전체
         travelMode:
           $ref: "#/components/schemas/TravelMode"
 
@@ -2662,6 +2774,11 @@ components:
           format: date-time
         sessionId:
           type: string
+        templateId:
+          $ref: "#/components/schemas/RecapTemplateId"
+        visibility:
+          $ref: "#/components/schemas/RecapVisibility"
+          description: 리캡 단위 공개 범위입니다. 기본값은 private이며 public은 lat/lng가 함께 있어야 합니다.
         lat:
           type: number
           format: double
@@ -2711,6 +2828,10 @@ components:
         sessionId:
           type: string
           nullable: true
+        templateId:
+          $ref: "#/components/schemas/RecapTemplateId"
+        visibility:
+          $ref: "#/components/schemas/RecapVisibility"
         lat:
           type: number
           format: double
@@ -2755,7 +2876,9 @@ components:
         - id
         - createdAt
         - moodTags
+        - recapVisibility
         - syncStatus
+        - templateId
       properties:
         id:
           type: string
@@ -2768,6 +2891,10 @@ components:
           format: date-time
         sessionId:
           type: string
+        templateId:
+          $ref: "#/components/schemas/RecapTemplateId"
+        recapVisibility:
+          $ref: "#/components/schemas/RecapVisibility"
         location:
           $ref: "#/components/schemas/GeoPoint"
         placeCategory:
@@ -2865,7 +2992,7 @@ components:
 
     RecapItem:
       type: object
-      description: 로그 탭에 표시되는 여행 로그 또는 낱개 리캡 요약입니다.
+      description: 로그 탭에 표시되는 여행 로그 요약입니다. 응답에는 항상 여행 세션을 식별하는 sessionId가 포함됩니다.
       required:
         - id
         - title
@@ -2890,8 +3017,15 @@ components:
         momentCount:
           type: integer
           example: 8
+        backgroundImageUrl:
+          type: string
+          format: uri
+          description: 선택한 리캡의 로그 썸네일 이미지입니다. 선택값이 없으면 첫 리캡 이미지입니다.
         sessionId:
           type: string
+        thumbnailMomentId:
+          type: string
+          description: 로그 썸네일로 선택된 리캡 캡처 ID입니다.
         visibility:
           $ref: "#/components/schemas/RecapVisibility"
 
@@ -2902,7 +3036,6 @@ components:
         - film
         - lp
         - map
-        - video
 
     RecapVisibility:
       type: string
@@ -2913,14 +3046,21 @@ components:
 
     RecapCreateRequest:
       type: object
-      description: 여행 로그 생성 요청입니다. visibility가 public이면 대표 위치를 만들 수 있는 리캡 캡처 위치가 필요합니다.
+      description: 여행 로그 또는 독립 리캡 집계 생성 요청입니다. 여행 로그는 sessionId가 필요하고, 독립 리캡은 세션에 속하지 않은 momentLogIds 정확히 1개가 필요합니다. 공개 로그는 위치가 있고 public인 구성 리캡을 1개 이상 포함해야 합니다. 로컬 여행 세션 ID는 소유한 구성 리캡이 확인되면 종료 세션으로 복구됩니다.
       required:
         - templateId
+      anyOf:
+        - required:
+            - sessionId
+        - required:
+            - momentLogIds
       properties:
         sessionId:
           type: string
         momentLogIds:
           type: array
+          minItems: 1
+          uniqueItems: true
           items:
             type: string
         templateId:
@@ -2940,12 +3080,21 @@ components:
 
     RecapVisibilityUpdateRequest:
       type: object
-      description: public으로 변경하려면 해당 리캡에 대표 위치가 있어야 합니다.
+      description: 여행 로그를 public으로 변경하려면 위치가 있고 public인 구성 리캡이 1개 이상 있어야 합니다. 독립 리캡은 자신의 공개 범위도 함께 갱신됩니다.
       required:
         - visibility
       properties:
         visibility:
           $ref: "#/components/schemas/RecapVisibility"
+
+    RecapThumbnailUpdateRequest:
+      type: object
+      required:
+        - momentId
+      properties:
+        momentId:
+          type: string
+          description: 해당 여행 로그에 포함된 리캡 캡처 ID입니다.
 
     RecapMapMarker:
       type: object
@@ -3027,6 +3176,12 @@ components:
         recordedAt:
           type: string
           format: date-time
+        templateId:
+          $ref: "#/components/schemas/RecapTemplateId"
+        track:
+          $ref: "#/components/schemas/Track"
+        visibility:
+          $ref: "#/components/schemas/RecapVisibility"
 
     RecapShare:
       type: object
@@ -3039,6 +3194,9 @@ components:
       properties:
         id:
           type: string
+        isMine:
+          type: boolean
+          description: 현재 인증 사용자가 이 리캡의 작성자인지 여부입니다.
         placeName:
           type: string
         trackTitle:
@@ -3066,6 +3224,14 @@ components:
         shareImageUrl:
           type: string
           format: uri
+        sessionId:
+          type: string
+          description: 여행모드에서 생성된 리캡이 연결된 여행 세션 ID입니다.
+        templateId:
+          $ref: "#/components/schemas/RecapTemplateId"
+        thumbnailMomentId:
+          type: string
+          description: 현재 사용자에게 노출 가능한 대표 썸네일 리캡 ID입니다.
         visibility:
           $ref: "#/components/schemas/RecapVisibility"
 
@@ -3884,6 +4050,16 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/PlaceContext"
+
+    PlaceContextNullableResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/PlaceContext"
 
     FeaturedPlaylistListResponse:
       type: object

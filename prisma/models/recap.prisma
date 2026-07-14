@@ -7,7 +7,9 @@ model Recap {
   createdAt             DateTime          @default(now())
   momentCount           Int?
   sessionId             String?
+  travelSessionId       String?           @unique
   backgroundImageUrl    String?
+  thumbnailMomentId     String?
   discImageUrl          String?
   recordedAt            DateTime?
   shareImageUrl         String?
@@ -18,6 +20,7 @@ model Recap {
   lat                   Float?
   lng                   Float?
   user                  User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  travelSession         TravelSession?    @relation(fields: [travelSessionId], references: [id], onDelete: SetNull)
   representativeTrack   Track             @relation("RepresentativeTrack", fields: [representativeTrackId], references: [id])
   shareEvents           RecapShareEvent[]
 }

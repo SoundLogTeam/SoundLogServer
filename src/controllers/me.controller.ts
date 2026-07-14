@@ -16,6 +16,11 @@ export const meController = {
     res.json(dataResponse(await apiService.getMyProfile(user.id)));
   },
 
+  async deleteAccount(req: Request, res: Response) {
+    const user = requireUser(req);
+    res.json(dataResponse(await apiService.deleteMyAccount(user.id)));
+  },
+
   async upsertProfile(req: Request, res: Response) {
     const user = requireUser(req);
     res.json(dataResponse(await apiService.upsertMyProfile(user.id, req.body)));

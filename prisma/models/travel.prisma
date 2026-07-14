@@ -27,10 +27,12 @@ model MomentLog {
   placeName     String?
   note          String?
   trackSnapshot Json?
+  templateId    String   @default("album")
   travelMode    String?
   moodTags      String[]
   source        String
   syncStatus    String
+  visibility    String   @default("private")
   user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
@@ -45,4 +47,5 @@ model TravelSession {
   lng        Float?
   routePoints Json?
   user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  recap      Recap?
 }

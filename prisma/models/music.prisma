@@ -30,6 +30,7 @@ model Playlist {
   createdAt          DateTime        @default(now())
   updatedAt          DateTime        @updatedAt
   tracks             PlaylistTrack[]
+  moodRecommendations MoodRecommendation[]
 }
 
 model PlaylistTrack {
@@ -53,9 +54,14 @@ model MoodRecommendation {
   genres       String[] @default([])
   moods        String[] @default([])
   travelStyles String[] @default([])
+  imageUrl     String?
+  playlistId   String?
   trackId      String
   sortOrder    Int      @default(0)
+  playlist     Playlist? @relation(fields: [playlistId], references: [id], onDelete: SetNull)
   track        Track    @relation(fields: [trackId], references: [id])
+
+  @@index([playlistId])
 }
 
 model LibraryTrackState {

@@ -36,7 +36,16 @@ describe('mockSoundlogService', () => {
       preferredMoods: ['잔잔한'],
       travelStyles: ['산책'],
     });
-    const places = await mockSoundlogService.getNearbyPlaces({ lat: 35.1532, limit: 2 });
+    const places = await mockSoundlogService.getNearbyPlaces({
+      lat: 35.1532,
+      limit: 2,
+      lng: 129.1186,
+    });
+    const distantPlaces = await mockSoundlogService.getNearbyPlaces({
+      lat: 37.785834,
+      lng: -122.406417,
+      radiusMeters: 2000,
+    });
     const playlists = await mockSoundlogService.getFeaturedPlaylists(undefined, {
       lat: 35.1532,
       limit: 3,
@@ -71,17 +80,25 @@ describe('mockSoundlogService', () => {
     expect(profile.completedOnboarding).toBe(true);
     expect(profile.preferredGenres).toEqual(['인디']);
     expect(profile.dislikedArtists).toEqual(['skip-me']);
-    expect(places).toHaveLength(2);
+    expect(places).toHaveLength(1);
     expect(places[0].source).toBe('seed');
     expect(places[0].id).toMatch(/^seed-/);
+    expect(places[0].distanceMeters).toBe(0);
     expect(playlists[0].id).toBe('busan-ocean');
+    expect(playlists.map((playlist) => playlist.id)).not.toEqual(
+      expect.arrayContaining(['calm-walk', 'drive', 'city-night', 'cafe-indie']),
+    );
     expect(placeScopedPlaylists[0].id).toBe('busan-ocean');
     expect(recommendations[0].track.id).toEqual(expect.any(String));
+    expect(recommendations[0].moods).toContain('시원한');
+    expect(recommendations[0].playlistId).toEqual(expect.any(String));
     expect(contextualPlaylist.context).toMatchObject({
       source: 'seed-fallback',
       state: '산책',
       travelMode: 'walk',
     });
+
+    expect(distantPlaces).toEqual([]);
     expect(recommendedPlaylist.context).toMatchObject({
       source: 'seed-fallback',
       state: '바다',
@@ -241,6 +258,7 @@ describe('mockSoundlogService', () => {
   });
 
   it('creates recaps, share payloads, share events, and validates representative tracks', async () => {
+    const recapSession = await mockSoundlogService.createTravelSession(ownerId, {});
     const moment = await mockSoundlogService.createMomentLog(ownerId, {
       createdAt: '2026-07-09T10:00:00.000Z',
       lat: 37.5444,
@@ -248,7 +266,7 @@ describe('mockSoundlogService', () => {
       moodTags: ['감성적인'],
       photoPath: '/uploads/recap.jpg',
       placeName: '서울숲',
-      sessionId: 'recap-session',
+      sessionId: recapSession.id,
       trackId: 'seoul-city',
     });
     const momentId = requireValue(moment.id);
@@ -256,7 +274,7 @@ describe('mockSoundlogService', () => {
       ownerId,
       {
         momentLogIds: [momentId],
-        sessionId: 'recap-session',
+        sessionId: recapSession.id,
         title: '서울숲 사운드',
       },
       'recap-key-a',
@@ -287,6 +305,7 @@ describe('mockSoundlogService', () => {
     expect(share.moments).toHaveLength(1);
     expect(mockDb.recapShareEvents).toHaveLength(1);
 
+    const otherRecapSession = await mockSoundlogService.createTravelSession('other-user', {});
     const otherMoment = await mockSoundlogService.createMomentLog('other-user', {
       createdAt: '2026-07-09T10:20:00.000Z',
       lat: 37.5446,
@@ -294,12 +313,13 @@ describe('mockSoundlogService', () => {
       moodTags: ['감성적인'],
       photoPath: '/uploads/other-recap.jpg',
       placeName: '다른 사람 서울숲',
-      sessionId: 'other-recap-session',
+      sessionId: otherRecapSession.id,
       trackId: 'seoul-city',
+      visibility: 'public',
     });
     const otherPublicRecap = await mockSoundlogService.createRecap('other-user', {
       momentLogIds: [requireValue(otherMoment.id)],
-      sessionId: 'other-recap-session',
+      sessionId: otherRecapSession.id,
       title: '다른 사람 공개 로그',
       visibility: 'public',
     });
@@ -315,8 +335,18 @@ describe('mockSoundlogService', () => {
       expect.arrayContaining([recapId, otherPublicRecap.id]),
     );
 
+    const standaloneMoment = await mockSoundlogService.createMomentLog(ownerId, {
+      createdAt: '2026-07-09T10:30:00.000Z',
+      moodTags: ['감성적인'],
+      placeName: '독립 리캡',
+      trackId: 'seoul-city',
+    });
+
     await expect(
-      mockSoundlogService.createRecap(ownerId, { representativeTrackId: 'missing-track' }),
+      mockSoundlogService.createRecap(ownerId, {
+        momentLogIds: [requireValue(standaloneMoment.id)],
+        representativeTrackId: 'missing-track',
+      }),
     ).rejects.toSatisfy((error) => {
       expectHttpError(error, 404);
       return true;

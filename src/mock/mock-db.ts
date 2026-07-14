@@ -33,8 +33,10 @@ type MockMomentLog = {
   sessionId?: string;
   source: 'camera';
   syncStatus: 'failed' | 'pending' | 'synced';
+  templateId: string;
   trackSnapshot?: MockTrack;
   travelMode?: string;
+  visibility: 'private' | 'public';
 };
 
 type MockLibraryTrackState = {
@@ -61,6 +63,8 @@ type MockRecap = {
   representativeTrackId: string;
   routePoints?: MockRoutePoint[];
   sessionId?: string;
+  thumbnailMomentId?: string;
+  travelSessionId?: string;
   shareImageUrl?: string;
   templateId: string;
   title: string;
@@ -251,7 +255,10 @@ function createMockDb() {
       moodTags: [...log.moodTags],
       source: 'camera' as const,
       syncStatus: 'synced' as const,
+      templateId: log.templateId,
       trackSnapshot: trackById.get(log.trackId),
+      travelMode: log.travelMode,
+      visibility: log.visibility,
     })) as MockMomentLog[],
     recommendationEvents: [] as Array<{
       context: Record<string, unknown>;
@@ -266,7 +273,7 @@ function createMockDb() {
     }>,
     recaps: recaps.map((recap) => {
       const routePoints = 'routePoints' in recap
-        ? (recap.routePoints as MockRoutePoint[] | undefined)
+        ? recap.routePoints.map((point) => ({ ...point }))
         : undefined;
 
       return {
@@ -278,6 +285,7 @@ function createMockDb() {
         createdAt: new Date(recap.createdAt),
         momentCount: recap.momentCount,
         sessionId: recap.sessionId,
+        thumbnailMomentId: recap.thumbnailMomentId,
         backgroundImageUrl: recap.backgroundImageUrl,
         discImageUrl: recap.discImageUrl,
         recordedAt: new Date(recap.recordedAt),
