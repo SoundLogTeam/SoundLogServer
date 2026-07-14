@@ -424,7 +424,7 @@ describe('Soundlog API', () => {
       const reverseGeocoded = await request(app)
         .get('/v1/tour/reverse-geocode')
         .set('Authorization', authHeader)
-        .query({ lat: 37.785834, lng: -122.406417 });
+        .query({ lat: 37.786834, lng: -122.407417 });
 
       expect(reverseGeocoded.status).toBe(200);
       expect(reverseGeocoded.body.data).toEqual(
@@ -447,7 +447,7 @@ describe('Soundlog API', () => {
       const cachedReverseGeocoded = await request(app)
         .get('/v1/tour/reverse-geocode')
         .set('Authorization', authHeader)
-        .query({ lat: 37.785834, lng: -122.406417 });
+        .query({ lat: 37.786834, lng: -122.407417 });
 
       expect(cachedReverseGeocoded.status).toBe(200);
       expect(cachedReverseGeocoded.body.data.title).toBe('샌프란시스코');

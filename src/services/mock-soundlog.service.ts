@@ -378,7 +378,7 @@ function getMockRecapMomentLocation(
   viewerId?: string,
 ) {
   const moments = getMockVisibleRecapMoments(recap, viewerId);
-  const location = moments.find(
+  const location = [...moments].reverse().find(
     (moment) =>
       typeof moment.location?.lat === 'number' &&
       typeof moment.location?.lng === 'number',
