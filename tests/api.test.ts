@@ -5,6 +5,7 @@ import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { prisma } from '../src/config/prisma.js';
 import { mockDb, resetMockDb } from '../src/mock/mock-db.js';
+import { reverseGeocodeLocation } from '../src/services/reverse-geocoding.service.js';
 import { disconnectSeedDatabase, seedDatabase } from '../prisma/seed.js';
 
 const app = createApp();
@@ -421,13 +422,12 @@ describe('Soundlog API', () => {
     );
 
     try {
-      const reverseGeocoded = await request(app)
-        .get('/v1/tour/reverse-geocode')
-        .set('Authorization', authHeader)
-        .query({ lat: 37.786834, lng: -122.407417 });
+      const reverseGeocodeLocationParams = { lat: 37.786834, lng: -122.407417 };
+      const reverseGeocodedServiceResult = await reverseGeocodeLocation(
+        reverseGeocodeLocationParams,
+      );
 
-      expect(reverseGeocoded.status).toBe(200);
-      expect(reverseGeocoded.body.data).toEqual(
+      expect(reverseGeocodedServiceResult).toEqual(
         expect.objectContaining({
           address: expect.stringContaining('샌프란시스코'),
           attribution: '© OpenStreetMap contributors',
@@ -444,13 +444,26 @@ describe('Soundlog API', () => {
         }),
       );
 
-      const cachedReverseGeocoded = await request(app)
+      const reverseGeocoded = await request(app)
         .get('/v1/tour/reverse-geocode')
         .set('Authorization', authHeader)
-        .query({ lat: 37.786834, lng: -122.407417 });
+        .query(reverseGeocodeLocationParams);
 
-      expect(cachedReverseGeocoded.status).toBe(200);
-      expect(cachedReverseGeocoded.body.data.title).toBe('샌프란시스코');
+      expect(reverseGeocoded.status).toBe(200);
+      expect(reverseGeocoded.body.data).toEqual(
+        expect.objectContaining({
+          address: expect.stringContaining('샌프란시스코'),
+          attribution: '© OpenStreetMap contributors',
+          source: 'reverse-geocode',
+          title: '샌프란시스코',
+        }),
+      );
+
+      const cachedReverseGeocoded = await reverseGeocodeLocation(
+        reverseGeocodeLocationParams,
+      );
+
+      expect(cachedReverseGeocoded?.title).toBe('샌프란시스코');
       expect(reverseGeocodeFetch).toHaveBeenCalledTimes(1);
     } finally {
       reverseGeocodeFetch.mockRestore();
