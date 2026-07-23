@@ -399,6 +399,7 @@ export const travelSessionValidators = {
     location: geoPointSchema.optional(),
     routePoints: routePointsSchema.optional(),
     status: z.enum(['active', 'ended']),
+    travelMode: travelModeSchema.optional(),
   }),
 };
 

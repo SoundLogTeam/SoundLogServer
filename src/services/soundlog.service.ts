@@ -1343,7 +1343,11 @@ function recapItemToDto(
   });
 }
 
-function recapShareToDto(recap: Recap & { representativeTrack: Track }, viewerId?: string) {
+function recapShareToDto(
+  recap: Recap & { representativeTrack: Track },
+  viewerId?: string,
+  travelSession?: TravelSession,
+) {
   const canViewRoutePoints = recap.userId === viewerId;
   const visibleMoments = getVisibleRecapMoments(recap, viewerId);
   const publicRepresentative = canViewRoutePoints ? undefined : visibleMoments.at(-1);
@@ -1363,7 +1367,9 @@ function recapShareToDto(recap: Recap & { representativeTrack: Track }, viewerId
     recordedAt: publicRepresentative?.recordedAt ??
       (recap.recordedAt ?? recap.createdAt).toISOString(),
     routePoints: canViewRoutePoints ? routePointsToDto(recap.routePoints) : undefined,
+    sessionEndedAt: canViewRoutePoints ? travelSession?.endedAt?.toISOString() : undefined,
     sessionId: recap.sessionId ?? undefined,
+    sessionStartedAt: canViewRoutePoints ? travelSession?.startedAt?.toISOString() : undefined,
     shareImageUrl: recap.shareImageUrl ?? undefined,
     templateId: recap.templateId,
     thumbnailMomentId: thumbnailMoment?.id,
@@ -3456,7 +3462,7 @@ export const soundlogService = {
       scope === 'public' && hasGeoPoint(params)
         ? { lat: params.lat!, lng: params.lng! }
         : undefined;
-    const radiusMeters = RECAP_DISCOVERY_RADIUS_METERS;
+    const radiusMeters = params.radiusMeters ?? RECAP_DISCOVERY_RADIUS_METERS;
     const recaps = await prisma.recap.findMany({
       where: scope === 'mine'
         ? { userId }
@@ -3725,7 +3731,7 @@ export const soundlogService = {
           { visibility: 'public' },
         ],
       },
-      include: { representativeTrack: true },
+      include: { representativeTrack: true, travelSession: true },
     });
 
     if (!recap) {
@@ -3736,7 +3742,7 @@ export const soundlogService = {
       throw notFound(ERROR_MESSAGES.RECAP_NOT_FOUND);
     }
 
-    return recapShareToDto(recap, userId);
+    return recapShareToDto(recap, userId, recap.travelSession ?? undefined);
   },
 
   async updateRecapVisibility(
@@ -3938,6 +3944,7 @@ export const soundlogService = {
       location?: { lat: number; lng: number };
       routePoints?: RoutePointDto[];
       status: 'active' | 'ended';
+      travelMode?: string;
     },
   ) {
     const session = await prisma.travelSession.findFirst({
@@ -3970,6 +3977,7 @@ export const soundlogService = {
         lat: input.location?.lat,
         lng: input.location?.lng,
         routePoints,
+        travelMode: input.travelMode,
       },
     });
 

@@ -2332,7 +2332,7 @@ export const mockSoundlogService = {
       params.lng !== undefined
         ? { lat: params.lat, lng: params.lng }
         : undefined;
-    const radiusMeters = RECAP_DISCOVERY_RADIUS_METERS;
+    const radiusMeters = params.radiusMeters ?? RECAP_DISCOVERY_RADIUS_METERS;
 
     return mockDb.recaps
       .filter((recap) =>
