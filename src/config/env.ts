@@ -21,6 +21,14 @@ const envSchema = z.object({
   NODE_ENV: z.string().default('development'),
   PORT: z.coerce.number().int().positive().default(4000),
   REQUEST_BODY_LIMIT: z.string().min(1).default('1mb'),
+  REVERSE_GEOCODING_BASE_URL: z
+    .string()
+    .url()
+    .default('https://nominatim.openstreetmap.org'),
+  REVERSE_GEOCODING_USER_AGENT: z
+    .string()
+    .min(8)
+    .default('Soundlog/0.1 (+https://github.com/SoundLogTeam/SoundLogServer)'),
   TOUR_API_BASE_URL: z.string().url().default('https://apis.data.go.kr/B551011/KorService2'),
   TOUR_API_SERVICE_KEY: z.string().optional(),
   USE_MOCK_DB: z

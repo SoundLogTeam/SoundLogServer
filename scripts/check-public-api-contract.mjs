@@ -3,6 +3,8 @@
 const cliApiBaseUrl = process.argv.slice(2).find((arg) => arg !== '--');
 const apiBaseUrl = (cliApiBaseUrl || process.env.PUBLIC_API_BASE_URL || '').replace(/\/+$/, '');
 const errors = [];
+let accessToken = process.env.PUBLIC_API_ACCESS_TOKEN;
+let ownsContractUser = false;
 
 if (!apiBaseUrl) {
   console.error(
@@ -19,8 +21,25 @@ function withBase(path) {
   return `${apiBaseUrl}${path.startsWith('/') ? path : `/${path}`}`;
 }
 
-async function fetchText(path) {
+async function fetchText(path, options = {}) {
+  const headers = {};
+
+  if (options.authenticated) {
+    if (!accessToken) {
+      throw new Error(`${path} requires an authenticated contract session.`);
+    }
+
+    headers.Authorization = `Bearer ${accessToken}`;
+  }
+
+  if (options.body !== undefined) {
+    headers['Content-Type'] = 'application/json';
+  }
+
   const response = await fetch(withBase(path), {
+    body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    headers,
+    method: options.method ?? 'GET',
     redirect: 'manual',
     signal: AbortSignal.timeout(10_000),
   });
@@ -29,14 +48,64 @@ async function fetchText(path) {
   return { response, text };
 }
 
-async function fetchJson(path) {
-  const { response, text } = await fetchText(path);
+async function fetchJson(path, options) {
+  const { response, text } = await fetchText(path, options);
 
   if (!response.ok) {
     throw new Error(`${path} returned HTTP ${response.status}: ${text.slice(0, 160)}`);
   }
 
   return JSON.parse(text);
+}
+
+async function createContractSession() {
+  if (accessToken) {
+    return;
+  }
+
+  try {
+    const uniqueId = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    const payload = await fetchJson('/v1/auth/register', {
+      body: {
+        displayName: 'Soundlog Contract Check',
+        email: `soundlog-contract-${uniqueId}@example.com`,
+        password: 'SoundlogContract!2026',
+      },
+      method: 'POST',
+    });
+
+    if (typeof payload?.data?.accessToken !== 'string') {
+      addError('/v1/auth/register did not return an access token for contract checks.');
+      return;
+    }
+
+    accessToken = payload.data.accessToken;
+    ownsContractUser = true;
+  } catch (error) {
+    addError(error instanceof Error ? error.message : String(error));
+  }
+}
+
+async function deleteContractUser() {
+  if (!ownsContractUser || !accessToken) {
+    return;
+  }
+
+  try {
+    const { response, text } = await fetchText('/v1/me', {
+      authenticated: true,
+      method: 'DELETE',
+    });
+
+    if (!response.ok) {
+      addError(`/v1/me cleanup returned HTTP ${response.status}: ${text.slice(0, 160)}`);
+    }
+  } catch (error) {
+    addError(`Contract user cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    accessToken = undefined;
+    ownsContractUser = false;
+  }
 }
 
 async function verifyHealth() {
@@ -71,6 +140,7 @@ async function verifyNearbyPlaces() {
   try {
     const payload = await fetchJson(
       '/v1/tour/nearby-places?lat=35.1595&lng=129.1604&radiusMeters=2000&limit=1',
+      { authenticated: true },
     );
 
     if (!Array.isArray(payload?.data)) {
@@ -99,7 +169,8 @@ async function verifyNearbyPlaces() {
 async function verifyMusicMetadata() {
   try {
     const payload = await fetchJson(
-      '/v1/home/mood-recommendations?limit=3&moodFilter=%EC%A0%84%EC%B2%B4&recommendationMode=everyday&topFilter=%EC%A0%84%EC%B2%B4',
+      '/v1/home/mood-recommendations?limit=3&moodFilter=%EC%A0%84%EC%B2%B4&recommendationMode=everyday',
+      { authenticated: true },
     );
     const serialized = JSON.stringify(payload?.data ?? {});
 
@@ -117,7 +188,9 @@ async function verifyMusicMetadata() {
 
 async function verifyPlaylistCatalog() {
   try {
-    const payload = await fetchJson('/v1/playlists/geoje-ocean');
+    const payload = await fetchJson('/v1/playlists/geoje-ocean', {
+      authenticated: true,
+    });
     const playlist = payload?.data;
 
     if (playlist?.id !== 'geoje-ocean' || !Array.isArray(playlist.tracks) || playlist.tracks.length === 0) {
@@ -130,7 +203,9 @@ async function verifyPlaylistCatalog() {
 
 async function verifyRemovedMusicPlatformRoute() {
   try {
-    const { response, text } = await fetchText('/v1/me/music-platform');
+    const { response, text } = await fetchText('/v1/me/music-platform', {
+      authenticated: true,
+    });
 
     if (response.status !== 404) {
       addError(
@@ -147,10 +222,16 @@ async function verifyRemovedMusicPlatformRoute() {
 
 await verifyHealth();
 await verifyOpenApi();
-await verifyNearbyPlaces();
-await verifyMusicMetadata();
-await verifyPlaylistCatalog();
-await verifyRemovedMusicPlatformRoute();
+await createContractSession();
+
+try {
+  await verifyNearbyPlaces();
+  await verifyMusicMetadata();
+  await verifyPlaylistCatalog();
+  await verifyRemovedMusicPlatformRoute();
+} finally {
+  await deleteContractUser();
+}
 
 if (errors.length > 0) {
   console.error('Public API contract check failed:');

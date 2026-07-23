@@ -40,6 +40,9 @@ jobs:
       - name: Build
         run: pnpm run build
 
+      - name: Check Express and OpenAPI route sync
+        run: pnpm run check:openapi-sync
+
       - name: Check removed Spotify metadata
         run: pnpm run check:no-spotify-metadata
 

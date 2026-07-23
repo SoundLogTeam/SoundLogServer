@@ -86,6 +86,15 @@ const geoPointSchema = z.object({
   lng: z.number().min(-180).max(180),
 });
 
+const routePointSchema = geoPointSchema.extend({
+  accuracyMeters: z.number().min(0).max(10000).optional(),
+  recordedAt: z.string().datetime(),
+});
+
+const routePointsSchema = z.array(routePointSchema).max(500);
+const recapTemplateSchema = z.enum(['album', 'film', 'lp', 'map']);
+const recapVisibilitySchema = z.enum(['private', 'public']);
+
 const optionalLatQuery = z.coerce.number().min(-90).max(90).optional();
 const optionalLngQuery = z.coerce.number().min(-180).max(180).optional();
 
@@ -96,7 +105,6 @@ const recommendationContextSchema = z
     placeId: z.string().optional(),
     placeName: z.string().optional(),
     recommendationMode: recommendationModeSchema.optional(),
-    topFilter: z.string().optional(),
     travelMode: travelModeSchema.optional(),
   })
   .default({});
@@ -150,6 +158,14 @@ export const meValidators = {
 };
 
 export const tourValidators = {
+  reverseGeocodeQuery: z.object({
+    lat: queryNumber.min(-90).max(90),
+    lng: queryNumber.min(-180).max(180),
+  }),
+  searchQuery: z.object({
+    limit,
+    query: z.string().trim().min(1).max(80),
+  }),
   nearbyQuery: z.object({
     contentTypes: z.string().optional(),
     lat: queryNumber.min(-90).max(90),
@@ -175,7 +191,6 @@ export const homeValidators = {
     preferredGenres: optionalCsvArray,
     preferredMoods: optionalCsvArray,
     recommendationMode: recommendationModeSchema.optional().default('everyday'),
-    topFilter: z.string().default('전체'),
     travelMode: travelModeSchema.optional(),
     travelStyles: optionalCsvArray,
   }),
@@ -250,9 +265,11 @@ export const momentLogValidators = {
     placeId: z.string().optional(),
     placeName: z.string().optional(),
     sessionId: z.string().optional(),
+    templateId: recapTemplateSchema.optional().default('album'),
     trackId: z.string().optional(),
     trackTitle: z.string().optional(),
     travelMode: travelModeSchema.optional(),
+    visibility: recapVisibilitySchema.optional().default('private'),
   }),
   updateBody: z.object({
     artistName: z.string().optional(),
@@ -265,9 +282,11 @@ export const momentLogValidators = {
     placeId: z.union([z.string(), z.null()]).optional(),
     placeName: z.union([z.string(), z.null()]).optional(),
     sessionId: z.union([z.string(), z.null()]).optional(),
+    templateId: recapTemplateSchema.optional(),
     trackId: z.string().optional(),
     trackTitle: z.string().optional(),
     travelMode: z.union([travelModeSchema, z.null()]).optional(),
+    visibility: recapVisibilitySchema.optional(),
   }),
 };
 
@@ -327,19 +346,34 @@ export const recommendationEventValidators = {
 };
 
 export const recapValidators = {
+  markerQuery: z.object({
+    lat: optionalLatQuery,
+    lng: optionalLngQuery,
+    radiusMeters: z.coerce.number().int().min(50).max(5000).optional().default(300),
+    scope: z.enum(['public', 'mine']).optional().default('public'),
+  }),
   listQuery: z.object({
     cursor,
     limit,
+    scope: z.enum(['all', 'mine', 'others']).optional().default('mine'),
   }),
   createBody: z.object({
     momentLogIds: z.array(z.string()).optional(),
     representativeTrackId: z.string().optional(),
+    routePoints: routePointsSchema.optional(),
     sessionId: z.string().optional(),
-    templateId: z.enum(['album', 'film', 'lp', 'video']),
+    templateId: recapTemplateSchema,
     title: z.string().optional(),
+    visibility: recapVisibilitySchema.optional().default('private'),
   }),
   recapParams: z.object({
     recapId: z.string().min(1),
+  }),
+  visibilityBody: z.object({
+    visibility: recapVisibilitySchema,
+  }),
+  thumbnailBody: z.object({
+    momentId: z.string().min(1),
   }),
   shareEventBody: z.object({
     createdAt: z.string().datetime(),
@@ -351,6 +385,7 @@ export const travelSessionValidators = {
   createBody: z
     .object({
       location: geoPointSchema.optional(),
+      routePoints: routePointsSchema.optional(),
       startedAt: z.string().datetime().optional(),
       travelMode: travelModeSchema.optional(),
     })
@@ -362,7 +397,9 @@ export const travelSessionValidators = {
   updateBody: z.object({
     endedAt: z.string().datetime().optional(),
     location: geoPointSchema.optional(),
+    routePoints: routePointsSchema.optional(),
     status: z.enum(['active', 'ended']),
+    travelMode: travelModeSchema.optional(),
   }),
 };
 

@@ -33,8 +33,10 @@ type MockMomentLog = {
   sessionId?: string;
   source: 'camera';
   syncStatus: 'failed' | 'pending' | 'synced';
+  templateId: string;
   trackSnapshot?: MockTrack;
   travelMode?: string;
+  visibility: 'private' | 'public';
 };
 
 type MockLibraryTrackState = {
@@ -52,14 +54,22 @@ type MockRecap = {
   createdAt: Date;
   discImageUrl?: string;
   id: string;
+  lat?: number;
+  lng?: number;
   momentCount?: number;
   moments?: unknown[];
   placeName: string;
   recordedAt?: Date;
   representativeTrackId: string;
+  routePoints?: MockRoutePoint[];
   sessionId?: string;
+  thumbnailMomentId?: string;
+  travelSessionId?: string;
   shareImageUrl?: string;
+  templateId: string;
   title: string;
+  userId: string;
+  visibility: 'private' | 'public';
 };
 
 type MockTravelSession = {
@@ -67,10 +77,18 @@ type MockTravelSession = {
   id: string;
   lat?: number;
   lng?: number;
+  routePoints?: MockRoutePoint[];
   startedAt?: Date;
   status: 'active' | 'ended' | 'idle';
   travelMode?: string;
   userId: string;
+};
+
+type MockRoutePoint = {
+  accuracyMeters?: number;
+  lat: number;
+  lng: number;
+  recordedAt: string;
 };
 
 type MockRefreshToken = {
@@ -229,13 +247,18 @@ function createMockDb() {
       id: log.id,
       photoUrl: log.photoUrl,
       createdAt: new Date(log.createdAt),
+      lat: log.lat,
+      lng: log.lng,
       sessionId: log.sessionId,
       placeName: log.placeName,
       note: log.note,
       moodTags: [...log.moodTags],
       source: 'camera' as const,
       syncStatus: 'synced' as const,
+      templateId: log.templateId,
       trackSnapshot: trackById.get(log.trackId),
+      travelMode: log.travelMode,
+      visibility: log.visibility,
     })) as MockMomentLog[],
     recommendationEvents: [] as Array<{
       context: Record<string, unknown>;
@@ -248,19 +271,32 @@ function createMockDb() {
       userId: string;
       value?: string;
     }>,
-    recaps: recaps.map((recap) => ({
-      id: recap.id,
-      title: recap.title,
-      placeName: recap.placeName,
-      representativeTrackId: recap.representativeTrackId,
-      createdAt: new Date(recap.createdAt),
-      momentCount: recap.momentCount,
-      sessionId: recap.sessionId,
-      backgroundImageUrl: recap.backgroundImageUrl,
-      discImageUrl: recap.discImageUrl,
-      recordedAt: new Date(recap.recordedAt),
-      moments: [...recap.moments],
-    })) as MockRecap[],
+    recaps: recaps.map((recap) => {
+      const routePoints = 'routePoints' in recap
+        ? recap.routePoints.map((point) => ({ ...point }))
+        : undefined;
+
+      return {
+        id: recap.id,
+        userId: 'mock-user-local',
+        title: recap.title,
+        placeName: recap.placeName,
+        representativeTrackId: recap.representativeTrackId,
+        createdAt: new Date(recap.createdAt),
+        momentCount: recap.momentCount,
+        sessionId: recap.sessionId,
+        thumbnailMomentId: recap.thumbnailMomentId,
+        backgroundImageUrl: recap.backgroundImageUrl,
+        discImageUrl: recap.discImageUrl,
+        recordedAt: new Date(recap.recordedAt),
+        moments: [...recap.moments],
+        routePoints: routePoints ? [...routePoints] : undefined,
+        templateId: recap.templateId ?? 'album',
+        visibility: recap.visibility ?? 'private',
+        lat: recap.lat,
+        lng: recap.lng,
+      };
+    }) as MockRecap[],
     recapShareEvents: [] as Array<{
       createdAt: Date;
       id: string;

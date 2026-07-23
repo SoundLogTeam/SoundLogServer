@@ -28,6 +28,7 @@ import { prisma } from '../config/prisma.js';
 import { getLimit, paginateByCursor } from '../utils/pagination.js';
 import { createPublicId } from '../utils/tokens.js';
 import { badRequest, forbidden, notFound } from '../utils/http-error.js';
+import { reverseGeocodeLocation } from './reverse-geocoding.service.js';
 
 type MaybeUser = { id: string } | undefined;
 
@@ -43,8 +44,19 @@ type TrackDto = {
   isSaved?: boolean;
 };
 
+const NO_MUSIC_TRACK_ID = 'soundlog-no-music';
+
 type RecommendationContext = Record<string, unknown>;
 type CommunityVisibility = 'companions' | 'nearby' | 'private';
+type RecapListScope = 'all' | 'mine' | 'others';
+type RecapMapScope = 'mine' | 'public';
+type RecapVisibility = 'private' | 'public';
+type RoutePointDto = {
+  accuracyMeters?: number;
+  lat: number;
+  lng: number;
+  recordedAt: string;
+};
 type RoomWithCommunity = TravelRoom & {
   members: TravelRoomMember[];
   moments: Array<TravelRoomMoment & { comments?: TravelRoomMomentComment[] }>;
@@ -76,8 +88,23 @@ type TourApiResponse = {
 type MlTravelState = '바다' | '드라이브' | '산책' | '카페' | '야경';
 type MlMood = '잔잔한' | '신나는' | '시원한' | '설레는' | '감성적인';
 
+const RECAP_DISCOVERY_RADIUS_METERS = 300;
+
 type MlRecommendationResponse = {
   tracks?: unknown;
+};
+
+type MlPlaylistDto = {
+  backgroundImageUrl?: string;
+  context: RecommendationContext;
+  coverImageUrl?: string;
+  durationText: string;
+  id: string;
+  placeName?: string;
+  reason: string;
+  regionName: string;
+  trackCount: number;
+  tracks: TrackDto[];
 };
 
 const TRAVEL_MATE_REQUEST_COOLDOWN_MS = 24 * 60 * 60 * 1000;
@@ -106,9 +133,19 @@ type MomentLogUpdateInput = {
   placeId?: string | null;
   placeName?: string | null;
   sessionId?: string | null;
+  templateId?: string;
   trackId?: string;
   trackTitle?: string;
   travelMode?: string | null;
+  visibility?: RecapVisibility;
+};
+
+type RecapWithMarkerRelations = Recap & {
+  representativeTrack: Track;
+  user: {
+    displayName: string | null;
+    id: string;
+  };
 };
 
 function compact<T extends Record<string, unknown>>(value: T) {
@@ -126,6 +163,83 @@ function hasOwn<T extends object, K extends PropertyKey>(
 
 function toInputJson(value: unknown): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(value ?? { accepted: true })) as Prisma.InputJsonValue;
+}
+
+function isRoutePoint(value: unknown): value is RoutePointDto {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+
+  const candidate = value as {
+    accuracyMeters?: unknown;
+    lat?: unknown;
+    lng?: unknown;
+    recordedAt?: unknown;
+  };
+
+  return (
+    typeof candidate.lat === 'number' &&
+    typeof candidate.lng === 'number' &&
+    typeof candidate.recordedAt === 'string' &&
+    (
+      candidate.accuracyMeters === undefined ||
+      typeof candidate.accuracyMeters === 'number'
+    )
+  );
+}
+
+function routePointsToDto(value?: Prisma.JsonValue | null) {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const routePoints = value.filter(isRoutePoint).map((point): RoutePointDto => {
+    const routePoint: RoutePointDto = {
+      lat: point.lat,
+      lng: point.lng,
+      recordedAt: point.recordedAt,
+    };
+
+    if (point.accuracyMeters !== undefined) {
+      routePoint.accuracyMeters = point.accuracyMeters;
+    }
+
+    return routePoint;
+  });
+
+  return routePoints.length ? routePoints : undefined;
+}
+
+function normalizeRoutePoints(routePoints?: RoutePointDto[]) {
+  if (!routePoints) {
+    return undefined;
+  }
+
+  return routePoints.map((point) =>
+    compact({
+      accuracyMeters: point.accuracyMeters,
+      lat: point.lat,
+      lng: point.lng,
+      recordedAt: point.recordedAt,
+    }),
+  ) as Prisma.InputJsonArray;
+}
+
+function createInitialRoutePoints(
+  location: { lat: number; lng: number } | undefined,
+  recordedAt: Date,
+) {
+  if (!location) {
+    return undefined;
+  }
+
+  return normalizeRoutePoints([
+    {
+      lat: location.lat,
+      lng: location.lng,
+      recordedAt: recordedAt.toISOString(),
+    },
+  ]);
 }
 
 function normalizeApproxCoordinate(value: number) {
@@ -759,7 +873,9 @@ function normalizeMlTracks(rawTracks: unknown): TrackDto[] {
   });
 }
 
-async function fetchMlRecommendationPlaylist(input: ContextualPlaylistInput) {
+async function fetchMlRecommendationPlaylist(
+  input: ContextualPlaylistInput,
+): Promise<MlPlaylistDto | undefined> {
   const location = input.location;
 
   if (!location) {
@@ -822,12 +938,112 @@ async function fetchMlRecommendationPlaylist(input: ContextualPlaylistInput) {
         y: location.lat,
       },
       tracks,
-    });
+    }) as MlPlaylistDto;
   } catch {
     return undefined;
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function persistMlRecommendationPlaylist(playlist: MlPlaylistDto) {
+  const trackIds = playlist.tracks.map((track) => track.id);
+
+  await prisma.$transaction(async (transaction) => {
+    await transaction.playlist.upsert({
+      where: { id: playlist.id },
+      update: {
+        backgroundImageUrl: playlist.backgroundImageUrl,
+        context: toInputJson(playlist.context),
+        coverImageUrl: playlist.coverImageUrl,
+        durationText: playlist.durationText,
+        placeName: playlist.placeName,
+        reason: playlist.reason,
+        regionName: playlist.regionName,
+        source: 'ml-recommendation',
+        trackCount: playlist.trackCount,
+      },
+      create: {
+        backgroundImageUrl: playlist.backgroundImageUrl,
+        context: toInputJson(playlist.context),
+        coverImageUrl: playlist.coverImageUrl,
+        durationText: playlist.durationText,
+        id: playlist.id,
+        placeName: playlist.placeName,
+        reason: playlist.reason,
+        regionName: playlist.regionName,
+        source: 'ml-recommendation',
+        trackCount: playlist.trackCount,
+      },
+    });
+
+    for (const track of playlist.tracks) {
+      await transaction.track.upsert({
+        where: { id: track.id },
+        update: {
+          albumImageUrl: track.albumImageUrl,
+          artist: track.artist,
+          externalUrl: track.externalUrl,
+          fallbackColor: track.fallbackColor,
+          platformUrls: track.platformUrls ? toInputJson(track.platformUrls) : Prisma.JsonNull,
+          title: track.title,
+        },
+        create: {
+          albumImageUrl: track.albumImageUrl,
+          artist: track.artist,
+          externalUrl: track.externalUrl,
+          fallbackColor: track.fallbackColor,
+          id: track.id,
+          platformUrls: track.platformUrls ? toInputJson(track.platformUrls) : undefined,
+          title: track.title,
+        },
+      });
+    }
+
+    await transaction.playlistTrack.deleteMany({
+      where: {
+        playlistId: playlist.id,
+        trackId: { notIn: trackIds },
+      },
+    });
+
+    for (const [position, track] of playlist.tracks.entries()) {
+      await transaction.playlistTrack.upsert({
+        where: {
+          playlistId_trackId: {
+            playlistId: playlist.id,
+            trackId: track.id,
+          },
+        },
+        update: { position },
+        create: {
+          playlistId: playlist.id,
+          position,
+          trackId: track.id,
+        },
+      });
+    }
+  });
+}
+
+async function withMlPlaylistTrackStates(playlist: MlPlaylistDto, userId?: string) {
+  const states = await getTrackStates(
+    userId,
+    playlist.tracks.map((track) => track.id),
+  );
+
+  return {
+    ...playlist,
+    tracks: playlist.tracks.map((track) => {
+      const state = states.get(track.id);
+
+      return compact({
+        ...track,
+        isLiked: state?.isLiked,
+        isSaved: state?.isSaved,
+      }) as TrackDto;
+    }),
+  };
 }
 
 function trackToDto(
@@ -1009,6 +1225,8 @@ function momentLogToDto(log: MomentLog) {
     placeId: log.placeId ?? undefined,
     placeName: log.placeName ?? undefined,
     note: log.note ?? undefined,
+    recapVisibility: log.visibility as RecapVisibility,
+    templateId: log.templateId,
     track: (log.trackSnapshot as TrackDto | null) ?? undefined,
     travelMode: log.travelMode ?? undefined,
     moodTags: log.moodTags,
@@ -1031,30 +1249,361 @@ function musicLogItemFromMoment(log: MomentLog) {
   });
 }
 
-function recapItemToDto(recap: Recap & { representativeTrack: Track }) {
-  return compact({
-    id: recap.id,
-    title: recap.title,
-    placeName: recap.placeName,
-    representativeTrack: trackToDto(recap.representativeTrack),
-    createdAt: recap.createdAt.toISOString(),
-    momentCount: recap.momentCount ?? undefined,
-    sessionId: recap.sessionId ?? undefined,
+type StoredRecapMoment = {
+  artistName: string;
+  id: string;
+  imageUrl?: string;
+  location?: { lat: number; lng: number };
+  placeName: string;
+  recordedAt: string;
+  templateId?: string;
+  track?: TrackDto;
+  trackTitle: string;
+  visibility?: RecapVisibility;
+};
+
+function recapMomentsToDto(recap: Recap) {
+  if (!Array.isArray(recap.moments)) {
+    return [];
+  }
+
+  return (recap.moments as unknown[]).filter((value): value is StoredRecapMoment => {
+    if (!value || typeof value !== 'object') {
+      return false;
+    }
+
+    const moment = value as Partial<StoredRecapMoment>;
+
+    return (
+      typeof moment.id === 'string' &&
+      typeof moment.placeName === 'string' &&
+      typeof moment.recordedAt === 'string' &&
+      typeof moment.trackTitle === 'string' &&
+      typeof moment.artistName === 'string'
+    );
   });
 }
 
-function recapShareToDto(recap: Recap & { representativeTrack: Track }) {
+function getVisibleRecapMoments(recap: Recap, viewerId?: string) {
+  const moments = recapMomentsToDto(recap);
+
+  if (recap.userId === viewerId) {
+    return moments;
+  }
+
+  return moments.filter(
+    (moment) => (moment.visibility ?? recap.visibility) === 'public',
+  );
+}
+
+function getRecapThumbnailMoment(recap: Recap, viewerId?: string) {
+  const visibleMoments = getVisibleRecapMoments(recap, viewerId);
+
+  return (
+    visibleMoments.find((moment) => moment.id === recap.thumbnailMomentId) ??
+    visibleMoments[0]
+  );
+}
+
+function trackDtoFromRecapMoment(moment: StoredRecapMoment): TrackDto {
+  return (
+    moment.track ?? {
+      artist: moment.artistName,
+      fallbackColor: '#252A38',
+      id: `recap-moment-track-${moment.id}`,
+      title: moment.trackTitle,
+    }
+  );
+}
+
+function recapItemToDto(
+  recap: Recap & { representativeTrack: Track },
+  viewerId?: string,
+) {
+  const isMine = recap.userId === viewerId;
+  const visibleMoments = getVisibleRecapMoments(recap, viewerId);
+  const publicRepresentative = isMine ? undefined : visibleMoments.at(-1);
+  const thumbnailMoment = getRecapThumbnailMoment(recap, viewerId);
+
   return compact({
     id: recap.id,
-    placeName: recap.placeName,
-    trackTitle: recap.representativeTrack.title,
-    artistName: recap.representativeTrack.artist,
-    backgroundImageUrl: recap.backgroundImageUrl ?? undefined,
-    discImageUrl: recap.discImageUrl ?? undefined,
-    moments: (recap.moments as Prisma.JsonArray | null) ?? undefined,
-    recordedAt: (recap.recordedAt ?? recap.createdAt).toISOString(),
-    shareImageUrl: recap.shareImageUrl ?? undefined,
+    title: publicRepresentative && recap.sessionId
+      ? `${publicRepresentative.placeName} 여행 로그`
+      : recap.title,
+    placeName: publicRepresentative?.placeName ?? recap.placeName,
+    representativeTrack: publicRepresentative
+      ? trackDtoFromRecapMoment(publicRepresentative)
+      : trackToDto(recap.representativeTrack),
+    createdAt: recap.createdAt.toISOString(),
+    momentCount: isMine ? recap.momentCount ?? undefined : visibleMoments.length,
+    sessionId: recap.sessionId ?? undefined,
+    backgroundImageUrl: thumbnailMoment?.imageUrl ?? (isMine ? recap.backgroundImageUrl ?? undefined : undefined),
+    thumbnailMomentId: thumbnailMoment?.id,
+    visibility: recap.visibility,
   });
+}
+
+function recapShareToDto(
+  recap: Recap & { representativeTrack: Track },
+  viewerId?: string,
+  travelSession?: TravelSession,
+) {
+  const canViewRoutePoints = recap.userId === viewerId;
+  const visibleMoments = getVisibleRecapMoments(recap, viewerId);
+  const publicRepresentative = canViewRoutePoints ? undefined : visibleMoments.at(-1);
+  const thumbnailMoment = getRecapThumbnailMoment(recap, viewerId);
+
+  return compact({
+    id: recap.id,
+    isMine: canViewRoutePoints,
+    placeName: publicRepresentative?.placeName ?? recap.placeName,
+    trackTitle: publicRepresentative?.trackTitle ?? recap.representativeTrack.title,
+    artistName: publicRepresentative?.artistName ?? recap.representativeTrack.artist,
+    backgroundImageUrl: thumbnailMoment?.imageUrl ?? (
+      canViewRoutePoints ? recap.backgroundImageUrl ?? undefined : undefined
+    ),
+    discImageUrl: publicRepresentative?.imageUrl ?? recap.discImageUrl ?? undefined,
+    moments: visibleMoments,
+    recordedAt: publicRepresentative?.recordedAt ??
+      (recap.recordedAt ?? recap.createdAt).toISOString(),
+    routePoints: canViewRoutePoints ? routePointsToDto(recap.routePoints) : undefined,
+    sessionEndedAt: canViewRoutePoints ? travelSession?.endedAt?.toISOString() : undefined,
+    sessionId: recap.sessionId ?? undefined,
+    sessionStartedAt: canViewRoutePoints ? travelSession?.startedAt?.toISOString() : undefined,
+    shareImageUrl: recap.shareImageUrl ?? undefined,
+    templateId: recap.templateId,
+    thumbnailMomentId: thumbnailMoment?.id,
+    visibility: recap.visibility,
+  });
+}
+
+function getRecapMomentLocation(recap: Recap, viewerId?: string) {
+  const moments = getVisibleRecapMoments(recap, viewerId);
+  const location = [...moments].reverse().find(
+    (moment) =>
+      typeof moment.location?.lat === 'number' &&
+      typeof moment.location?.lng === 'number',
+  )?.location;
+
+  if (!location || typeof location.lat !== 'number' || typeof location.lng !== 'number') {
+    return undefined;
+  }
+
+  return {
+    lat: location.lat,
+    lng: location.lng,
+  };
+}
+
+function getRecapLocation(recap: Recap, viewerId?: string) {
+  const canViewAllMoments = viewerId === undefined || recap.userId === viewerId;
+
+  if (canViewAllMoments && recap.lat !== null && recap.lng !== null) {
+    return {
+      lat: recap.lat,
+      lng: recap.lng,
+    };
+  }
+
+  return getRecapMomentLocation(
+    recap,
+    canViewAllMoments ? recap.userId : viewerId,
+  );
+}
+
+function assertPublicRecapHasLocation(
+  visibility: RecapVisibility | undefined,
+  location: { lat: number; lng: number } | undefined,
+) {
+  if (visibility === 'public' && !location) {
+    throw badRequest(ERROR_MESSAGES.RECAP_PUBLIC_LOCATION_REQUIRED);
+  }
+}
+
+function recapMapMarkerToDto(
+  recap: RecapWithMarkerRelations,
+  viewerId: string,
+  origin?: { lat: number; lng: number },
+) {
+  const location = getRecapLocation(recap, viewerId);
+
+  if (!location) {
+    return undefined;
+  }
+
+  const isMine = recap.userId === viewerId;
+  const publicRepresentative = isMine
+    ? undefined
+    : getVisibleRecapMoments(recap, viewerId).at(-1);
+  const thumbnailMoment = getRecapThumbnailMoment(recap, viewerId);
+  const publicTrack = publicRepresentative
+    ? trackDtoFromRecapMoment(publicRepresentative)
+    : undefined;
+
+  return compact({
+    id: `marker-${recap.id}`,
+    recapId: recap.id,
+    title: publicRepresentative && recap.sessionId
+      ? `${publicRepresentative.placeName} 여행 로그`
+      : recap.title,
+    placeName: publicRepresentative?.placeName ?? recap.placeName,
+    ownerAlias: isMine ? '나' : recap.user.displayName ?? 'Soundlog 여행자',
+    location,
+    trackTitle: publicTrack?.title ?? recap.representativeTrack.title,
+    artistName: publicTrack?.artist ?? recap.representativeTrack.artist,
+    templateId: publicRepresentative?.templateId ?? recap.templateId,
+    visibility: recap.visibility as RecapVisibility,
+    distanceMeters: origin ? Math.round(distanceMeters(origin, location)) : undefined,
+    imageUrl: thumbnailMoment?.imageUrl ?? (isMine ? recap.backgroundImageUrl ?? undefined : undefined),
+    createdAt: publicRepresentative?.recordedAt ?? recap.createdAt.toISOString(),
+  });
+}
+
+function momentLogToRecapShareMoment(moment: MomentLog) {
+  const momentTrack = (moment.trackSnapshot as TrackDto | null) ?? undefined;
+
+  return compact({
+    id: moment.id,
+    imageUrl: moment.photoUrl,
+    location:
+      moment.lat !== null && moment.lng !== null
+        ? { lat: moment.lat, lng: moment.lng }
+        : undefined,
+    placeName: moment.placeName ?? '위치 없음',
+    trackTitle: momentTrack?.title ?? '저장된 순간',
+    artistName: momentTrack?.artist ?? '음악 없음',
+    recordedAt: moment.createdAt.toISOString(),
+    templateId: moment.templateId,
+    track: momentTrack,
+    visibility: moment.visibility as RecapVisibility,
+  });
+}
+
+async function resolveAggregateTrack(
+  client: Prisma.TransactionClient,
+  moments: MomentLog[],
+) {
+  const snapshot = [...moments]
+    .reverse()
+    .map((moment) => moment.trackSnapshot as TrackDto | null)
+    .find((track): track is TrackDto => Boolean(track?.id));
+
+  if (snapshot) {
+    return client.track.upsert({
+      where: { id: snapshot.id },
+      update: {},
+      create: {
+        id: snapshot.id,
+        albumImageUrl: snapshot.albumImageUrl,
+        artist: snapshot.artist,
+        externalUrl: snapshot.externalUrl,
+        fallbackColor: snapshot.fallbackColor,
+        platformUrls: snapshot.platformUrls
+          ? toInputJson(snapshot.platformUrls)
+          : undefined,
+        title: snapshot.title,
+      },
+    });
+  }
+
+  return client.track.upsert({
+    where: { id: NO_MUSIC_TRACK_ID },
+    update: {},
+    create: {
+      id: NO_MUSIC_TRACK_ID,
+      artist: 'Soundlog',
+      fallbackColor: '#252A38',
+      title: '음악 없음',
+    },
+  });
+}
+
+async function refreshRecapAggregates(
+  client: Prisma.TransactionClient,
+  input: {
+    momentIds: string[];
+    sessionIds: Array<string | null | undefined>;
+    userId: string;
+  },
+) {
+  const sessionIds = new Set(input.sessionIds.filter((id): id is string => Boolean(id)));
+  const momentIds = new Set(input.momentIds);
+  const candidates = await client.recap.findMany({
+    where: {
+      userId: input.userId,
+      OR: [
+        { travelSessionId: { in: [...sessionIds] } },
+        { sessionId: null, travelSessionId: null },
+      ],
+    },
+  });
+  const affectedRecaps = candidates.filter(
+    (recap) =>
+      (recap.travelSessionId
+        ? sessionIds.has(recap.travelSessionId)
+        : false) ||
+      recapMomentsToDto(recap).some((moment) => momentIds.has(moment.id)),
+  );
+
+  for (const recap of affectedRecaps) {
+    const storedMomentIds = recapMomentsToDto(recap).map((moment) => moment.id);
+    const moments = await client.momentLog.findMany({
+      where: recap.travelSessionId
+        ? {
+            sessionId: recap.travelSessionId,
+            userId: input.userId,
+          }
+        : {
+            id: { in: storedMomentIds },
+            sessionId: null,
+            userId: input.userId,
+          },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    if (moments.length === 0) {
+      await client.recap.delete({ where: { id: recap.id } });
+      continue;
+    }
+
+    const representativeMoment = moments.at(-1)!;
+    const thumbnailMoment =
+      moments.find((moment) => moment.id === recap.thumbnailMomentId) ?? moments[0]!;
+    const representativeTrack = await resolveAggregateTrack(client, moments);
+    const representativeLocation =
+      representativeMoment.lat !== null && representativeMoment.lng !== null
+        ? { lat: representativeMoment.lat, lng: representativeMoment.lng }
+        : moments.find((moment) => moment.lat !== null && moment.lng !== null);
+    const hasPublicLocatedMoment = moments.some(
+      (moment) =>
+        moment.visibility === 'public' &&
+        moment.lat !== null &&
+        moment.lng !== null,
+    );
+
+    await client.recap.update({
+      where: { id: recap.id },
+      data: {
+        backgroundImageUrl: thumbnailMoment.photoUrl,
+        discImageUrl: representativeMoment.photoUrl,
+        lat: representativeLocation?.lat,
+        lng: representativeLocation?.lng,
+        momentCount: moments.length,
+        moments: moments.map(momentLogToRecapShareMoment) as Prisma.JsonArray,
+        placeName: representativeMoment.placeName ?? 'Soundlog',
+        recordedAt: representativeMoment.createdAt,
+        representativeTrackId: representativeTrack.id,
+        thumbnailMomentId: thumbnailMoment.id,
+        templateId: recap.travelSessionId
+          ? recap.templateId
+          : representativeMoment.templateId,
+        visibility:
+          recap.visibility === 'public' && !hasPublicLocatedMoment
+            ? 'private'
+            : recap.visibility,
+      },
+    });
+  }
 }
 
 function travelSessionToDto(session: TravelSession) {
@@ -1063,8 +1612,29 @@ function travelSessionToDto(session: TravelSession) {
     status: session.status,
     startedAt: session.startedAt?.toISOString(),
     endedAt: session.endedAt?.toISOString(),
+    routePoints: routePointsToDto(session.routePoints),
     travelMode: session.travelMode ?? undefined,
   });
+}
+
+function normalizeMoodLabel(value?: string) {
+  const normalized = value?.trim();
+
+  if (!normalized) {
+    return undefined;
+  }
+
+  return normalized === '청량한' ? '시원한' : normalized;
+}
+
+function matchesMoodFilter(itemMoods: string[], moodFilter?: string) {
+  const normalizedFilter = normalizeMoodLabel(moodFilter);
+
+  if (!normalizedFilter || normalizedFilter === '전체') {
+    return true;
+  }
+
+  return itemMoods.some((mood) => normalizeMoodLabel(mood) === normalizedFilter);
 }
 
 function scoreMoodRecommendation(
@@ -1074,7 +1644,6 @@ function scoreMoodRecommendation(
     preferredGenres?: string[];
     preferredMoods?: string[];
     recommendationMode?: 'everyday' | 'travel';
-    topFilter?: string;
     travelStyles?: string[];
   },
 ) {
@@ -1082,23 +1651,11 @@ function scoreMoodRecommendation(
   const travelModeWeight = params.recommendationMode === 'travel' ? 2.4 : 1;
   const tasteWeight = params.recommendationMode === 'travel' ? 0.7 : 1.4;
 
-  if (params.topFilter && params.topFilter !== '전체' && item.moods.includes(params.topFilter)) {
-    score += 8;
-  }
-
-  if (
-    params.moodFilter &&
-    params.moodFilter !== '전체' &&
-    item.moods.includes(params.moodFilter)
-  ) {
-    score += 8;
-  }
-
   score += (params.preferredGenres ?? []).filter((genre) =>
     item.genres.includes(genre),
   ).length * 3 * tasteWeight;
   score += (params.preferredMoods ?? []).filter((mood) =>
-    item.moods.includes(mood),
+    item.moods.some((itemMood) => normalizeMoodLabel(itemMood) === normalizeMoodLabel(mood)),
   ).length * 2 * tasteWeight;
   score += (params.travelStyles ?? []).filter((style) =>
     item.travelStyles.includes(style),
@@ -1191,6 +1748,20 @@ export const soundlogService = {
     return profileToDto(profile);
   },
 
+  async deleteMyAccount(userId: string) {
+    const momentLogs = await prisma.momentLog.findMany({
+      where: { userId },
+      select: { photoUrl: true },
+    });
+
+    await prisma.user.delete({ where: { id: userId } });
+    await Promise.all(
+      momentLogs.map((momentLog) => deleteLocalUploadedFile(momentLog.photoUrl)),
+    );
+
+    return { deleted: true };
+  },
+
   async migrateLocalData(_userId: string, input: {
     idempotencyKey: string;
     libraryTrackCount: number;
@@ -1215,23 +1786,75 @@ export const soundlogService = {
     lng: number;
     radiusMeters?: number;
   }) {
+    const origin = { lat: params.lat, lng: params.lng };
+    const radiusMeters = params.radiusMeters ?? 2000;
+    const limit = getLimit(params.limit, 10);
     const tourPlaces = await fetchTourApiPlaces(params);
 
     if (tourPlaces.length > 0) {
-      return tourPlaces.slice(0, getLimit(params.limit, 10));
+      return tourPlaces
+        .flatMap((place) => {
+          if (!place.location) {
+            return [];
+          }
+
+          const distance = Math.round(distanceMeters(origin, place.location));
+
+          return distance <= radiusMeters
+            ? [{ ...place, distanceMeters: distance }]
+            : [];
+        })
+        .sort((first, second) => first.distanceMeters - second.distanceMeters)
+        .slice(0, limit);
     }
 
-    const isSouthernContext = params.lat < 36.5;
+    const latitudeDelta = radiusMeters / 111_320;
+    const longitudeScale = Math.max(Math.cos((params.lat * Math.PI) / 180), 0.01);
+    const longitudeDelta = radiusMeters / (111_320 * longitudeScale);
     const places = await prisma.place.findMany({
-      orderBy: [{ distanceMeters: 'asc' }, { title: 'asc' }],
-    });
-    const sorted = [...places].sort((first, second) => {
-      const firstScore = isSouthernContext && first.address?.startsWith('부산') ? -1 : 0;
-      const secondScore = isSouthernContext && second.address?.startsWith('부산') ? -1 : 0;
-      return firstScore - secondScore;
+      where: {
+        lat: { gte: params.lat - latitudeDelta, lte: params.lat + latitudeDelta },
+        lng: { gte: params.lng - longitudeDelta, lte: params.lng + longitudeDelta },
+      },
     });
 
-    return sorted.slice(0, getLimit(params.limit, 10)).map(placeToDto);
+    return places
+      .flatMap((place) => {
+        if (place.lat === null || place.lng === null) {
+          return [];
+        }
+
+        const distance = Math.round(
+          distanceMeters(origin, { lat: place.lat, lng: place.lng }),
+        );
+
+        return distance <= radiusMeters
+          ? [{ ...placeToDto(place), distanceMeters: distance }]
+          : [];
+      })
+      .sort((first, second) => first.distanceMeters - second.distanceMeters)
+      .slice(0, limit);
+  },
+
+  async reverseGeocodeLocation(params: { lat: number; lng: number }) {
+    return reverseGeocodeLocation(params);
+  },
+
+  async searchPlaces(params: { limit?: number; query: string }) {
+    const query = params.query.trim();
+    const places = await prisma.place.findMany({
+      where: {
+        OR: [
+          { title: { contains: query, mode: 'insensitive' } },
+          { address: { contains: query, mode: 'insensitive' } },
+          { category: { contains: query, mode: 'insensitive' } },
+        ],
+      },
+      orderBy: [{ title: 'asc' }],
+      take: getLimit(params.limit, 10),
+    });
+
+    return places.map(placeToDto);
   },
 
   async getFeaturedPlaylists(
@@ -1246,6 +1869,12 @@ export const soundlogService = {
   ) {
     const playlists = await prisma.playlist.findMany({
       orderBy: { updatedAt: 'desc' },
+      where: {
+        OR: [
+          { source: null },
+          { source: { not: 'personalized' } },
+        ],
+      },
     });
     const preferredId =
       params.recommendationMode === 'travel' &&
@@ -1287,7 +1916,6 @@ export const soundlogService = {
       preferredGenres?: string[];
       preferredMoods?: string[];
       recommendationMode?: 'everyday' | 'travel';
-      topFilter?: string;
       travelStyles?: string[];
     },
   ) {
@@ -1297,6 +1925,7 @@ export const soundlogService = {
     });
 
     return recommendations
+      .filter((item) => matchesMoodFilter(item.moods, params.moodFilter))
       .sort((first, second) => scoreMoodRecommendation(second, params) - scoreMoodRecommendation(first, params))
       .slice(0, getLimit(params.limit))
       .map((item) =>
@@ -1306,7 +1935,9 @@ export const soundlogService = {
           subtitle: item.subtitle ?? undefined,
           color: item.color,
           genres: item.genres,
+          imageUrl: item.imageUrl ?? undefined,
           moods: item.moods,
+          playlistId: item.playlistId ?? undefined,
           travelStyles: item.travelStyles,
           track: trackToDto(item.track),
         }),
@@ -1334,7 +1965,8 @@ export const soundlogService = {
         const mlPlaylist = await fetchMlRecommendationPlaylist(input);
 
         if (mlPlaylist) {
-          return mlPlaylist;
+          await persistMlRecommendationPlaylist(mlPlaylist);
+          return withMlPlaylistTrackStates(mlPlaylist, userId);
         }
 
         const playlistId = await findDefaultPlaylist({
@@ -1373,7 +2005,8 @@ export const soundlogService = {
     const mlPlaylist = await fetchMlRecommendationPlaylist(input);
 
     if (mlPlaylist) {
-      return mlPlaylist;
+      await persistMlRecommendationPlaylist(mlPlaylist);
+      return withMlPlaylistTrackStates(mlPlaylist, userId);
     }
 
     const playlistId = await findDefaultPlaylist({
@@ -1564,15 +2197,24 @@ export const soundlogService = {
       placeName?: string;
       note?: string;
       sessionId?: string;
+      templateId?: string;
       trackId?: string;
       trackTitle?: string;
       travelMode?: string;
+      visibility?: RecapVisibility;
     },
     idempotencyKey?: string,
   ) {
     return withIdempotency(
       { idempotencyKey, scope: 'moment-log.create', userId },
       async () => {
+        const location =
+          input.lat !== undefined && input.lng !== undefined
+            ? { lat: input.lat, lng: input.lng }
+            : undefined;
+
+        assertPublicRecapHasLocation(input.visibility, location);
+
         const track = input.trackId
           ? await prisma.track.findUnique({ where: { id: input.trackId } })
           : undefined;
@@ -1580,34 +2222,46 @@ export const soundlogService = {
           ? normalizePublicUrl(env.UPLOAD_PUBLIC_BASE_URL, input.photoPath)
           : undefined;
         const id = createPublicId('moment');
-        const log = await prisma.momentLog.create({
-          data: {
-            id,
+        const log = await prisma.$transaction(async (transaction) => {
+          const created = await transaction.momentLog.create({
+            data: {
+              id,
+              userId,
+              photoUrl,
+              createdAt: new Date(input.createdAt),
+              sessionId: input.sessionId,
+              lat: input.lat,
+              lng: input.lng,
+              placeCategory: input.placeCategory,
+              placeId: input.placeId,
+              placeName: input.placeName,
+              note: input.note,
+              templateId: input.templateId ?? 'album',
+              trackSnapshot:
+                track || input.trackTitle
+                  ? {
+                      id: track?.id ?? input.trackId ?? createPublicId('track'),
+                      title: track?.title ?? input.trackTitle ?? '저장된 순간',
+                      artist: track?.artist ?? input.artistName ?? '음악 없음',
+                      fallbackColor: track?.fallbackColor,
+                      platformUrls: track?.platformUrls,
+                    }
+                  : undefined,
+              travelMode: input.travelMode,
+              moodTags: input.moodTags,
+              source: 'camera',
+              syncStatus: 'synced',
+              visibility: input.visibility ?? 'private',
+            },
+          });
+
+          await refreshRecapAggregates(transaction, {
+            momentIds: [created.id],
+            sessionIds: [created.sessionId],
             userId,
-            photoUrl,
-            createdAt: new Date(input.createdAt),
-            sessionId: input.sessionId,
-            lat: input.lat,
-            lng: input.lng,
-            placeCategory: input.placeCategory,
-            placeId: input.placeId,
-            placeName: input.placeName,
-            note: input.note,
-            trackSnapshot:
-              track || input.trackTitle
-                ? {
-                    id: track?.id ?? input.trackId ?? createPublicId('track'),
-                    title: track?.title ?? input.trackTitle ?? '저장된 순간',
-                    artist: track?.artist ?? input.artistName ?? '음악 없음',
-                    fallbackColor: track?.fallbackColor,
-                    platformUrls: track?.platformUrls,
-                  }
-                : undefined,
-            travelMode: input.travelMode,
-            moodTags: input.moodTags,
-            source: 'camera',
-            syncStatus: 'synced',
-          },
+          });
+
+          return created;
         });
 
         return momentLogToDto(log);
@@ -1669,8 +2323,28 @@ export const soundlogService = {
       data.sessionId = input.sessionId ?? null;
     }
 
+    if (input.templateId) {
+      data.templateId = input.templateId;
+    }
+
     if (hasOwn(input, 'travelMode')) {
       data.travelMode = input.travelMode ?? null;
+    }
+
+    if (input.visibility) {
+      data.visibility = input.visibility;
+    }
+
+    if (hasOwn(input, 'lat') || hasOwn(input, 'lng') || input.visibility) {
+      const nextLat = hasOwn(input, 'lat') ? input.lat : existing.lat;
+      const nextLng = hasOwn(input, 'lng') ? input.lng : existing.lng;
+      const nextVisibility = input.visibility ?? (existing.visibility as RecapVisibility);
+      const location =
+        nextLat !== null && nextLat !== undefined && nextLng !== null && nextLng !== undefined
+          ? { lat: nextLat, lng: nextLng }
+          : undefined;
+
+      assertPublicRecapHasLocation(nextVisibility, location);
     }
 
     const shouldUpdateTrackSnapshot =
@@ -1695,9 +2369,19 @@ export const soundlogService = {
       return momentLogToDto(existing);
     }
 
-    const updated = await prisma.momentLog.update({
-      where: { id: existing.id },
-      data,
+    const updated = await prisma.$transaction(async (transaction) => {
+      const nextMoment = await transaction.momentLog.update({
+        where: { id: existing.id },
+        data,
+      });
+
+      await refreshRecapAggregates(transaction, {
+        momentIds: [existing.id],
+        sessionIds: [existing.sessionId, nextMoment.sessionId],
+        userId,
+      });
+
+      return nextMoment;
     });
 
     return momentLogToDto(updated);
@@ -1717,9 +2401,19 @@ export const soundlogService = {
       throw notFound(ERROR_MESSAGES.MOMENT_LOG_NOT_FOUND);
     }
 
-    const updated = await prisma.momentLog.update({
-      where: { id: existing.id },
-      data: { photoUrl: nextPhotoUrl },
+    const updated = await prisma.$transaction(async (transaction) => {
+      const nextMoment = await transaction.momentLog.update({
+        where: { id: existing.id },
+        data: { photoUrl: nextPhotoUrl },
+      });
+
+      await refreshRecapAggregates(transaction, {
+        momentIds: [existing.id],
+        sessionIds: [existing.sessionId],
+        userId,
+      });
+
+      return nextMoment;
     });
 
     await deleteLocalUploadedFile(existing.photoUrl);
@@ -1743,9 +2437,19 @@ export const soundlogService = {
       return momentLogToDto(existing);
     }
 
-    const updated = await prisma.momentLog.update({
-      where: { id: existing.id },
-      data: { photoUrl: null },
+    const updated = await prisma.$transaction(async (transaction) => {
+      const nextMoment = await transaction.momentLog.update({
+        where: { id: existing.id },
+        data: { photoUrl: null },
+      });
+
+      await refreshRecapAggregates(transaction, {
+        momentIds: [existing.id],
+        sessionIds: [existing.sessionId],
+        userId,
+      });
+
+      return nextMoment;
     });
 
     await deleteLocalUploadedFile(existing.photoUrl);
@@ -1759,20 +2463,25 @@ export const soundlogService = {
         id: momentLogId,
         userId,
       },
-      select: { id: true, photoUrl: true },
+      select: { id: true, photoUrl: true, sessionId: true },
     });
 
     if (!existing) {
       throw notFound(ERROR_MESSAGES.MOMENT_LOG_NOT_FOUND);
     }
 
-    await prisma.$transaction([
-      prisma.travelRoomMoment.updateMany({
+    await prisma.$transaction(async (transaction) => {
+      await transaction.travelRoomMoment.updateMany({
         where: { momentLogId: existing.id },
         data: { momentLogId: null },
-      }),
-      prisma.momentLog.delete({ where: { id: existing.id } }),
-    ]);
+      });
+      await transaction.momentLog.delete({ where: { id: existing.id } });
+      await refreshRecapAggregates(transaction, {
+        momentIds: [existing.id],
+        sessionIds: [existing.sessionId],
+        userId,
+      });
+    });
 
     await deleteLocalUploadedFile(existing.photoUrl);
   },
@@ -2194,6 +2903,8 @@ export const soundlogService = {
             momentCount: recapMoments.length,
             sessionId: room.sessionId,
             recordedAt: recapMoments[0]?.createdAt ?? new Date(),
+            templateId: input.templateId ?? 'album',
+            visibility: 'private',
             moments: recapMoments.map((moment) => {
               const momentTrack = (moment.trackSnapshot as TrackDto | null) ?? undefined;
               return {
@@ -2218,7 +2929,7 @@ export const soundlogService = {
         });
 
         return compact({
-          ...recapItemToDto(recap),
+          ...recapItemToDto(recap, userId),
           roomId,
           templateId: input.templateId,
         });
@@ -2698,17 +3409,38 @@ export const soundlogService = {
     }, { sessionId: input.requestId ?? input.targetPinId ?? input.targetUserId ?? 'community' });
   },
 
-  async getRecaps(userId: string, params: { cursor?: string; limit?: number }) {
+  async getRecaps(userId: string, params: {
+    cursor?: string;
+    limit?: number;
+    scope?: RecapListScope;
+  }) {
+    const scope = params.scope ?? 'mine';
+    const scopeWhere: Prisma.RecapWhereInput =
+      scope === 'mine'
+        ? { userId }
+        : scope === 'others'
+          ? { userId: { not: userId }, visibility: 'public' }
+          : {
+              OR: [
+                { userId },
+                { userId: { not: userId }, visibility: 'public' },
+              ],
+            };
     const recaps = await prisma.recap.findMany({
-      where: { userId },
+      where: {
+        AND: [{ sessionId: { not: null } }, scopeWhere],
+      },
       include: { representativeTrack: true },
       orderBy: { createdAt: 'desc' },
     });
+    const visibleRecaps = recaps.filter(
+      (recap) => recap.userId === userId || getVisibleRecapMoments(recap, userId).length > 0,
+    );
     const limit = getLimit(params.limit);
-    const page = paginateByCursor(recaps, limit, params.cursor);
+    const page = paginateByCursor(visibleRecaps, limit, params.cursor);
 
     return {
-      data: page.items.map(recapItemToDto),
+      data: page.items.map((recap) => recapItemToDto(recap, userId)),
       page: {
         limit,
         nextCursor: page.nextCursor,
@@ -2716,20 +3448,73 @@ export const soundlogService = {
     };
   },
 
+  async getRecapMarkers(
+    userId: string,
+    params: {
+      lat?: number;
+      lng?: number;
+      radiusMeters?: number;
+      scope?: RecapMapScope;
+    },
+  ) {
+    const scope = params.scope ?? 'public';
+    const origin =
+      scope === 'public' && hasGeoPoint(params)
+        ? { lat: params.lat!, lng: params.lng! }
+        : undefined;
+    const radiusMeters = params.radiusMeters ?? RECAP_DISCOVERY_RADIUS_METERS;
+    const recaps = await prisma.recap.findMany({
+      where: scope === 'mine'
+        ? { userId }
+        : { visibility: 'public' },
+      include: {
+        representativeTrack: true,
+        user: {
+          select: {
+            displayName: true,
+            id: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return recaps
+      .flatMap((recap) => {
+        const marker = recapMapMarkerToDto(recap, userId, origin);
+
+        return marker && (recap.userId === userId || getVisibleRecapMoments(recap, userId).length)
+          ? [marker]
+          : [];
+      })
+      .filter((marker) =>
+        origin
+          ? typeof marker.distanceMeters === 'number' &&
+            marker.distanceMeters <= radiusMeters
+          : true,
+      );
+  },
+
   async createRecap(
     userId: string,
     input: {
       momentLogIds?: string[];
       representativeTrackId?: string;
+      routePoints?: RoutePointDto[];
       sessionId?: string;
       templateId: string;
       title?: string;
+      visibility?: RecapVisibility;
     },
     idempotencyKey?: string,
   ) {
     return withIdempotency(
       { idempotencyKey, scope: 'recap.create', userId },
       async () => {
+        if (!input.sessionId && !input.momentLogIds?.length) {
+          throw badRequest(ERROR_MESSAGES.RECAP_LOG_REQUIRES_CAPTURE);
+        }
+
         const moments = await prisma.momentLog.findMany({
           where: {
             userId,
@@ -2738,64 +3523,201 @@ export const soundlogService = {
           },
           orderBy: { createdAt: 'asc' },
         });
+        const requestedMomentIds = Array.from(new Set(input.momentLogIds ?? []));
+
+        if (requestedMomentIds.length > 0 && moments.length !== requestedMomentIds.length) {
+          throw badRequest(ERROR_MESSAGES.RECAP_LOG_CAPTURE_MISMATCH);
+        }
+
+        if (
+          !input.sessionId &&
+          (requestedMomentIds.length !== 1 || moments.some((moment) => moment.sessionId))
+        ) {
+          throw badRequest(ERROR_MESSAGES.RECAP_LOG_CAPTURE_MISMATCH);
+        }
+
+        if (moments.length === 0) {
+          throw badRequest(ERROR_MESSAGES.RECAP_LOG_REQUIRES_CAPTURE);
+        }
+
+        let travelSession = input.sessionId
+          ? await prisma.travelSession.findUnique({
+              where: { id: input.sessionId },
+            })
+          : undefined;
+
+        if (travelSession && travelSession.userId !== userId) {
+          throw badRequest(ERROR_MESSAGES.RECAP_LOG_CAPTURE_MISMATCH);
+        }
+
+        if (input.sessionId && !travelSession) {
+          const recoveredRoutePoints = normalizeRoutePoints(input.routePoints);
+          const recordedAt = moments.at(-1)?.createdAt ?? new Date();
+          const firstRoutePoint = input.routePoints?.[0];
+          const lastRoutePoint = input.routePoints?.at(-1);
+
+          travelSession = await prisma.travelSession.create({
+            data: {
+              id: input.sessionId,
+              userId,
+              status: 'ended',
+              startedAt: firstRoutePoint
+                ? new Date(firstRoutePoint.recordedAt)
+                : moments[0]?.createdAt ?? recordedAt,
+              endedAt: lastRoutePoint
+                ? new Date(lastRoutePoint.recordedAt)
+                : recordedAt,
+              routePoints: recoveredRoutePoints,
+            },
+          });
+        }
+
+        if (input.sessionId) {
+          const existingLog = await prisma.recap.findUnique({
+            where: { travelSessionId: input.sessionId },
+            include: { representativeTrack: true },
+          });
+
+          if (existingLog) {
+            if (existingLog.userId !== userId) {
+              throw badRequest(ERROR_MESSAGES.RECAP_LOG_CAPTURE_MISMATCH);
+            }
+
+            return recapItemToDto(existingLog, userId);
+          }
+        }
+        const sessionRoutePoints = routePointsToDto(travelSession?.routePoints);
+        const routePoints =
+          normalizeRoutePoints(input.routePoints) ??
+          normalizeRoutePoints(sessionRoutePoints);
+        const momentTrackSnapshots = [...moments]
+          .reverse()
+          .map((moment) => moment.trackSnapshot as TrackDto | null)
+          .filter((snapshot): snapshot is TrackDto => Boolean(snapshot?.id));
         const candidateTrackIds = input.representativeTrackId
           ? [input.representativeTrackId]
-          : Array.from(
-              new Set(
-                [...moments]
-                  .reverse()
-                  .map((moment) => (moment.trackSnapshot as TrackDto | null)?.id)
-                  .filter((trackId): trackId is string => Boolean(trackId)),
-              ),
-            );
+          : Array.from(new Set(momentTrackSnapshots.map((snapshot) => snapshot.id)));
         const candidateTracks = candidateTrackIds.length
           ? await prisma.track.findMany({ where: { id: { in: candidateTrackIds } } })
           : [];
         const representativeTrackId =
-          input.representativeTrackId ??
-          candidateTrackIds.find((trackId) =>
-            candidateTracks.some((candidateTrack) => candidateTrack.id === trackId),
-          ) ??
-          'seoul-city';
-        const track =
+          input.representativeTrackId ?? candidateTrackIds[0] ?? NO_MUSIC_TRACK_ID;
+        const representativeTrackSnapshot = momentTrackSnapshots.find(
+          (snapshot) => snapshot.id === representativeTrackId,
+        );
+        let track =
           candidateTracks.find((candidateTrack) => candidateTrack.id === representativeTrackId) ??
-          (await prisma.track.findUnique({
-            where: { id: representativeTrackId },
-          }));
+          (await prisma.track.findUnique({ where: { id: representativeTrackId } }));
+
+        if (!track && representativeTrackSnapshot) {
+          track = await prisma.track.upsert({
+            where: { id: representativeTrackSnapshot.id },
+            update: {},
+            create: {
+              id: representativeTrackSnapshot.id,
+              albumImageUrl: representativeTrackSnapshot.albumImageUrl,
+              artist: representativeTrackSnapshot.artist,
+              externalUrl: representativeTrackSnapshot.externalUrl,
+              fallbackColor: representativeTrackSnapshot.fallbackColor,
+              platformUrls: representativeTrackSnapshot.platformUrls
+                ? toInputJson(representativeTrackSnapshot.platformUrls)
+                : undefined,
+              title: representativeTrackSnapshot.title,
+            },
+          });
+        }
+
+        if (!track && representativeTrackId === NO_MUSIC_TRACK_ID) {
+          track = await prisma.track.upsert({
+            where: { id: NO_MUSIC_TRACK_ID },
+            update: {},
+            create: {
+              id: NO_MUSIC_TRACK_ID,
+              artist: 'Soundlog',
+              fallbackColor: '#252A38',
+              title: '음악 없음',
+            },
+          });
+        }
 
         if (!track) {
           throw notFound(ERROR_MESSAGES.REPRESENTATIVE_TRACK_NOT_FOUND);
         }
 
-        const firstMoment = moments[0];
-        const recap = await prisma.recap.create({
-          data: {
+        const representativeMoment = moments.at(-1)!;
+        const thumbnailMoment = moments[0]!;
+        const representativeMomentLocation =
+          representativeMoment.lat !== null &&
+          representativeMoment.lng !== null
+            ? {
+                lat: representativeMoment.lat,
+                lng: representativeMoment.lng,
+              }
+            : undefined;
+        const firstRoutePoint = input.routePoints?.[0] ?? sessionRoutePoints?.[0];
+        const recapLocation = representativeMomentLocation ?? (
+          firstRoutePoint
+            ? { lat: firstRoutePoint.lat, lng: firstRoutePoint.lng }
+            : undefined
+        );
+
+        const hasPublicLocatedMoment = moments.some(
+          (moment) =>
+            moment.visibility === 'public' &&
+            moment.lat !== null &&
+            moment.lng !== null,
+        );
+
+        if (input.visibility === 'public' && !hasPublicLocatedMoment) {
+          throw badRequest(ERROR_MESSAGES.RECAP_LOG_PUBLIC_CAPTURE_REQUIRED);
+        }
+
+        let recap: Recap & { representativeTrack: Track };
+
+        try {
+          recap = await prisma.recap.create({
+            data: {
             id: createPublicId('recap'),
             userId,
-            title: input.title ?? `${firstMoment?.placeName ?? '여행'}의 사운드`,
-            placeName: firstMoment?.placeName ?? 'Soundlog',
+            title: input.title ?? `${representativeMoment.placeName ?? '여행'}의 사운드`,
+            placeName: representativeMoment.placeName ?? 'Soundlog',
             representativeTrackId: track.id,
             momentCount: moments.length,
             sessionId: input.sessionId,
-            backgroundImageUrl: firstMoment?.photoUrl,
-            discImageUrl: firstMoment?.photoUrl,
-            recordedAt: firstMoment?.createdAt ?? new Date(),
-            moments: moments.map((moment) => {
-              const momentTrack = (moment.trackSnapshot as TrackDto | null) ?? undefined;
-              return {
-                id: moment.id,
-                imageUrl: moment.photoUrl,
-                placeName: moment.placeName ?? '위치 없음',
-                trackTitle: momentTrack?.title ?? '저장된 순간',
-                artistName: momentTrack?.artist ?? '음악 없음',
-                recordedAt: moment.createdAt.toISOString(),
-              };
-            }) as Prisma.JsonArray,
-          },
-          include: { representativeTrack: true },
-        });
+            travelSessionId: input.sessionId,
+            backgroundImageUrl: thumbnailMoment.photoUrl,
+            discImageUrl: representativeMoment.photoUrl,
+            recordedAt: representativeMoment.createdAt,
+            moments: moments.map(momentLogToRecapShareMoment) as Prisma.JsonArray,
+            routePoints,
+            templateId: input.templateId,
+            thumbnailMomentId: thumbnailMoment.id,
+            visibility: input.visibility ?? 'private',
+            lat: recapLocation?.lat,
+            lng: recapLocation?.lng,
+            },
+            include: { representativeTrack: true },
+          });
+        } catch (error) {
+          if (
+            input.sessionId &&
+            error instanceof Prisma.PrismaClientKnownRequestError &&
+            error.code === 'P2002'
+          ) {
+            const concurrentLog = await prisma.recap.findUnique({
+              where: { travelSessionId: input.sessionId },
+              include: { representativeTrack: true },
+            });
 
-        return recapItemToDto(recap);
+            if (concurrentLog?.userId === userId) {
+              return recapItemToDto(concurrentLog, userId);
+            }
+          }
+
+          throw error;
+        }
+
+        return recapItemToDto(recap, userId);
       },
     );
   },
@@ -2804,16 +3726,150 @@ export const soundlogService = {
     const recap = await prisma.recap.findFirst({
       where: {
         id: recapId,
-        userId,
+        OR: [
+          { userId },
+          { visibility: 'public' },
+        ],
       },
-      include: { representativeTrack: true },
+      include: { representativeTrack: true, travelSession: true },
     });
 
     if (!recap) {
       throw notFound(ERROR_MESSAGES.RECAP_NOT_FOUND);
     }
 
-    return recapShareToDto(recap);
+    if (recap.userId !== userId && getVisibleRecapMoments(recap, userId).length === 0) {
+      throw notFound(ERROR_MESSAGES.RECAP_NOT_FOUND);
+    }
+
+    return recapShareToDto(recap, userId, recap.travelSession ?? undefined);
+  },
+
+  async updateRecapVisibility(
+    userId: string,
+    recapId: string,
+    input: { visibility: RecapVisibility },
+  ) {
+    const recap = await prisma.recap.findFirst({
+      where: {
+        id: recapId,
+        userId,
+      },
+    });
+
+    if (!recap) {
+      throw notFound(ERROR_MESSAGES.RECAP_NOT_FOUND);
+    }
+
+    const memberMomentIds = recapMomentsToDto(recap).map((moment) => moment.id);
+
+    if (input.visibility === 'public' && recap.sessionId) {
+      const hasPublicLocatedMoment = recapMomentsToDto(recap).some(
+        (moment) =>
+          moment.visibility === 'public' &&
+          typeof moment.location?.lat === 'number' &&
+          typeof moment.location?.lng === 'number',
+      );
+
+      if (!hasPublicLocatedMoment) {
+        throw badRequest(ERROR_MESSAGES.RECAP_LOG_PUBLIC_CAPTURE_REQUIRED);
+      }
+    }
+
+    const updatedRecap = await prisma.$transaction(async (transaction) => {
+      if (!recap.sessionId) {
+        const moments = await transaction.momentLog.findMany({
+          where: {
+            id: { in: memberMomentIds },
+            userId,
+          },
+        });
+        const locatedMoment = moments.find(
+          (moment) => moment.lat !== null && moment.lng !== null,
+        );
+
+        assertPublicRecapHasLocation(
+          input.visibility,
+          locatedMoment && locatedMoment.lat !== null && locatedMoment.lng !== null
+            ? { lat: locatedMoment.lat, lng: locatedMoment.lng }
+            : undefined,
+        );
+
+        await transaction.momentLog.updateMany({
+          where: {
+            id: { in: memberMomentIds },
+            userId,
+          },
+          data: { visibility: input.visibility },
+        });
+      }
+
+      await transaction.recap.update({
+        where: { id: recapId },
+        data: { visibility: input.visibility },
+      });
+
+      await refreshRecapAggregates(transaction, {
+        momentIds: memberMomentIds,
+        sessionIds: [recap.sessionId],
+        userId,
+      });
+
+      return transaction.recap.findUniqueOrThrow({
+        where: { id: recapId },
+        include: { representativeTrack: true },
+      });
+    });
+
+    return recapItemToDto(updatedRecap, userId);
+  },
+
+  async updateRecapThumbnail(
+    userId: string,
+    recapId: string,
+    input: { momentId: string },
+  ) {
+    const recap = await prisma.recap.findFirst({
+      where: {
+        id: recapId,
+        userId,
+      },
+    });
+
+    if (!recap) {
+      throw notFound(ERROR_MESSAGES.RECAP_NOT_FOUND);
+    }
+
+    if (!recap.sessionId) {
+      throw badRequest(ERROR_MESSAGES.RECAP_THUMBNAIL_LOG_REQUIRED);
+    }
+
+    if (!recapMomentsToDto(recap).some((moment) => moment.id === input.momentId)) {
+      throw badRequest(ERROR_MESSAGES.RECAP_THUMBNAIL_MOMENT_NOT_FOUND);
+    }
+
+    const thumbnailMoment = await prisma.momentLog.findFirst({
+      where: {
+        id: input.momentId,
+        sessionId: recap.sessionId,
+        userId,
+      },
+    });
+
+    if (!thumbnailMoment) {
+      throw badRequest(ERROR_MESSAGES.RECAP_THUMBNAIL_MOMENT_NOT_FOUND);
+    }
+
+    const updatedRecap = await prisma.recap.update({
+      where: { id: recapId },
+      data: {
+        backgroundImageUrl: thumbnailMoment.photoUrl,
+        thumbnailMomentId: thumbnailMoment.id,
+      },
+      include: { representativeTrack: true },
+    });
+
+    return recapItemToDto(updatedRecap, userId);
   },
 
   async createRecapShareEvent(
@@ -2854,19 +3910,26 @@ export const soundlogService = {
     userId: string,
     input: {
       location?: { lat: number; lng: number };
+      routePoints?: RoutePointDto[];
       startedAt?: string;
       travelMode?: string;
     },
   ) {
+    const startedAt = input.startedAt ? new Date(input.startedAt) : new Date();
+    const routePoints =
+      normalizeRoutePoints(input.routePoints) ??
+      createInitialRoutePoints(input.location, startedAt);
+
     const session = await prisma.travelSession.create({
       data: {
         id: createPublicId('session'),
         userId,
         status: 'active',
-        startedAt: input.startedAt ? new Date(input.startedAt) : new Date(),
+        startedAt,
         travelMode: input.travelMode,
         lat: input.location?.lat,
         lng: input.location?.lng,
+        routePoints,
       },
     });
 
@@ -2879,7 +3942,9 @@ export const soundlogService = {
     input: {
       endedAt?: string;
       location?: { lat: number; lng: number };
+      routePoints?: RoutePointDto[];
       status: 'active' | 'ended';
+      travelMode?: string;
     },
   ) {
     const session = await prisma.travelSession.findFirst({
@@ -2897,6 +3962,8 @@ export const soundlogService = {
       throw badRequest(ERROR_MESSAGES.ENDED_TRAVEL_SESSION_CANNOT_ACTIVATE);
     }
 
+    const routePoints = normalizeRoutePoints(input.routePoints);
+
     const updated = await prisma.travelSession.update({
       where: { id: sessionId },
       data: {
@@ -2909,6 +3976,8 @@ export const soundlogService = {
             : undefined,
         lat: input.location?.lat,
         lng: input.location?.lng,
+        routePoints,
+        travelMode: input.travelMode,
       },
     });
 

@@ -28,11 +28,25 @@ type MomentLogUpdateInput = {
   placeId?: string | null;
   placeName?: string | null;
   sessionId?: string | null;
+  templateId?: string;
   trackId?: string;
   trackTitle?: string;
   travelMode?: string | null;
+  visibility?: RecapVisibility;
 };
 
+type RecapListScope = 'all' | 'mine' | 'others';
+type RecapMapScope = 'mine' | 'public';
+type RecapVisibility = 'private' | 'public';
+type RoutePointDto = {
+  accuracyMeters?: number;
+  lat: number;
+  lng: number;
+  recordedAt: string;
+};
+
+const RECAP_DISCOVERY_RADIUS_METERS = 300;
+const NO_MUSIC_TRACK_ID = 'soundlog-no-music';
 const TRAVEL_MATE_REQUEST_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 const CLOSED_TRAVEL_MATE_REQUEST_STATUSES = ['cancelled', 'declined', 'expired'];
 
@@ -40,6 +54,38 @@ function compact<T extends Record<string, unknown>>(value: T) {
   return Object.fromEntries(
     Object.entries(value).filter(([, item]) => item !== undefined && item !== null),
   ) as Partial<T>;
+}
+
+function normalizeRoutePoints(routePoints?: RoutePointDto[]) {
+  if (!routePoints) {
+    return undefined;
+  }
+
+  return routePoints.map((point) =>
+    compact({
+      accuracyMeters: point.accuracyMeters,
+      lat: point.lat,
+      lng: point.lng,
+      recordedAt: point.recordedAt,
+    }) as RoutePointDto,
+  );
+}
+
+function createInitialRoutePoints(
+  location: { lat: number; lng: number } | undefined,
+  recordedAt: Date,
+) {
+  if (!location) {
+    return undefined;
+  }
+
+  return normalizeRoutePoints([
+    {
+      lat: location.lat,
+      lng: location.lng,
+      recordedAt: recordedAt.toISOString(),
+    },
+  ]);
 }
 
 function hasOwn<T extends object, K extends PropertyKey>(
@@ -181,6 +227,8 @@ function momentLogToDto(log: (typeof mockDb.momentLogs)[number]) {
     placeId: log.placeId,
     placeName: log.placeName,
     note: log.note,
+    recapVisibility: log.visibility,
+    templateId: log.templateId,
     track: log.trackSnapshot,
     travelMode: log.travelMode,
     moodTags: log.moodTags,
@@ -201,41 +249,321 @@ function musicLogItemFromMoment(log: (typeof mockDb.momentLogs)[number]) {
   });
 }
 
-function recapItemToDto(recap: (typeof mockDb.recaps)[number]) {
+type MockStoredRecapMoment = {
+  artistName: string;
+  id: string;
+  imageUrl?: string;
+  location?: { lat: number; lng: number };
+  placeName: string;
+  recordedAt: string;
+  templateId?: string;
+  track?: TrackDto;
+  trackTitle: string;
+  visibility?: RecapVisibility;
+};
+
+function getMockRecapMoments(recap: (typeof mockDb.recaps)[number]) {
+  return (recap.moments ?? []).filter(
+    (moment): moment is MockStoredRecapMoment =>
+      Boolean(
+        moment &&
+          typeof moment === 'object' &&
+          typeof (moment as Partial<MockStoredRecapMoment>).id === 'string',
+      ),
+  );
+}
+
+function getMockVisibleRecapMoments(
+  recap: (typeof mockDb.recaps)[number],
+  viewerId?: string,
+) {
+  const moments = getMockRecapMoments(recap);
+
+  if (recap.userId === viewerId) {
+    return moments;
+  }
+
+  return moments.filter(
+    (moment) => (moment.visibility ?? recap.visibility) === 'public',
+  );
+}
+
+function getMockRecapThumbnailMoment(
+  recap: (typeof mockDb.recaps)[number],
+  viewerId?: string,
+) {
+  const visibleMoments = getMockVisibleRecapMoments(recap, viewerId);
+
+  return (
+    visibleMoments.find((moment) => moment.id === recap.thumbnailMomentId) ??
+    visibleMoments[0]
+  );
+}
+
+function recapItemToDto(
+  recap: (typeof mockDb.recaps)[number],
+  viewerId?: string,
+) {
   const track = findMockTrack(recap.representativeTrackId);
 
   if (!track) {
     throw notFound(ERROR_MESSAGES.REPRESENTATIVE_TRACK_NOT_FOUND);
   }
 
+  const isMine = recap.userId === viewerId;
+  const visibleMoments = getMockVisibleRecapMoments(recap, viewerId);
+  const publicRepresentative = isMine ? undefined : visibleMoments.at(-1);
+  const thumbnailMoment = getMockRecapThumbnailMoment(recap, viewerId);
+  const publicTrack = publicRepresentative?.track ?? (
+    publicRepresentative
+      ? {
+          artist: publicRepresentative.artistName,
+          fallbackColor: '#252A38',
+          id: `recap-moment-track-${publicRepresentative.id}`,
+          title: publicRepresentative.trackTitle,
+        }
+      : undefined
+  );
+
   return compact({
     id: recap.id,
-    title: recap.title,
-    placeName: recap.placeName,
-    representativeTrack: trackToDto(track),
+    title: publicRepresentative && recap.sessionId
+      ? `${publicRepresentative.placeName} 여행 로그`
+      : recap.title,
+    placeName: publicRepresentative?.placeName ?? recap.placeName,
+    representativeTrack: publicTrack ?? trackToDto(track),
     createdAt: recap.createdAt.toISOString(),
-    momentCount: recap.momentCount,
+    momentCount: isMine ? recap.momentCount : visibleMoments.length,
     sessionId: recap.sessionId,
+    backgroundImageUrl: thumbnailMoment?.imageUrl ?? (isMine ? recap.backgroundImageUrl : undefined),
+    thumbnailMomentId: thumbnailMoment?.id,
+    visibility: recap.visibility,
   });
 }
 
-function recapShareToDto(recap: (typeof mockDb.recaps)[number]) {
+function recapShareToDto(recap: (typeof mockDb.recaps)[number], viewerId?: string) {
   const track = findMockTrack(recap.representativeTrackId);
 
   if (!track) {
     throw notFound(ERROR_MESSAGES.REPRESENTATIVE_TRACK_NOT_FOUND);
   }
 
+  const canViewRoutePoints = recap.userId === viewerId;
+  const visibleMoments = getMockVisibleRecapMoments(recap, viewerId);
+  const publicRepresentative = canViewRoutePoints ? undefined : visibleMoments.at(-1);
+  const thumbnailMoment = getMockRecapThumbnailMoment(recap, viewerId);
+
   return compact({
     id: recap.id,
-    placeName: recap.placeName,
-    trackTitle: track.title,
-    artistName: track.artist,
-    backgroundImageUrl: recap.backgroundImageUrl,
-    discImageUrl: recap.discImageUrl,
-    moments: recap.moments,
-    recordedAt: (recap.recordedAt ?? recap.createdAt).toISOString(),
+    isMine: canViewRoutePoints,
+    placeName: publicRepresentative?.placeName ?? recap.placeName,
+    trackTitle: publicRepresentative?.trackTitle ?? track.title,
+    artistName: publicRepresentative?.artistName ?? track.artist,
+    backgroundImageUrl: thumbnailMoment?.imageUrl ?? (canViewRoutePoints ? recap.backgroundImageUrl : undefined),
+    discImageUrl: publicRepresentative?.imageUrl ?? recap.discImageUrl,
+    moments: visibleMoments,
+    recordedAt: publicRepresentative?.recordedAt ??
+      (recap.recordedAt ?? recap.createdAt).toISOString(),
+    routePoints: canViewRoutePoints ? recap.routePoints : undefined,
+    sessionId: recap.sessionId,
     shareImageUrl: recap.shareImageUrl,
+    templateId: recap.templateId,
+    thumbnailMomentId: thumbnailMoment?.id,
+    visibility: recap.visibility,
+  });
+}
+
+function getMockRecapMomentLocation(
+  recap: (typeof mockDb.recaps)[number],
+  viewerId?: string,
+) {
+  const moments = getMockVisibleRecapMoments(recap, viewerId);
+  const location = [...moments].reverse().find(
+    (moment) =>
+      typeof moment.location?.lat === 'number' &&
+      typeof moment.location?.lng === 'number',
+  )?.location;
+
+  if (!location || typeof location.lat !== 'number' || typeof location.lng !== 'number') {
+    return undefined;
+  }
+
+  return {
+    lat: location.lat,
+    lng: location.lng,
+  };
+}
+
+function getMockRecapLocation(
+  recap: (typeof mockDb.recaps)[number],
+  viewerId?: string,
+) {
+  const canViewAllMoments = viewerId === undefined || recap.userId === viewerId;
+
+  if (canViewAllMoments && recap.lat !== undefined && recap.lng !== undefined) {
+    return {
+      lat: recap.lat,
+      lng: recap.lng,
+    };
+  }
+
+  return getMockRecapMomentLocation(
+    recap,
+    canViewAllMoments ? recap.userId : viewerId,
+  );
+}
+
+function assertMockPublicRecapHasLocation(
+  visibility: RecapVisibility | undefined,
+  location: { lat: number; lng: number } | undefined,
+) {
+  if (visibility === 'public' && !location) {
+    throw badRequest(ERROR_MESSAGES.RECAP_PUBLIC_LOCATION_REQUIRED);
+  }
+}
+
+function ensureMockTrackFromMoment(moment?: (typeof mockDb.momentLogs)[number]) {
+  const snapshot = moment?.trackSnapshot;
+
+  if (snapshot && !findMockTrack(snapshot.id)) {
+    mockDb.tracks.push({
+      ...snapshot,
+      fallbackColor: snapshot.fallbackColor ?? '#252A38',
+    });
+  }
+
+  return snapshot?.id ?? 'seoul-city';
+}
+
+function refreshMockRecapAggregates(input: {
+  momentIds: string[];
+  sessionIds: Array<string | undefined>;
+  userId: string;
+}) {
+  const momentIds = new Set(input.momentIds);
+  const sessionIds = new Set(input.sessionIds.filter((id): id is string => Boolean(id)));
+
+  mockDb.recaps = mockDb.recaps.flatMap((recap) => {
+    const isAffected =
+      recap.userId === input.userId &&
+      (
+        (recap.travelSessionId
+          ? sessionIds.has(recap.travelSessionId)
+          : false) ||
+        getMockRecapMoments(recap).some((moment) => momentIds.has(moment.id))
+      );
+
+    if (!isAffected) {
+      return [recap];
+    }
+
+    const storedMomentIds = new Set(getMockRecapMoments(recap).map((moment) => moment.id));
+    const moments = mockDb.momentLogs
+      .filter((moment) =>
+        recap.travelSessionId
+          ? moment.sessionId === recap.travelSessionId && recap.userId === input.userId
+          : storedMomentIds.has(moment.id) && !moment.sessionId,
+      )
+      .sort((first, second) => first.createdAt.getTime() - second.createdAt.getTime());
+
+    if (moments.length === 0) {
+      return [];
+    }
+
+    const representativeMoment = moments.at(-1)!;
+    const thumbnailMoment =
+      moments.find((moment) => moment.id === recap.thumbnailMomentId) ?? moments[0]!;
+    const locatedMoment =
+      representativeMoment.lat !== undefined && representativeMoment.lng !== undefined
+        ? representativeMoment
+        : moments.find((moment) => moment.lat !== undefined && moment.lng !== undefined);
+    const hasPublicLocatedMoment = moments.some(
+      (moment) =>
+        moment.visibility === 'public' &&
+        moment.lat !== undefined &&
+        moment.lng !== undefined,
+    );
+
+    return [{
+      ...recap,
+      backgroundImageUrl: thumbnailMoment.photoUrl,
+      discImageUrl: representativeMoment.photoUrl,
+      lat: locatedMoment?.lat,
+      lng: locatedMoment?.lng,
+      momentCount: moments.length,
+      moments: moments.map((moment) => ({
+        id: moment.id,
+        imageUrl: moment.photoUrl,
+        location:
+          moment.lat !== undefined && moment.lng !== undefined
+            ? { lat: moment.lat, lng: moment.lng }
+            : undefined,
+        placeName: moment.placeName ?? '위치 없음',
+        trackTitle: moment.trackSnapshot?.title ?? '저장된 순간',
+        artistName: moment.trackSnapshot?.artist ?? '음악 없음',
+        recordedAt: moment.createdAt.toISOString(),
+        templateId: moment.templateId,
+        track: moment.trackSnapshot,
+        visibility: moment.visibility,
+      })),
+      placeName: representativeMoment.placeName ?? 'Soundlog',
+      recordedAt: representativeMoment.createdAt,
+      representativeTrackId: ensureMockTrackFromMoment(representativeMoment),
+      thumbnailMomentId: thumbnailMoment.id,
+      templateId: recap.travelSessionId
+        ? recap.templateId
+        : representativeMoment.templateId,
+      visibility:
+        recap.visibility === 'public' && !hasPublicLocatedMoment
+          ? 'private' as const
+          : recap.visibility,
+    }];
+  });
+}
+
+function mockRecapMapMarkerToDto(
+  recap: (typeof mockDb.recaps)[number],
+  viewerId: string,
+  origin?: { lat: number; lng: number },
+) {
+  const location = getMockRecapLocation(recap, viewerId);
+  const track = findMockTrack(recap.representativeTrackId);
+
+  if (!location || !track) {
+    return undefined;
+  }
+
+  const isMine = recap.userId === viewerId;
+  const publicRepresentative = isMine
+    ? undefined
+    : getMockVisibleRecapMoments(recap, viewerId).at(-1);
+  const thumbnailMoment = getMockRecapThumbnailMoment(recap, viewerId);
+  const publicTrack = publicRepresentative?.track ?? (
+    publicRepresentative
+      ? {
+          artist: publicRepresentative.artistName,
+          id: `recap-moment-track-${publicRepresentative.id}`,
+          title: publicRepresentative.trackTitle,
+        }
+      : undefined
+  );
+
+  return compact({
+    id: `marker-${recap.id}`,
+    recapId: recap.id,
+    title: publicRepresentative && recap.sessionId
+      ? `${publicRepresentative.placeName} 여행 로그`
+      : recap.title,
+    placeName: publicRepresentative?.placeName ?? recap.placeName,
+    ownerAlias: isMine ? '나' : 'Soundlog 여행자',
+    location,
+    trackTitle: publicTrack?.title ?? track.title,
+    artistName: publicTrack?.artist ?? track.artist,
+    templateId: publicRepresentative?.templateId ?? recap.templateId,
+    visibility: recap.visibility,
+    distanceMeters: origin ? Math.round(distanceMeters(origin, location)) : undefined,
+    imageUrl: thumbnailMoment?.imageUrl ?? (isMine ? recap.backgroundImageUrl : undefined),
+    createdAt: publicRepresentative?.recordedAt ?? recap.createdAt.toISOString(),
   });
 }
 
@@ -489,6 +817,26 @@ function toPublicPlaceSource(source: string) {
   return source === 'mock' ? 'seed' : source;
 }
 
+function normalizeMoodLabel(value?: string) {
+  const normalized = value?.trim();
+
+  if (!normalized) {
+    return undefined;
+  }
+
+  return normalized === '청량한' ? '시원한' : normalized;
+}
+
+function matchesMoodFilter(itemMoods: readonly string[], moodFilter?: string) {
+  const normalizedFilter = normalizeMoodLabel(moodFilter);
+
+  if (!normalizedFilter || normalizedFilter === '전체') {
+    return true;
+  }
+
+  return itemMoods.some((mood) => normalizeMoodLabel(mood) === normalizedFilter);
+}
+
 function scoreMoodRecommendation(
   item: (typeof mockDb.moodRecommendations)[number],
   params: {
@@ -496,7 +844,6 @@ function scoreMoodRecommendation(
     preferredGenres?: string[];
     preferredMoods?: string[];
     recommendationMode?: 'everyday' | 'travel';
-    topFilter?: string;
     travelStyles?: string[];
   },
 ) {
@@ -504,19 +851,11 @@ function scoreMoodRecommendation(
   const travelModeWeight = params.recommendationMode === 'travel' ? 2.4 : 1;
   const tasteWeight = params.recommendationMode === 'travel' ? 0.7 : 1.4;
 
-  if (params.topFilter && params.topFilter !== '전체' && item.moods.includes(params.topFilter)) {
-    score += 8;
-  }
-
-  if (params.moodFilter && params.moodFilter !== '전체' && item.moods.includes(params.moodFilter)) {
-    score += 8;
-  }
-
   score += (params.preferredGenres ?? []).filter((genre) =>
     item.genres.includes(genre),
   ).length * 3 * tasteWeight;
   score += (params.preferredMoods ?? []).filter((mood) =>
-    item.moods.includes(mood),
+    item.moods.some((itemMood) => normalizeMoodLabel(itemMood) === normalizeMoodLabel(mood)),
   ).length * 2 * tasteWeight;
   score += (params.travelStyles ?? []).filter((style) =>
     item.travelStyles.includes(style),
@@ -562,6 +901,50 @@ export const mockSoundlogService = {
     return this.getMyProfile();
   },
 
+  async deleteMyAccount(userId: string) {
+    mockDb.passwordUsers = mockDb.passwordUsers.filter((user) => user.id !== userId);
+    mockDb.libraryTrackStates = [];
+    mockDb.momentLogs = [];
+    mockDb.recaps = mockDb.recaps.filter((recap) => recap.userId !== userId);
+    mockDb.recommendationEvents = mockDb.recommendationEvents.filter(
+      (event) => event.userId !== userId,
+    );
+    mockDb.travelSessions = mockDb.travelSessions.filter(
+      (session) => session.userId !== userId,
+    );
+    const ownedRoomIds = new Set(
+      mockDb.travelRooms.filter((room) => room.ownerId === userId).map((room) => room.id),
+    );
+    const ownedRoomMomentIds = new Set(
+      mockDb.travelRoomMoments
+        .filter((moment) => ownedRoomIds.has(moment.roomId))
+        .map((moment) => moment.id),
+    );
+    mockDb.travelRooms = mockDb.travelRooms.filter((room) => !ownedRoomIds.has(room.id));
+    mockDb.travelRoomMembers = mockDb.travelRoomMembers.filter(
+      (member) => member.userId !== userId && !ownedRoomIds.has(member.roomId),
+    );
+    mockDb.travelRoomMoments = mockDb.travelRoomMoments.filter(
+      (moment) => moment.userId !== userId && !ownedRoomIds.has(moment.roomId),
+    );
+    mockDb.travelRoomMomentComments = mockDb.travelRoomMomentComments.filter(
+      (comment) => comment.userId !== userId && !ownedRoomMomentIds.has(comment.momentId),
+    );
+    mockDb.soundMapPins = mockDb.soundMapPins.filter((pin) => pin.userId !== userId);
+    mockDb.travelMateRequests = mockDb.travelMateRequests.filter(
+      (request) => request.requesterId !== userId && request.targetUserId !== userId,
+    );
+    mockDb.communityBlocks = mockDb.communityBlocks.filter(
+      (block) => block.blockerId !== userId && block.blockedUserId !== userId,
+    );
+    mockDb.communityReports = mockDb.communityReports.filter(
+      (report) => report.reporterId !== userId && report.targetUserId !== userId,
+    );
+    mockDb.refreshTokens = [];
+
+    return { deleted: true };
+  },
+
   async migrateLocalData(_userId: string, input: {
     idempotencyKey: string;
     libraryTrackCount: number;
@@ -579,15 +962,77 @@ export const mockSoundlogService = {
     };
   },
 
-  async getNearbyPlaces(params: { lat: number; limit?: number }) {
-    const isSouthernContext = params.lat < 36.5;
+  async getNearbyPlaces(params: {
+    lat: number;
+    limit?: number;
+    lng: number;
+    radiusMeters?: number;
+  }) {
+    const origin = { lat: params.lat, lng: params.lng };
+    const radiusMeters = params.radiusMeters ?? 2000;
 
     return [...mockDb.places]
-      .sort((first, second) => {
-        const firstScore = isSouthernContext && first.address?.startsWith('부산') ? -1 : 0;
-        const secondScore = isSouthernContext && second.address?.startsWith('부산') ? -1 : 0;
-        return firstScore - secondScore;
+      .flatMap((place) => {
+        if (place.lat === undefined || place.lng === undefined) {
+          return [];
+        }
+
+        const distance = Math.round(
+          distanceMeters(origin, { lat: place.lat, lng: place.lng }),
+        );
+
+        return distance <= radiusMeters ? [{ distance, place }] : [];
       })
+      .sort((first, second) => first.distance - second.distance)
+      .slice(0, getLimit(params.limit, 10))
+      .map(({ distance, place }) =>
+        compact({
+          id: toPublicPlaceId(place.id),
+          title: place.title,
+          address: place.address,
+          category: place.category,
+          contentType: place.contentType,
+          distanceMeters: distance,
+          imageUrl: place.imageUrl,
+          location:
+            place.lat !== undefined && place.lng !== undefined
+              ? { lat: place.lat, lng: place.lng }
+              : undefined,
+          overview: place.overview,
+          source: toPublicPlaceSource(place.source),
+        }),
+      );
+  },
+
+  async reverseGeocodeLocation(params: { lat: number; lng: number }) {
+    const isSanFrancisco =
+      params.lat >= 37.6 &&
+      params.lat <= 37.9 &&
+      params.lng >= -122.6 &&
+      params.lng <= -122.2;
+
+    return {
+      address: isSanFrancisco
+        ? '미국 캘리포니아주 샌프란시스코'
+        : '대한민국 현재 지역',
+      attribution: '© OpenStreetMap contributors',
+      category: '현재 지역',
+      id: `reverse-${params.lat.toFixed(4)}-${params.lng.toFixed(4)}`,
+      location: { lat: params.lat, lng: params.lng },
+      source: 'reverse-geocode' as const,
+      title: isSanFrancisco ? '샌프란시스코' : '현재 지역',
+    };
+  },
+
+  async searchPlaces(params: { limit?: number; query: string }) {
+    const query = params.query.trim().toLocaleLowerCase();
+
+    return mockDb.places
+      .filter((place) =>
+        [place.title, place.address, place.category]
+          .filter(Boolean)
+          .some((value) => String(value).toLocaleLowerCase().includes(query)),
+      )
       .slice(0, getLimit(params.limit, 10))
       .map((place) =>
         compact({
@@ -623,6 +1068,7 @@ export const mockSoundlogService = {
         : undefined;
 
     return [...mockDb.playlists]
+      .filter((playlist) => playlist.source !== 'personalized')
       .sort((first, second) => {
         if (first.id === preferredId) {
           return -1;
@@ -651,10 +1097,10 @@ export const mockSoundlogService = {
     preferredGenres?: string[];
     preferredMoods?: string[];
     recommendationMode?: 'everyday' | 'travel';
-    topFilter?: string;
     travelStyles?: string[];
   }) {
     return [...mockDb.moodRecommendations]
+      .filter((item) => matchesMoodFilter(item.moods, params.moodFilter))
       .sort((first, second) => scoreMoodRecommendation(second, params) - scoreMoodRecommendation(first, params))
       .slice(0, getLimit(params.limit))
       .map((recommendation) => {
@@ -670,7 +1116,9 @@ export const mockSoundlogService = {
           subtitle: 'subtitle' in recommendation ? recommendation.subtitle : undefined,
           color: recommendation.color,
           genres: recommendation.genres,
+          imageUrl: recommendation.imageUrl,
           moods: recommendation.moods,
+          playlistId: recommendation.playlistId,
           travelStyles: recommendation.travelStyles,
           track: trackToDto(track),
         };
@@ -882,13 +1330,22 @@ export const mockSoundlogService = {
     placeName?: string;
     note?: string;
     sessionId?: string;
+    templateId?: string;
     trackId?: string;
     trackTitle?: string;
     travelMode?: string;
+    visibility?: RecapVisibility;
   }, idempotencyKey?: string) {
     return withMockIdempotency(
       { idempotencyKey, scope: 'moment-log.create', userId },
       () => {
+        assertMockPublicRecapHasLocation(
+          input.visibility,
+          input.lat !== undefined && input.lng !== undefined
+            ? { lat: input.lat, lng: input.lng }
+            : undefined,
+        );
+
         const track = findMockTrack(input.trackId);
         const log = {
           id: createPublicId('moment'),
@@ -903,6 +1360,7 @@ export const mockSoundlogService = {
           placeId: input.placeId,
           placeName: input.placeName,
           note: input.note,
+          templateId: input.templateId ?? 'album',
           trackSnapshot:
             track ??
             (input.trackTitle
@@ -916,9 +1374,15 @@ export const mockSoundlogService = {
           moodTags: input.moodTags,
           source: 'camera' as const,
           syncStatus: 'synced' as const,
+          visibility: input.visibility ?? 'private',
         };
 
         mockDb.momentLogs.unshift(log);
+        refreshMockRecapAggregates({
+          momentIds: [log.id],
+          sessionIds: [log.sessionId],
+          userId,
+        });
 
         return momentLogToDto(log);
       },
@@ -934,6 +1398,21 @@ export const mockSoundlogService = {
 
     if (!log) {
       throw notFound(ERROR_MESSAGES.MOMENT_LOG_NOT_FOUND);
+    }
+
+    const previousSessionId = log.sessionId;
+
+    if (hasOwn(input, 'lat') || hasOwn(input, 'lng') || input.visibility) {
+      const nextLat = hasOwn(input, 'lat') ? input.lat : log.lat;
+      const nextLng = hasOwn(input, 'lng') ? input.lng : log.lng;
+      const nextVisibility = input.visibility ?? log.visibility;
+
+      assertMockPublicRecapHasLocation(
+        nextVisibility,
+        nextLat !== null && nextLat !== undefined && nextLng !== null && nextLng !== undefined
+          ? { lat: nextLat, lng: nextLng }
+          : undefined,
+      );
     }
 
     if (input.createdAt) {
@@ -972,8 +1451,16 @@ export const mockSoundlogService = {
       log.sessionId = input.sessionId ?? undefined;
     }
 
+    if (input.templateId) {
+      log.templateId = input.templateId;
+    }
+
     if (hasOwn(input, 'travelMode')) {
       log.travelMode = input.travelMode ?? undefined;
+    }
+
+    if (input.visibility) {
+      log.visibility = input.visibility;
     }
 
     const shouldUpdateTrackSnapshot =
@@ -993,6 +1480,12 @@ export const mockSoundlogService = {
           : undefined);
     }
 
+    refreshMockRecapAggregates({
+      momentIds: [log.id],
+      sessionIds: [previousSessionId, log.sessionId],
+      userId: _userId,
+    });
+
     return momentLogToDto(log);
   },
 
@@ -1004,6 +1497,11 @@ export const mockSoundlogService = {
     }
 
     log.photoUrl = `${env.UPLOAD_PUBLIC_BASE_URL}${photoPath}`;
+    refreshMockRecapAggregates({
+      momentIds: [log.id],
+      sessionIds: [log.sessionId],
+      userId: _userId,
+    });
 
     return momentLogToDto(log);
   },
@@ -1016,22 +1514,32 @@ export const mockSoundlogService = {
     }
 
     log.photoUrl = undefined;
+    refreshMockRecapAggregates({
+      momentIds: [log.id],
+      sessionIds: [log.sessionId],
+      userId: _userId,
+    });
 
     return momentLogToDto(log);
   },
 
-  async deleteMomentLog(_userId: string, momentLogId: string) {
+  async deleteMomentLog(userId: string, momentLogId: string) {
     const index = mockDb.momentLogs.findIndex((moment) => moment.id === momentLogId);
 
     if (index === -1) {
       throw notFound(ERROR_MESSAGES.MOMENT_LOG_NOT_FOUND);
     }
 
-    mockDb.momentLogs.splice(index, 1);
+    const [deletedMoment] = mockDb.momentLogs.splice(index, 1);
     mockDb.travelRoomMoments.forEach((moment) => {
       if (moment.momentLogId === momentLogId) {
         moment.momentLogId = undefined;
       }
+    });
+    refreshMockRecapAggregates({
+      momentIds: [momentLogId],
+      sessionIds: [deletedMoment?.sessionId],
+      userId,
     });
   },
 
@@ -1369,6 +1877,7 @@ export const mockSoundlogService = {
 
         const recap = {
           id: createPublicId('recap'),
+          userId,
           title: input.title ?? `${room.title} 공동 Recap`,
           placeName: recapMoments[0]?.placeName ?? room.title,
           representativeTrackId,
@@ -1376,6 +1885,8 @@ export const mockSoundlogService = {
           momentCount: recapMoments.length,
           sessionId: room.sessionId,
           recordedAt: recapMoments[0]?.createdAt ?? new Date(),
+          templateId: input.templateId ?? 'album',
+          visibility: 'private' as const,
           moments: recapMoments.map((moment) => ({
             id: moment.id,
             placeName: moment.placeName ?? '위치 없음',
@@ -1774,15 +2285,33 @@ export const mockSoundlogService = {
     }, { sessionId: input.requestId ?? input.targetPinId ?? input.targetUserId ?? 'community' });
   },
 
-  async getRecaps(_userId: string, params: { cursor?: string; limit?: number }) {
-    const recaps = [...mockDb.recaps].sort(
-      (first, second) => second.createdAt.getTime() - first.createdAt.getTime(),
-    );
+  async getRecaps(userId: string, params: {
+    cursor?: string;
+    limit?: number;
+    scope?: RecapListScope;
+  }) {
+    const scope = params.scope ?? 'mine';
+    const recaps = mockDb.recaps
+      .filter((recap) => Boolean(recap.sessionId))
+      .filter((recap) =>
+        scope === 'mine'
+          ? recap.userId === userId
+          : scope === 'others'
+            ? recap.userId !== userId && recap.visibility === 'public'
+            : recap.userId === userId || recap.visibility === 'public',
+      )
+      .filter(
+        (recap) =>
+          recap.userId === userId || getMockVisibleRecapMoments(recap, userId).length > 0,
+      )
+      .sort(
+        (first, second) => second.createdAt.getTime() - first.createdAt.getTime(),
+      );
     const limit = getLimit(params.limit);
     const page = paginateByCursor(recaps, limit, params.cursor);
 
     return {
-      data: page.items.map(recapItemToDto),
+      data: page.items.map((recap) => recapItemToDto(recap, userId)),
       page: {
         limit,
         nextCursor: page.nextCursor,
@@ -1790,23 +2319,129 @@ export const mockSoundlogService = {
     };
   },
 
+  async getRecapMarkers(userId: string, params: {
+    lat?: number;
+    lng?: number;
+    radiusMeters?: number;
+    scope?: RecapMapScope;
+  }) {
+    const scope = params.scope ?? 'public';
+    const origin =
+      scope === 'public' &&
+      params.lat !== undefined &&
+      params.lng !== undefined
+        ? { lat: params.lat, lng: params.lng }
+        : undefined;
+    const radiusMeters = params.radiusMeters ?? RECAP_DISCOVERY_RADIUS_METERS;
+
+    return mockDb.recaps
+      .filter((recap) =>
+        scope === 'mine'
+          ? recap.userId === userId
+          : recap.visibility === 'public',
+      )
+      .flatMap((recap) => {
+        const marker = mockRecapMapMarkerToDto(recap, userId, origin);
+
+        return marker && (recap.userId === userId || getMockVisibleRecapMoments(recap, userId).length)
+          ? [marker]
+          : [];
+      })
+      .filter((marker) =>
+        origin
+          ? typeof marker.distanceMeters === 'number' &&
+            marker.distanceMeters <= radiusMeters
+          : true,
+      );
+  },
+
   async createRecap(userId: string, input: {
     momentLogIds?: string[];
     representativeTrackId?: string;
+    routePoints?: RoutePointDto[];
     sessionId?: string;
+    templateId?: string;
     title?: string;
+    visibility?: RecapVisibility;
   }, idempotencyKey?: string) {
     return withMockIdempotency(
       { idempotencyKey, scope: 'recap.create', userId },
       () => {
-        const moments = mockDb.momentLogs.filter((moment) => {
-          if (input.momentLogIds?.length) {
-            return input.momentLogIds.includes(moment.id);
-          }
+        if (!input.sessionId && !input.momentLogIds?.length) {
+          throw badRequest(ERROR_MESSAGES.RECAP_LOG_REQUIRES_CAPTURE);
+        }
 
-          return input.sessionId ? moment.sessionId === input.sessionId : true;
-        });
-        const firstMoment = moments[0];
+        const moments = mockDb.momentLogs
+          .filter((moment) => {
+            if (input.momentLogIds?.length) {
+              return input.momentLogIds.includes(moment.id);
+            }
+
+            return input.sessionId ? moment.sessionId === input.sessionId : true;
+          })
+          .sort((first, second) => first.createdAt.getTime() - second.createdAt.getTime());
+        const requestedMomentIds = Array.from(new Set(input.momentLogIds ?? []));
+
+        if (requestedMomentIds.length > 0 && moments.length !== requestedMomentIds.length) {
+          throw badRequest(ERROR_MESSAGES.RECAP_LOG_CAPTURE_MISMATCH);
+        }
+
+        if (
+          !input.sessionId &&
+          (requestedMomentIds.length !== 1 || moments.some((moment) => moment.sessionId))
+        ) {
+          throw badRequest(ERROR_MESSAGES.RECAP_LOG_CAPTURE_MISMATCH);
+        }
+
+        if (moments.length === 0) {
+          throw badRequest(ERROR_MESSAGES.RECAP_LOG_REQUIRES_CAPTURE);
+        }
+
+        let travelSession = input.sessionId
+          ? mockDb.travelSessions.find(
+              (session) => session.id === input.sessionId,
+            )
+          : undefined;
+
+        if (travelSession && travelSession.userId !== userId) {
+          throw badRequest(ERROR_MESSAGES.RECAP_LOG_CAPTURE_MISMATCH);
+        }
+
+        if (input.sessionId && !travelSession) {
+          const recoveredRoutePoints = normalizeRoutePoints(input.routePoints);
+          const recordedAt = moments.at(-1)?.createdAt ?? new Date();
+
+          travelSession = {
+            endedAt: recoveredRoutePoints?.at(-1)
+              ? new Date(recoveredRoutePoints.at(-1)!.recordedAt)
+              : recordedAt,
+            id: input.sessionId,
+            routePoints: recoveredRoutePoints,
+            startedAt: recoveredRoutePoints?.[0]
+              ? new Date(recoveredRoutePoints[0].recordedAt)
+              : moments[0]?.createdAt ?? recordedAt,
+            status: 'ended',
+            userId,
+          };
+          mockDb.travelSessions.push(travelSession);
+        }
+
+        if (input.sessionId) {
+          const existingLog = mockDb.recaps.find(
+            (recap) => recap.travelSessionId === input.sessionId,
+          );
+
+          if (existingLog) {
+            if (existingLog.userId !== userId) {
+              throw badRequest(ERROR_MESSAGES.RECAP_LOG_CAPTURE_MISMATCH);
+            }
+
+            return recapItemToDto(existingLog, userId);
+          }
+        }
+
+        const representativeMoment = moments.at(-1)!;
+        const thumbnailMoment = moments[0]!;
         const candidateTrackIds = input.representativeTrackId
           ? [input.representativeTrackId]
           : Array.from(
@@ -1819,56 +2454,217 @@ export const mockSoundlogService = {
             );
         const representativeTrackId =
           input.representativeTrackId ??
-          candidateTrackIds.find((trackId) => Boolean(findMockTrack(trackId))) ??
-          'seoul-city';
+          candidateTrackIds[0] ??
+          NO_MUSIC_TRACK_ID;
+
+        const representativeTrackSnapshot = [...moments]
+          .reverse()
+          .map((moment) => moment.trackSnapshot)
+          .find((track) => track?.id === representativeTrackId);
+
+        if (!findMockTrack(representativeTrackId) && representativeTrackSnapshot) {
+          mockDb.tracks.push({
+            ...representativeTrackSnapshot,
+            fallbackColor: representativeTrackSnapshot.fallbackColor ?? '#252A38',
+          });
+        }
+
+        if (!findMockTrack(representativeTrackId) && representativeTrackId === NO_MUSIC_TRACK_ID) {
+          mockDb.tracks.push({
+            artist: 'Soundlog',
+            fallbackColor: '#252A38',
+            id: NO_MUSIC_TRACK_ID,
+            title: '음악 없음',
+          });
+        }
 
         if (!findMockTrack(representativeTrackId)) {
           throw notFound(ERROR_MESSAGES.REPRESENTATIVE_TRACK_NOT_FOUND);
         }
 
+        const representativeMomentLocation =
+          representativeMoment.lat !== undefined && representativeMoment.lng !== undefined
+            ? { lat: representativeMoment.lat, lng: representativeMoment.lng }
+            : undefined;
+        const routePoints =
+          normalizeRoutePoints(input.routePoints) ??
+          normalizeRoutePoints(travelSession?.routePoints);
+        const firstRoutePoint = input.routePoints?.[0] ?? travelSession?.routePoints?.[0];
+        const recapLocation = representativeMomentLocation ?? (
+          firstRoutePoint
+            ? { lat: firstRoutePoint.lat, lng: firstRoutePoint.lng }
+            : undefined
+        );
+
+        const hasPublicLocatedMoment = moments.some(
+          (moment) =>
+            moment.visibility === 'public' &&
+            moment.lat !== undefined &&
+            moment.lng !== undefined,
+        );
+
+        if (input.visibility === 'public' && !hasPublicLocatedMoment) {
+          throw badRequest(ERROR_MESSAGES.RECAP_LOG_PUBLIC_CAPTURE_REQUIRED);
+        }
+
         const recap = {
           id: createPublicId('recap'),
-          title: input.title ?? `${firstMoment?.placeName ?? '여행'}의 사운드`,
-          placeName: firstMoment?.placeName ?? 'Soundlog',
+          userId,
+          title: input.title ?? `${representativeMoment.placeName ?? '여행'}의 사운드`,
+          placeName: representativeMoment.placeName ?? 'Soundlog',
           representativeTrackId,
           createdAt: new Date(),
           momentCount: moments.length,
           sessionId: input.sessionId,
-          backgroundImageUrl: firstMoment?.photoUrl,
-          discImageUrl: firstMoment?.photoUrl,
-          recordedAt: firstMoment?.createdAt ?? new Date(),
+          travelSessionId: input.sessionId,
+          backgroundImageUrl: thumbnailMoment.photoUrl,
+          discImageUrl: representativeMoment.photoUrl,
+          lat: recapLocation?.lat,
+          lng: recapLocation?.lng,
+          recordedAt: representativeMoment.createdAt,
+          routePoints,
+          templateId: input.templateId ?? 'album',
+          thumbnailMomentId: thumbnailMoment.id,
+          visibility: input.visibility ?? 'private',
           moments: moments.map((moment) => ({
             id: moment.id,
             imageUrl: moment.photoUrl,
+            location:
+              moment.lat !== undefined && moment.lng !== undefined
+                ? { lat: moment.lat, lng: moment.lng }
+                : undefined,
             placeName: moment.placeName ?? '위치 없음',
             trackTitle: moment.trackSnapshot?.title ?? '저장된 순간',
             artistName: moment.trackSnapshot?.artist ?? '음악 없음',
             recordedAt: moment.createdAt.toISOString(),
+            templateId: moment.templateId,
+            track: moment.trackSnapshot,
+            visibility: moment.visibility,
           })),
         };
 
         mockDb.recaps.unshift(recap);
 
-        return recapItemToDto(recap);
+        return recapItemToDto(recap, userId);
       },
     );
   },
 
-  async getRecapShare(_userId: string, recapId: string) {
-    const recap = mockDb.recaps.find((item) => item.id === recapId);
+  async getRecapShare(userId: string, recapId: string) {
+    const recap = mockDb.recaps.find(
+      (item) => item.id === recapId && (item.userId === userId || item.visibility === 'public'),
+    );
 
     if (!recap) {
       throw notFound(ERROR_MESSAGES.RECAP_NOT_FOUND);
     }
 
-    return recapShareToDto(recap);
+    if (recap.userId !== userId && getMockVisibleRecapMoments(recap, userId).length === 0) {
+      throw notFound(ERROR_MESSAGES.RECAP_NOT_FOUND);
+    }
+
+    return recapShareToDto(recap, userId);
   },
 
-  async createRecapShareEvent(_userId: string, recapId: string, input: {
+  async updateRecapVisibility(
+    userId: string,
+    recapId: string,
+    input: { visibility: RecapVisibility },
+  ) {
+    const recap = mockDb.recaps.find((item) => item.id === recapId && item.userId === userId);
+
+    if (!recap) {
+      throw notFound(ERROR_MESSAGES.RECAP_NOT_FOUND);
+    }
+
+    const memberMomentIds = new Set(getMockRecapMoments(recap).map((moment) => moment.id));
+
+    if (recap.sessionId && input.visibility === 'public') {
+      const hasPublicLocatedMoment = getMockRecapMoments(recap).some(
+        (moment) =>
+          moment.visibility === 'public' &&
+          typeof moment.location?.lat === 'number' &&
+          typeof moment.location?.lng === 'number',
+      );
+
+      if (!hasPublicLocatedMoment) {
+        throw badRequest(ERROR_MESSAGES.RECAP_LOG_PUBLIC_CAPTURE_REQUIRED);
+      }
+    }
+
+    if (!recap.sessionId) {
+      const memberMoments = mockDb.momentLogs.filter((moment) => memberMomentIds.has(moment.id));
+      const locatedMoment = memberMoments.find(
+        (moment) => moment.lat !== undefined && moment.lng !== undefined,
+      );
+
+      assertMockPublicRecapHasLocation(
+        input.visibility,
+        locatedMoment && locatedMoment.lat !== undefined && locatedMoment.lng !== undefined
+          ? { lat: locatedMoment.lat, lng: locatedMoment.lng }
+          : undefined,
+      );
+      memberMoments.forEach((moment) => {
+        moment.visibility = input.visibility;
+      });
+    }
+
+    recap.visibility = input.visibility;
+    refreshMockRecapAggregates({
+      momentIds: [...memberMomentIds],
+      sessionIds: [recap.sessionId],
+      userId,
+    });
+
+    const updatedRecap = mockDb.recaps.find((item) => item.id === recapId);
+
+    if (!updatedRecap) {
+      throw notFound(ERROR_MESSAGES.RECAP_NOT_FOUND);
+    }
+
+    return recapItemToDto(updatedRecap, userId);
+  },
+
+  async updateRecapThumbnail(
+    userId: string,
+    recapId: string,
+    input: { momentId: string },
+  ) {
+    const recap = mockDb.recaps.find((item) => item.id === recapId && item.userId === userId);
+
+    if (!recap) {
+      throw notFound(ERROR_MESSAGES.RECAP_NOT_FOUND);
+    }
+
+    if (!recap.sessionId) {
+      throw badRequest(ERROR_MESSAGES.RECAP_THUMBNAIL_LOG_REQUIRED);
+    }
+
+    if (!getMockRecapMoments(recap).some((moment) => moment.id === input.momentId)) {
+      throw badRequest(ERROR_MESSAGES.RECAP_THUMBNAIL_MOMENT_NOT_FOUND);
+    }
+
+    const thumbnailMoment = mockDb.momentLogs.find(
+      (moment) =>
+        moment.id === input.momentId &&
+        moment.sessionId === recap.sessionId,
+    );
+
+    if (!thumbnailMoment) {
+      throw badRequest(ERROR_MESSAGES.RECAP_THUMBNAIL_MOMENT_NOT_FOUND);
+    }
+
+    recap.thumbnailMomentId = thumbnailMoment.id;
+    recap.backgroundImageUrl = thumbnailMoment.photoUrl;
+
+    return recapItemToDto(recap, userId);
+  },
+
+  async createRecapShareEvent(userId: string, recapId: string, input: {
     createdAt: string;
     type: string;
   }, _idempotencyKey?: string) {
-    if (!mockDb.recaps.some((recap) => recap.id === recapId)) {
+    if (!mockDb.recaps.some((recap) => recap.id === recapId && recap.userId === userId)) {
       throw notFound(ERROR_MESSAGES.RECAP_NOT_FOUND);
     }
 
@@ -1882,16 +2678,22 @@ export const mockSoundlogService = {
 
   async createTravelSession(userId: string, input: {
     location?: { lat: number; lng: number };
+    routePoints?: RoutePointDto[];
     startedAt?: string;
     travelMode?: string;
   }) {
+    const startedAt = input.startedAt ? new Date(input.startedAt) : new Date();
+    const routePoints =
+      normalizeRoutePoints(input.routePoints) ??
+      createInitialRoutePoints(input.location, startedAt);
     const session = {
       id: createPublicId('session'),
       status: 'active' as const,
-      startedAt: input.startedAt ? new Date(input.startedAt) : new Date(),
+      startedAt,
       travelMode: input.travelMode,
       lat: input.location?.lat,
       lng: input.location?.lng,
+      routePoints,
       userId,
     };
 
@@ -1901,6 +2703,7 @@ export const mockSoundlogService = {
       id: session.id,
       status: session.status,
       startedAt: session.startedAt.toISOString(),
+      routePoints: session.routePoints,
       travelMode: session.travelMode,
     };
   },
@@ -1908,6 +2711,7 @@ export const mockSoundlogService = {
   async updateTravelSession(userId: string, sessionId: string, input: {
     endedAt?: string;
     location?: { lat: number; lng: number };
+    routePoints?: RoutePointDto[];
     status: 'active' | 'ended';
   }) {
     const session = mockDb.travelSessions.find(
@@ -1931,6 +2735,7 @@ export const mockSoundlogService = {
         : undefined;
     session.lat = input.location?.lat ?? session.lat;
     session.lng = input.location?.lng ?? session.lng;
+    session.routePoints = normalizeRoutePoints(input.routePoints) ?? session.routePoints;
 
     if (session.status === 'ended') {
       const now = new Date();
@@ -1948,6 +2753,7 @@ export const mockSoundlogService = {
       status: session.status,
       startedAt: session.startedAt?.toISOString(),
       endedAt: session.endedAt?.toISOString(),
+      routePoints: session.routePoints,
       travelMode: session.travelMode,
     });
   },
