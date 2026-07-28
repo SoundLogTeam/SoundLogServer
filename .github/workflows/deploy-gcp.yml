@@ -1,0 +1,300 @@
+name: Deploy API to GCP
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: Docker image tag to build and deploy. Defaults to the current commit SHA.
+        required: false
+        type: string
+
+concurrency:
+  group: deploy-api-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-push:
+    name: Build and push Docker image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      image_tag: ${{ steps.meta.outputs.image_tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate Docker Hub secrets
+        shell: bash
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in DOCKERHUB_USERNAME DOCKERHUB_TOKEN; do
+            if [ -z "${!name}" ]; then
+              missing+=("$name")
+            fi
+          done
+
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf 'Missing required secrets: %s\n' "${missing[*]}"
+            exit 1
+          fi
+
+      - name: Set image tag
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          image_tag="${GITHUB_SHA::12}"
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.image_tag }}" ]; then
+            image_tag="${{ inputs.image_tag }}"
+          fi
+
+          if [[ ! "$image_tag" =~ ^[A-Za-z0-9_.-]{1,128}$ ]]; then
+            echo "Invalid Docker image tag: ${image_tag}"
+            exit 1
+          fi
+
+          echo "image_tag=${image_tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/soundlog-server:${{ steps.meta.outputs.image_tag }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/soundlog-server:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Pull and restart on GCP
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate deployment secrets
+        shell: bash
+        env:
+          GCP_HOST: ${{ secrets.GCP_HOST }}
+          GCP_USER: ${{ secrets.GCP_USER }}
+          GCP_SSH_KEY: ${{ secrets.GCP_SSH_KEY }}
+          GCP_SSH_PORT: ${{ secrets.GCP_SSH_PORT }}
+          GCP_APP_DIR: ${{ secrets.GCP_APP_DIR }}
+          PRODUCTION_ENV: ${{ secrets.PRODUCTION_ENV }}
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in GCP_HOST GCP_USER GCP_SSH_KEY GCP_SSH_PORT GCP_APP_DIR PRODUCTION_ENV; do
+            if [ -z "${!name}" ]; then
+              missing+=("$name")
+            fi
+          done
+
+          for key in CLIENT_URLS POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB JWT_SECRET UPLOAD_PUBLIC_BASE_URL; do
+            value="$(sed -n "s/^${key}=//p" <<< "$PRODUCTION_ENV" | tail -n 1)"
+            if [ -z "$value" ]; then
+              missing+=("PRODUCTION_ENV.${key}")
+            fi
+          done
+
+          if grep -q "^DOCKER_IMAGE=" <<< "$PRODUCTION_ENV"; then
+            echo "PRODUCTION_ENV must not include DOCKER_IMAGE. The workflow injects it at deploy time."
+            exit 1
+          fi
+
+          if grep -q "^DATABASE_URL=" <<< "$PRODUCTION_ENV"; then
+            echo "PRODUCTION_ENV must not include DATABASE_URL. The workflow injects an encoded internal database URL at deploy time."
+            exit 1
+          fi
+
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf 'Missing required secrets: %s\n' "${missing[*]}"
+            exit 1
+          fi
+
+      - name: Create production env file
+        shell: bash
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
+          PRODUCTION_ENV: ${{ secrets.PRODUCTION_ENV }}
+        run: |
+          set -euo pipefail
+          mkdir -p .deploy
+          postgres_user="$(sed -n 's/^POSTGRES_USER=//p' <<< "$PRODUCTION_ENV" | tail -n 1 | tr -d '\r')"
+          postgres_password="$(sed -n 's/^POSTGRES_PASSWORD=//p' <<< "$PRODUCTION_ENV" | tail -n 1 | tr -d '\r')"
+          postgres_db="$(sed -n 's/^POSTGRES_DB=//p' <<< "$PRODUCTION_ENV" | tail -n 1 | tr -d '\r')"
+
+          database_url="$(
+            POSTGRES_USER="$postgres_user" POSTGRES_PASSWORD="$postgres_password" POSTGRES_DB="$postgres_db" node <<'NODE'
+          const encode = encodeURIComponent;
+          const user = encode(process.env.POSTGRES_USER || '');
+          const password = encode(process.env.POSTGRES_PASSWORD || '');
+          const database = encode(process.env.POSTGRES_DB || '');
+          process.stdout.write(`postgresql://${user}:${password}@db:5432/${database}?schema=public`);
+          NODE
+          )"
+
+          {
+            printf 'DOCKER_IMAGE=%s/soundlog-server:%s\n' "$DOCKERHUB_USERNAME" "$IMAGE_TAG"
+            printf '%s\n' "$PRODUCTION_ENV" | sed '/^DOCKER_IMAGE=/d;/^DATABASE_URL=/d'
+            printf 'DATABASE_URL=%s\n' "$database_url"
+          } > .deploy/production.env
+
+      - name: Prepare GCP app directory
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.GCP_HOST }}
+          username: ${{ secrets.GCP_USER }}
+          key: ${{ secrets.GCP_SSH_KEY }}
+          port: ${{ secrets.GCP_SSH_PORT }}
+          script: |
+            set -eu
+            mkdir -p "${{ secrets.GCP_APP_DIR }}"
+            sudo docker --version
+            sudo docker compose version
+
+      - name: Copy production compose files
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.GCP_HOST }}
+          username: ${{ secrets.GCP_USER }}
+          key: ${{ secrets.GCP_SSH_KEY }}
+          port: ${{ secrets.GCP_SSH_PORT }}
+          source: docker-compose.prod.yml,Caddyfile
+          target: ${{ secrets.GCP_APP_DIR }}
+          overwrite: true
+
+      - name: Copy production env file
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.GCP_HOST }}
+          username: ${{ secrets.GCP_USER }}
+          key: ${{ secrets.GCP_SSH_KEY }}
+          port: ${{ secrets.GCP_SSH_PORT }}
+          source: .deploy/production.env
+          target: ${{ secrets.GCP_APP_DIR }}
+          strip_components: 1
+          overwrite: true
+
+      - name: Deploy on GCP
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.GCP_HOST }}
+          username: ${{ secrets.GCP_USER }}
+          key: ${{ secrets.GCP_SSH_KEY }}
+          port: ${{ secrets.GCP_SSH_PORT }}
+          script: |
+            set -eu
+            cd "${{ secrets.GCP_APP_DIR }}"
+            mv production.env .env
+
+            echo "${{ secrets.DOCKERHUB_TOKEN }}" | sudo docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+            sudo docker compose -f docker-compose.prod.yml pull api
+            sudo docker compose -f docker-compose.prod.yml up -d
+            sudo docker compose -f docker-compose.prod.yml ps
+
+            for attempt in $(seq 1 18); do
+              if sudo docker compose -f docker-compose.prod.yml exec -T api \
+                node -e "fetch('http://127.0.0.1:4000/v1/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"; then
+                sudo docker image prune -f
+                exit 0
+              fi
+
+              echo "Waiting for API health check on GCP (${attempt}/18)..."
+              sleep 10
+            done
+
+            echo "API health check failed on GCP."
+            sudo docker compose -f docker-compose.prod.yml logs --tail=120 api
+            exit 1
+
+      - name: Sync frontend Vercel API origin
+        shell: bash
+        env:
+          FRONTEND_VERCEL_PROJECT: ${{ secrets.FRONTEND_VERCEL_PROJECT }}
+          FRONTEND_VERCEL_SCOPE: ${{ secrets.FRONTEND_VERCEL_SCOPE }}
+          FRONTEND_VERCEL_TOKEN: ${{ secrets.FRONTEND_VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$FRONTEND_VERCEL_TOKEN" ]; then
+            echo "Skipping frontend Vercel API origin sync because FRONTEND_VERCEL_TOKEN is not configured."
+            exit 0
+          fi
+
+          api_origin="https://api.soundlog.shop"
+          project="${FRONTEND_VERCEL_PROJECT:-sound-log-app}"
+          scope="${FRONTEND_VERCEL_SCOPE:-mannomis-projects}"
+          tmpdir="$(mktemp -d)"
+
+          cleanup() {
+            rm -rf "$tmpdir"
+          }
+          trap cleanup EXIT
+
+          npx --yes vercel@54.20.1 link \
+            --yes \
+            --scope "$scope" \
+            --project "$project" \
+            --cwd "$tmpdir" \
+            --token "$FRONTEND_VERCEL_TOKEN"
+
+          for environment in preview production; do
+            npx --yes vercel@54.20.1 env add SOUNDLOG_API_ORIGIN "$environment" \
+              --force \
+              --yes \
+              --sensitive \
+              --value "$api_origin" \
+              --cwd "$tmpdir" \
+              --scope "$scope" \
+              --token "$FRONTEND_VERCEL_TOKEN"
+          done
+
+      - name: Verify GCP API contract
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.GCP_HOST }}
+          username: ${{ secrets.GCP_USER }}
+          key: ${{ secrets.GCP_SSH_KEY }}
+          port: ${{ secrets.GCP_SSH_PORT }}
+          script: |
+            set -eu
+            cd "${{ secrets.GCP_APP_DIR }}"
+            sudo docker compose -f docker-compose.prod.yml exec -T \
+              -e PUBLIC_API_BASE_URL=http://127.0.0.1:4000 \
+              api \
+              node scripts/check-public-api-contract.mjs
+
+      - name: Check public HTTPS reachability
+        shell: bash
+        run: |
+          set -eu
+          if curl --fail --silent --show-error --max-time 10 "https://api.soundlog.shop/v1/health" > /tmp/soundlog-external-health.json; then
+            cat /tmp/soundlog-external-health.json
+            exit 0
+          fi
+
+          echo "::warning::https://api.soundlog.shop is not reachable yet. This is expected until the api.soundlog.shop DNS A record points at the GCP static IP and Caddy has issued a TLS certificate. The deploy itself succeeded; this check is informational only."

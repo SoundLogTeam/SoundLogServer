@@ -1,0 +1,3 @@
+api.soundlog.shop {
+	reverse_proxy api:4000
+}
