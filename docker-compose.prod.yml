@@ -41,8 +41,6 @@ services:
       UPLOAD_PUBLIC_BASE_URL: ${UPLOAD_PUBLIC_BASE_URL}
       UPLOAD_PUBLIC_PATH: ${UPLOAD_PUBLIC_PATH:-/uploads}
       USE_MOCK_DB: ${USE_MOCK_DB:-false}
-    ports:
-      - "${API_PORT:-4000}:4000"
     volumes:
       - uploads_data:/app/uploads
     healthcheck:
@@ -56,6 +54,21 @@ services:
       retries: 3
       start_period: 30s
 
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
 volumes:
   postgres_data:
   uploads_data:
+  caddy_data:
+  caddy_config:

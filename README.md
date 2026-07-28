@@ -76,7 +76,7 @@ EXPO_PUBLIC_SOUNDLOG_API_BASE_URL=http://localhost:4000 npm run web
 ```
 
 웹 기본 주소는 `http://localhost:8081`입니다.
-배포된 앱과 웹은 현재 Vercel의 `/api/soundlog` 프록시를 통해 EC2 API를 호출합니다.
+배포된 앱은 `https://api.soundlog.shop`을 직접 호출하고, 배포된 웹은 Vercel의 `/api/soundlog` 프록시를 통해 같은 GCP API를 호출합니다. 자세한 내용은 [`docs/gcp-deployment.md`](docs/gcp-deployment.md)를 참고합니다.
 
 ## API Docs
 
@@ -84,7 +84,7 @@ EXPO_PUBLIC_SOUNDLOG_API_BASE_URL=http://localhost:4000 npm run web
 
 - Swagger UI: `http://localhost:4000/docs`
 - OpenAPI YAML: `http://localhost:4000/openapi.yaml`
-- 운영 API 프록시: `https://soundlog.shop/api/soundlog`
+- 운영 API: `https://api.soundlog.shop`
 
 Swagger에서 바로 DB 쓰기를 확인할 때는 인증 없이 호출 가능한 개발용 API를 사용할 수 있습니다.
 
@@ -99,7 +99,7 @@ Swagger에서 바로 DB 쓰기를 확인할 때는 인증 없이 호출 가능�
 - `ALLOW_DEV_AUTH_FALLBACK=false`
 - 자체 이메일/비밀번호 로그인만 사용하며, 서버는 비밀번호 원문 대신 bcrypt hash만 저장
 - `CLIENT_URLS`, `UPLOAD_PUBLIC_BASE_URL`, 앱의 `EXPO_PUBLIC_SOUNDLOG_API_BASE_URL`은 HTTPS 도메인 사용
-- 운영 기준 frontend origin은 `https://soundlog.shop`입니다. 공개 API URL은 `https://soundlog.shop/api/soundlog`이며, 별도 `api` 서브도메인은 사용하지 않습니다.
+- 운영 기준 frontend origin은 `https://soundlog.shop`입니다. 공개 API URL은 `https://api.soundlog.shop`이며, GCP VM 위의 Caddy가 TLS를 직접 종료합니다.
 - `REQUEST_BODY_LIMIT`, `MOMENT_PHOTO_MAX_FILE_SIZE_MB`, `UPLOAD_DIRECTORY`, `UPLOAD_PUBLIC_PATH`는 운영 파일 업로드 정책에 맞게 조정
 - iOS 앱 설정에 전체 ATS 예외를 넣지 않기
 
