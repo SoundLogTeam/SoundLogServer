@@ -1292,17 +1292,22 @@ describe('Soundlog API', () => {
       trackTitle: '한강에서',
     });
     expect(JSON.stringify(mixedVisibilityMarker)).not.toContain('비공개 장소 이름');
-
-    const fixedRadiusMarkers = await request(app)
-      .get('/v1/recap-markers')
-      .query({ lat: 37.5512, lng: 126.9882, radiusMeters: 5000, scope: 'public' })
-      .set('Authorization', authHeader);
-    expect(fixedRadiusMarkers.status).toBe(200);
     expect(
-      fixedRadiusMarkers.body.data.some(
+      publicMarkersAfterUpdate.body.data.some(
         (marker: { recapId: string }) => marker.recapId === farCreated.body.data.id,
       ),
     ).toBe(false);
+
+    const expandedRadiusMarkers = await request(app)
+      .get('/v1/recap-markers')
+      .query({ lat: 37.5512, lng: 126.9882, radiusMeters: 5000, scope: 'public' })
+      .set('Authorization', authHeader);
+    expect(expandedRadiusMarkers.status).toBe(200);
+    expect(
+      expandedRadiusMarkers.body.data.some(
+        (marker: { recapId: string }) => marker.recapId === farCreated.body.data.id,
+      ),
+    ).toBe(true);
 
     const duplicate = await request(app)
       .post('/v1/recaps')
