@@ -19,6 +19,7 @@ const MUTATED_KEYS = [
   'AUTH_RATE_LIMIT_WINDOW_MS',
   'AUTH_RATE_LIMIT_IP_MAX',
   'AUTH_RATE_LIMIT_IP_WINDOW_MS',
+  'ML_RECOMMENDATION_API_URL',
 ] as const;
 const originalEnv = Object.fromEntries(
   MUTATED_KEYS.map((key) => [key, process.env[key]]),
@@ -67,6 +68,42 @@ describe('production hardening: dev DB test route', () => {
 
     expect(response.status).toBe(401);
     expect(response.body.error.code).toBe('UNAUTHORIZED');
+  });
+});
+
+describe('production hardening: ML recommendation transport', () => {
+  afterEach(() => {
+    restoreEnv();
+  });
+
+  it('disables a plaintext ML endpoint in production', async () => {
+    process.env.NODE_ENV = 'production';
+    process.env.ML_RECOMMENDATION_API_URL = 'http://211.188.54.204:8000/recommend';
+
+    vi.resetModules();
+    const { env } = await import('../src/config/env.js');
+
+    expect(env.ML_RECOMMENDATION_API_URL).toBeUndefined();
+  });
+
+  it('treats an empty ML endpoint as disabled in production', async () => {
+    process.env.NODE_ENV = 'production';
+    process.env.ML_RECOMMENDATION_API_URL = '';
+
+    vi.resetModules();
+    const { env } = await import('../src/config/env.js');
+
+    expect(env.ML_RECOMMENDATION_API_URL).toBeUndefined();
+  });
+
+  it('keeps an HTTPS ML endpoint in production', async () => {
+    process.env.NODE_ENV = 'production';
+    process.env.ML_RECOMMENDATION_API_URL = 'https://ml.soundlog.shop/recommend';
+
+    vi.resetModules();
+    const { env } = await import('../src/config/env.js');
+
+    expect(env.ML_RECOMMENDATION_API_URL).toBe('https://ml.soundlog.shop/recommend');
   });
 });
 

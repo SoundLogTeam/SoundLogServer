@@ -890,7 +890,7 @@ async function fetchMlRecommendationPlaylist(
 ): Promise<MlPlaylistDto | undefined> {
   const location = input.location;
 
-  if (!location) {
+  if (!location || !env.ML_RECOMMENDATION_API_URL) {
     return undefined;
   }
 

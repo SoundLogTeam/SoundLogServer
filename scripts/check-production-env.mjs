@@ -48,6 +48,15 @@ if (!isHttpsUrl(process.env.UPLOAD_PUBLIC_BASE_URL)) {
   addError('UPLOAD_PUBLIC_BASE_URL must be an HTTPS URL.');
 }
 
+if (
+  process.env.ML_RECOMMENDATION_API_URL &&
+  !isHttpsUrl(process.env.ML_RECOMMENDATION_API_URL)
+) {
+  addWarning(
+    'ML_RECOMMENDATION_API_URL is not HTTPS and will be disabled; seed recommendations will be used.',
+  );
+}
+
 const clientUrls = (process.env.CLIENT_URLS ?? process.env.CLIENT_URL ?? '')
   .split(',')
   .map((url) => url.trim())

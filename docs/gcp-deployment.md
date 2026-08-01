@@ -42,7 +42,8 @@ POSTGRES_PASSWORD=<generated-db-password>
 POSTGRES_DB=soundlog
 JWT_SECRET=<generated-jwt-secret>
 JWT_EXPIRES_IN_SECONDS=3600
-ML_RECOMMENDATION_API_URL=http://211.188.54.204:8000/recommend
+# Optional. Configure only an HTTPS endpoint. Empty or non-HTTPS values use seed fallback.
+ML_RECOMMENDATION_API_URL=
 ML_RECOMMENDATION_TIMEOUT_MS=5000
 REQUEST_BODY_LIMIT=1mb
 MOMENT_PHOTO_MAX_FILE_SIZE_MB=10
@@ -56,6 +57,8 @@ USE_MOCK_DB=false
 ```
 
 `UPLOAD_PUBLIC_BASE_URL` is a fixed HTTPS value because Caddy terminates TLS at the same domain. The workflow prepends `DOCKER_IMAGE=<dockerhub-username>/soundlog-server:<tag>` and injects a URL-encoded internal `DATABASE_URL` at deploy time, so do not include those values in `PRODUCTION_ENV`.
+
+`ML_RECOMMENDATION_API_URL` is optional. In production, the server ignores a non-HTTPS value and returns the existing seed recommendation fallback without sending location or mood to the ML server. Run `pnpm check:production-env` before deployment to surface that configuration.
 
 `TOUR_API_SERVICE_KEY` ships blank; set the real data.go.kr key if the tour-recommendation feature needs to work in production.
 
