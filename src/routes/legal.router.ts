@@ -45,7 +45,7 @@ const privacyPage: LegalPage = {
     },
     {
       title: '외부 음악 링크',
-      body: 'Soundlog는 Spotify, YouTube, YouTube Music, Melon 등 외부 음악 서비스의 검색 또는 재생 링크를 열 수 있습니다. 링크를 열면 해당 서비스의 정책이 적용되며, Soundlog는 외부 음악 서비스 계정 정보나 재생 계정을 수집하지 않습니다.',
+      body: 'Soundlog는 외부 음악 서비스의 검색 또는 재생 링크를 열 수 있습니다. 링크를 열면 해당 서비스의 정책이 적용되며, Soundlog는 외부 음악 서비스 계정 정보나 재생 계정을 수집하지 않습니다.',
     },
     {
       title: '보관과 삭제',
