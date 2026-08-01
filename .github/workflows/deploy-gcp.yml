@@ -231,48 +231,6 @@ jobs:
             sudo docker compose -f docker-compose.prod.yml logs --tail=120 api
             exit 1
 
-      - name: Sync frontend Vercel API origin
-        shell: bash
-        env:
-          FRONTEND_VERCEL_PROJECT: ${{ secrets.FRONTEND_VERCEL_PROJECT }}
-          FRONTEND_VERCEL_SCOPE: ${{ secrets.FRONTEND_VERCEL_SCOPE }}
-          FRONTEND_VERCEL_TOKEN: ${{ secrets.FRONTEND_VERCEL_TOKEN }}
-        run: |
-          set -euo pipefail
-
-          if [ -z "$FRONTEND_VERCEL_TOKEN" ]; then
-            echo "Skipping frontend Vercel API origin sync because FRONTEND_VERCEL_TOKEN is not configured."
-            exit 0
-          fi
-
-          api_origin="https://api.soundlog.shop"
-          project="${FRONTEND_VERCEL_PROJECT:-sound-log-app}"
-          scope="${FRONTEND_VERCEL_SCOPE:-mannomis-projects}"
-          tmpdir="$(mktemp -d)"
-
-          cleanup() {
-            rm -rf "$tmpdir"
-          }
-          trap cleanup EXIT
-
-          npx --yes vercel@54.20.1 link \
-            --yes \
-            --scope "$scope" \
-            --project "$project" \
-            --cwd "$tmpdir" \
-            --token "$FRONTEND_VERCEL_TOKEN"
-
-          for environment in preview production; do
-            npx --yes vercel@54.20.1 env add SOUNDLOG_API_ORIGIN "$environment" \
-              --force \
-              --yes \
-              --sensitive \
-              --value "$api_origin" \
-              --cwd "$tmpdir" \
-              --scope "$scope" \
-              --token "$FRONTEND_VERCEL_TOKEN"
-          done
-
       - name: Verify GCP API contract
         uses: appleboy/ssh-action@v1.2.0
         with:
@@ -294,6 +252,9 @@ jobs:
           set -eu
           if curl --fail --silent --show-error --max-time 10 "https://api.soundlog.shop/v1/health" > /tmp/soundlog-external-health.json; then
             cat /tmp/soundlog-external-health.json
+            for path in /legal/privacy /legal/terms /support; do
+              curl --fail --silent --show-error --head --max-time 10 "https://api.soundlog.shop${path}" > /dev/null
+            done
             exit 0
           fi
 

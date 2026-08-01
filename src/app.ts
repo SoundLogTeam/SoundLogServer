@@ -11,6 +11,7 @@ import { requestLoggerMiddleware } from './middlewares/request-logger.middleware
 import { securityMiddleware } from './middlewares/security.middleware.js';
 import { registerSwaggerDocs } from './middlewares/swagger.middleware.js';
 import { createApiRouter } from './routes/index.js';
+import { createLegalRouter } from './routes/legal.router.js';
 import { createUploadsRouter } from './routes/uploads.router.js';
 import { notFound } from './utils/http-error.js';
 
@@ -27,6 +28,7 @@ export function createApp() {
   app.use(jsonBodyParserMiddleware);
   app.use(urlencodedBodyParserMiddleware);
   app.use(requestLoggerMiddleware);
+  app.use(createLegalRouter());
   // Uploaded photos are served only through an authenticated, ownership/visibility-checked
   // endpoint (see uploads.router.ts) — there is no unauthenticated static file serving of
   // the uploads directory.

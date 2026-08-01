@@ -1,6 +1,6 @@
 # GCP deployment
 
-GitHub Actions builds the API image, pushes it to Docker Hub, then connects to a GCP Compute Engine VM and restarts the server with `docker compose`. Postgres and the API run as containers on the VM, exactly like the previous EC2 setup. A `caddy` container in front of the API terminates HTTPS for `api.soundlog.shop` with an automatically issued Let's Encrypt certificate, so the API no longer needs a Vercel proxy for TLS.
+Soundlog는 웹 서비스를 배포하지 않습니다. GitHub Actions builds the API image, pushes it to Docker Hub, then connects to a GCP Compute Engine VM and restarts the server with `docker compose`. Postgres, the API and Caddy run as containers on the VM. The iOS·Android app calls `https://api.soundlog.shop` directly, and Caddy terminates HTTPS with an automatically issued Let's Encrypt certificate.
 
 ## GCP resources
 
@@ -11,8 +11,9 @@ GitHub Actions builds the API image, pushes it to Docker Hub, then connects to a
 | VM | `soundlog-api` (`e2-medium`, Debian 12) |
 | Static IP | reserved as `soundlog-api-ip` in `asia-northeast3` |
 | Firewall | `soundlog-api-allow-ssh-http-https` allows tcp 22/80/443 to the `soundlog-api` tag |
+| Cloud DNS zone | `soundlog-shop` for `soundlog.shop` |
 
-The VM's startup script installs Docker Engine + the Compose plugin and creates `/home/deploy/soundlog-server`. No GCP service account or key is used — the deploy workflow only needs SSH access to the VM's static IP, the same model the EC2 workflow used.
+The VM's startup script installs Docker Engine + the Compose plugin and creates `/home/deploy/soundlog-server`. The deploy workflow uses SSH access to the VM's static IP and does not require a GCP service-account key.
 
 ## Required secrets
 
@@ -28,17 +29,14 @@ Only workflow-level credentials stay as separate GitHub Secrets. Application env
 | `GCP_SSH_KEY` | private key | Private key for the dedicated `deploy` SSH keypair (not a personal key). |
 | `GCP_APP_DIR` | `/home/deploy/soundlog-server` | Directory where compose files and `.env` are written. |
 | `PRODUCTION_ENV` | multiline `.env` | Server runtime environment except generated deployment values. |
-| `FRONTEND_VERCEL_TOKEN` | `vercel_...` | Optional. Enables automatic `SOUNDLOG_API_ORIGIN` sync for the frontend Vercel project. |
-| `FRONTEND_VERCEL_SCOPE` | `mannomis-projects` | Optional. Vercel team/user scope for the frontend project. Defaults to `mannomis-projects`. |
-| `FRONTEND_VERCEL_PROJECT` | `sound-log-app` | Optional. Frontend Vercel project name. Defaults to `sound-log-app`. |
 
 ## `PRODUCTION_ENV` format
 
 Register `PRODUCTION_ENV` as a multiline secret with this format.
 
 ```dotenv
-CLIENT_URL=https://soundlog.shop
-CLIENT_URLS=https://soundlog.shop,https://www.soundlog.shop,https://sound-log-app.vercel.app,http://localhost:8081,http://localhost:8082
+CLIENT_URL=https://api.soundlog.shop
+CLIENT_URLS=https://api.soundlog.shop,http://localhost:8081,http://localhost:8082
 POSTGRES_USER=soundlog
 POSTGRES_PASSWORD=<generated-db-password>
 POSTGRES_DB=soundlog
@@ -57,19 +55,26 @@ UPLOAD_PUBLIC_BASE_URL=https://api.soundlog.shop
 USE_MOCK_DB=false
 ```
 
-Unlike the EC2 workflow, `UPLOAD_PUBLIC_BASE_URL` is a fixed HTTPS value here since Caddy always terminates TLS at the same domain — the workflow no longer derives it from a host:port pair. The workflow prepends `DOCKER_IMAGE=<dockerhub-username>/soundlog-server:<tag>` and injects a URL-encoded internal `DATABASE_URL` at deploy time, so do not include those values in `PRODUCTION_ENV`.
+`UPLOAD_PUBLIC_BASE_URL` is a fixed HTTPS value because Caddy terminates TLS at the same domain. The workflow prepends `DOCKER_IMAGE=<dockerhub-username>/soundlog-server:<tag>` and injects a URL-encoded internal `DATABASE_URL` at deploy time, so do not include those values in `PRODUCTION_ENV`.
 
 `TOUR_API_SERVICE_KEY` ships blank; set the real data.go.kr key if the tour-recommendation feature needs to work in production.
 
 ## `api.soundlog.shop` DNS
 
-Add this record in **Gabia DNS** (the registrar used for `soundlog.shop`, see `SOUNDLOG_SHOP_DOMAIN.md` in the SoundLogApp repo):
+GCP project `nomi-app-deploy-2026` has a public Cloud DNS zone named `soundlog-shop`. Delegate the domain at the registrar to these nameservers:
+
+- `ns-cloud-d1.googledomains.com`
+- `ns-cloud-d2.googledomains.com`
+- `ns-cloud-d3.googledomains.com`
+- `ns-cloud-d4.googledomains.com`
+
+The zone contains this record:
 
 | Type | Host | Value |
 | --- | --- | --- |
 | `A` | `api` | `34.64.116.40` |
 
-Caddy cannot issue a Let's Encrypt certificate for `api.soundlog.shop` until this record resolves. Until then, `https://api.soundlog.shop` will fail and the deploy workflow's final reachability check is expected to warn (non-blocking).
+Caddy cannot issue a Let's Encrypt certificate for `api.soundlog.shop` until the registrar delegates the domain to Cloud DNS. Existing AWS Route 53 and Vercel nameservers are not part of the production path.
 
 ## Register secrets with GitHub CLI
 
@@ -86,9 +91,6 @@ gh secret set GCP_SSH_KEY --repo SoundLogTeam/SoundLogServer < ~/.ssh/soundlog-g
 gh secret set GCP_APP_DIR --repo SoundLogTeam/SoundLogServer --body '/home/deploy/soundlog-server'
 gh secret set PRODUCTION_ENV --repo SoundLogTeam/SoundLogServer < .env.production
 
-gh secret set FRONTEND_VERCEL_TOKEN --repo SoundLogTeam/SoundLogServer --body '<vercel-token>'
-gh secret set FRONTEND_VERCEL_SCOPE --repo SoundLogTeam/SoundLogServer --body 'mannomis-projects'
-gh secret set FRONTEND_VERCEL_PROJECT --repo SoundLogTeam/SoundLogServer --body 'sound-log-app'
 ```
 
 ## Run deployment
@@ -99,13 +101,16 @@ The workflow runs automatically after a push to `main`. You can also deploy manu
 gh workflow run deploy-gcp.yml --repo SoundLogTeam/SoundLogServer
 ```
 
-After deployment, the API container runs Prisma migrations and upserts the public music catalog used by the frontend. The workflow verifies API health from inside the `api` container over SSH and runs the API contract check from inside the deployed container. It then checks `https://api.soundlog.shop/v1/health` from GitHub Actions; this step is informational until the DNS record above is in place.
+After deployment, the API container runs Prisma migrations and upserts the public music catalog used by the app. The workflow verifies API health from inside the `api` container over SSH and runs the API contract check from inside the deployed container. It then checks `https://api.soundlog.shop/v1/health` from GitHub Actions; this step is informational until DNS delegation is complete.
 
 ## Verification
 
 ```sh
 dig +short api.soundlog.shop A
 curl https://api.soundlog.shop/v1/health
+curl -I https://api.soundlog.shop/legal/privacy
+curl -I https://api.soundlog.shop/legal/terms
+curl -I https://api.soundlog.shop/support
 ```
 
 Run from the SoundLogApp repo to validate the full contract against the live origin:
