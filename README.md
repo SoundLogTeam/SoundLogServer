@@ -100,7 +100,7 @@ Swagger에서 바로 DB 쓰기를 확인할 때는 인증 없이 호출 가능�
 - 자체 이메일/비밀번호 로그인만 사용하며, 서버는 비밀번호 원문 대신 bcrypt hash만 저장
 - `CLIENT_URLS`, `UPLOAD_PUBLIC_BASE_URL`, 앱의 `EXPO_PUBLIC_SOUNDLOG_API_BASE_URL`은 HTTPS 도메인 사용
 - 운영 기준 frontend origin은 `https://soundlog.shop`입니다. 공개 API URL은 `https://api.soundlog.shop`이며, GCP VM 위의 Caddy가 TLS를 직접 종료합니다.
-- `REQUEST_BODY_LIMIT`, `MOMENT_PHOTO_MAX_FILE_SIZE_MB`, `UPLOAD_DIRECTORY`, `UPLOAD_PUBLIC_PATH`는 운영 파일 업로드 정책에 맞게 조정
+- `REQUEST_BODY_LIMIT`, `MOMENT_PHOTO_MAX_FILE_SIZE_MB`, `UPLOAD_DIRECTORY`는 운영 파일 업로드 정책에 맞게 조정
 - iOS 앱 설정에 전체 ATS 예외를 넣지 않기
 
 서버 코드는 자체 계정 로그인(`POST /v1/auth/login`, `POST /v1/auth/register`)으로 Soundlog access/refresh token을 발급합니다.

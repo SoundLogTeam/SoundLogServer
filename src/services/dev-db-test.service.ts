@@ -40,6 +40,13 @@ function toDto(record: {
 
 export const devDbTestService = {
   async createRecord(input: CreateDbTestRecordInput) {
+    // Defense in depth: this endpoint must never write to the database in
+    // production, even if it were ever reachable there (e.g. misconfigured
+    // routing). The route itself is also not registered in production.
+    if (env.NODE_ENV === 'production') {
+      throw new Error('devDbTestService.createRecord is disabled in production.');
+    }
+
     const label = input.label ?? 'swagger-db-test';
     const payload = input.payload ?? {};
 

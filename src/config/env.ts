@@ -7,6 +7,11 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((value) => value === 'true'),
+  AUTH_RATE_LIMIT_ENABLED: z.string().optional(),
+  AUTH_RATE_LIMIT_IP_MAX: z.coerce.number().int().positive().default(40),
+  AUTH_RATE_LIMIT_IP_WINDOW_MS: z.coerce.number().int().positive().default(15 * 60 * 1000),
+  AUTH_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(10),
+  AUTH_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(15 * 60 * 1000),
   CLIENT_URL: z.string().url().default('http://localhost:8081'),
   CLIENT_URLS: z.string().optional(),
   DATABASE_URL: z.string().min(1),
@@ -37,7 +42,17 @@ const envSchema = z.object({
     .transform((value) => value === 'true'),
   UPLOAD_DIRECTORY: z.string().min(1).default('uploads'),
   UPLOAD_PUBLIC_BASE_URL: z.string().url().default('http://localhost:4000'),
-  UPLOAD_PUBLIC_PATH: z.string().min(1).default('/uploads'),
 });
 
-export const env = envSchema.parse(process.env);
+const parsedEnv = envSchema.parse(process.env);
+
+export const env = {
+  ...parsedEnv,
+  // Defaults to disabled under NODE_ENV=test so existing tests that call
+  // auth endpoints repeatedly are not destabilized. Set
+  // AUTH_RATE_LIMIT_ENABLED=true explicitly to exercise the limiter in tests.
+  AUTH_RATE_LIMIT_ENABLED:
+    parsedEnv.AUTH_RATE_LIMIT_ENABLED === undefined
+      ? parsedEnv.NODE_ENV !== 'test'
+      : parsedEnv.AUTH_RATE_LIMIT_ENABLED === 'true',
+};
