@@ -54,7 +54,6 @@ TOUR_API_BASE_URL=https://apis.data.go.kr/B551011/KorService2
 TOUR_API_SERVICE_KEY=
 ALLOW_DEV_AUTH_FALLBACK=false
 UPLOAD_PUBLIC_BASE_URL=https://api.soundlog.shop
-UPLOAD_PUBLIC_PATH=/uploads
 USE_MOCK_DB=false
 ```
 

@@ -16,8 +16,13 @@ import {
   travelSessionController,
   trendController,
 } from '../controllers/index.js';
+import { env } from '../config/env.js';
 import { asyncHandler } from '../utils/async-handler.js';
 import { authMiddleware } from '../middlewares/auth.middleware.js';
+import {
+  authAccountRateLimitMiddleware,
+  authIpRateLimitMiddleware,
+} from '../middlewares/rate-limit.middleware.js';
 import { momentPhotoUpload } from '../middlewares/upload.middleware.js';
 import { validate } from '../middlewares/validate.middleware.js';
 import {
@@ -40,24 +45,37 @@ export function createApiRouter() {
   const router = Router();
 
   router.get('/v1/health', asyncHandler(systemController.getHealth));
-  router.post(
-    '/v1/dev/db-test-records',
-    validate({ body: devDbTestValidators.createBody }),
-    asyncHandler(devDbTestController.createRecord),
-  );
+
+  // Dev-only DB smoke-test endpoint. Never registered in production, and
+  // requires auth everywhere else (see src/services/dev-db-test.service.ts
+  // for a defensive production guard as well).
+  if (env.NODE_ENV !== 'production') {
+    router.post(
+      '/v1/dev/db-test-records',
+      authMiddleware,
+      validate({ body: devDbTestValidators.createBody }),
+      asyncHandler(devDbTestController.createRecord),
+    );
+  }
 
   router.post(
     '/v1/auth/login',
+    authIpRateLimitMiddleware,
+    authAccountRateLimitMiddleware,
     validate({ body: authValidators.loginBody }),
     asyncHandler(authController.login),
   );
   router.post(
     '/v1/auth/register',
+    authIpRateLimitMiddleware,
+    authAccountRateLimitMiddleware,
     validate({ body: authValidators.registerBody }),
     asyncHandler(authController.register),
   );
   router.post(
     '/v1/auth/refresh',
+    authIpRateLimitMiddleware,
+    authAccountRateLimitMiddleware,
     validate({ body: authValidators.refreshBody }),
     asyncHandler(authController.refresh),
   );
