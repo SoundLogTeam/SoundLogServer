@@ -879,6 +879,7 @@ export async function seedPublicCatalog() {
   await seedPlaylists();
   await seedMoodRecommendations();
   await seedRegionSoundTrends();
+  await seedPlaces();
 }
 
 export async function seedDatabase() {
@@ -948,7 +949,6 @@ export async function seedDatabase() {
   });
 
   await seedPublicCatalog();
-  await seedPlaces();
 
   const seedRoutePoints = recaps[0]?.routePoints ?? [];
 

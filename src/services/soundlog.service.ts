@@ -25,6 +25,7 @@ import path from 'node:path';
 import { env } from '../config/env.js';
 import { ERROR_MESSAGES } from '../constants/error.constants.js';
 import { prisma } from '../config/prisma.js';
+import { UPLOAD_FILE_ID_PATTERN } from '../middlewares/upload.middleware.js';
 import { getLimit, paginateByCursor } from '../utils/pagination.js';
 import { createPublicId } from '../utils/tokens.js';
 import { badRequest, forbidden, notFound } from '../utils/http-error.js';
@@ -609,12 +610,21 @@ function getLocalUploadedFilePath(photoUrl?: string | null) {
     return undefined;
   }
 
-  const uploadPublicRoot = normalizePublicUrl(env.UPLOAD_PUBLIC_BASE_URL, env.UPLOAD_PUBLIC_PATH);
-  const fileName = photoUrl.startsWith(`${uploadPublicRoot}/`)
-    ? photoUrl.slice(uploadPublicRoot.length + 1)
-    : undefined;
+  // Only the trailing path segment matters: it is validated against the same fileId
+  // pattern the uploads endpoint enforces, so this works for both the current
+  // `/v1/uploads/<fileId>` URLs and any legacy `/uploads/<fileId>` URLs already stored
+  // in the database, without trusting anything else in the string.
+  let pathname: string;
 
-  if (!fileName || fileName.includes('/') || fileName.includes('\\')) {
+  try {
+    pathname = new URL(photoUrl).pathname;
+  } catch {
+    pathname = photoUrl;
+  }
+
+  const fileName = pathname.split('/').pop();
+
+  if (!fileName || !UPLOAD_FILE_ID_PATTERN.test(fileName)) {
     return undefined;
   }
 
@@ -628,7 +638,9 @@ async function deleteLocalUploadedFile(photoUrl?: string | null) {
     return;
   }
 
-  await fs.unlink(filePath).catch(() => undefined);
+  await fs.unlink(filePath).catch((error) => {
+    console.warn(`Failed to delete uploaded file at ${filePath}`, error);
+  });
 }
 
 function asString(value: unknown) {
@@ -878,7 +890,7 @@ async function fetchMlRecommendationPlaylist(
 ): Promise<MlPlaylistDto | undefined> {
   const location = input.location;
 
-  if (!location) {
+  if (!location || !env.ML_RECOMMENDATION_API_URL) {
     return undefined;
   }
 
@@ -2188,15 +2200,24 @@ export const soundlogService = {
     },
     idempotencyKey?: string,
   ) {
-    return withIdempotency(
-      { idempotencyKey, scope: 'moment-log.create', userId },
-      async () => {
-        const location =
-          input.lat !== undefined && input.lng !== undefined
-            ? { lat: input.lat, lng: input.lng }
-            : undefined;
+    // multer already wrote the uploaded file to disk before this runs. If the request
+    // turns out to be an idempotent duplicate (withIdempotency returns a cached response
+    // without invoking the action below) or if the action throws before a MomentLog row
+    // is committed, the just-written file is never referenced by any row and would be
+    // orphaned on disk. `persisted` tracks whether this call actually attached the file
+    // to a saved row so the `finally` block can clean it up in every other case.
+    let persisted = false;
 
-        assertPublicRecapHasLocation(input.visibility, location);
+    try {
+      return await withIdempotency(
+        { idempotencyKey, scope: 'moment-log.create', userId },
+        async () => {
+          const location =
+            input.lat !== undefined && input.lng !== undefined
+              ? { lat: input.lat, lng: input.lng }
+              : undefined;
+
+          assertPublicRecapHasLocation(input.visibility, location);
 
         const track = input.trackId
           ? await prisma.track.findUnique({ where: { id: input.trackId } })
@@ -2246,9 +2267,22 @@ export const soundlogService = {
           return created;
         });
 
+        persisted = true;
+
         return momentLogToDto(log);
-      },
-    );
+        },
+      );
+    } finally {
+      // Cached idempotent replay (action above never ran) or a thrown error before the
+      // row was committed both leave `persisted` false — in either case the file multer
+      // just wrote is orphaned and should not linger on disk. Deletion failures are only
+      // logged (see deleteLocalUploadedFile) and never override the real response/error.
+      if (!persisted && input.photoPath) {
+        await deleteLocalUploadedFile(
+          normalizePublicUrl(env.UPLOAD_PUBLIC_BASE_URL, input.photoPath),
+        );
+      }
+    }
   },
 
   async updateMomentLog(
@@ -2371,36 +2405,52 @@ export const soundlogService = {
 
   async updateMomentLogPhoto(userId: string, momentLogId: string, photoPath: string) {
     const nextPhotoUrl = normalizePublicUrl(env.UPLOAD_PUBLIC_BASE_URL, photoPath);
-    const existing = await prisma.momentLog.findFirst({
-      where: {
-        id: momentLogId,
-        userId,
-      },
-    });
+    // multer already wrote the new photo to disk before this runs. `persisted` tracks
+    // whether it actually got attached to a saved row (target not found, or the DB
+    // transaction throwing, both leave it false) so the `finally` block below can clean up
+    // the newly uploaded file in every case that isn't a successful replace — mirroring the
+    // same orphan-file guard used in createMomentLog.
+    let persisted = false;
 
-    if (!existing) {
-      await deleteLocalUploadedFile(nextPhotoUrl);
-      throw notFound(ERROR_MESSAGES.MOMENT_LOG_NOT_FOUND);
+    try {
+      const existing = await prisma.momentLog.findFirst({
+        where: {
+          id: momentLogId,
+          userId,
+        },
+      });
+
+      if (!existing) {
+        throw notFound(ERROR_MESSAGES.MOMENT_LOG_NOT_FOUND);
+      }
+
+      const updated = await prisma.$transaction(async (transaction) => {
+        const nextMoment = await transaction.momentLog.update({
+          where: { id: existing.id },
+          data: { photoUrl: nextPhotoUrl },
+        });
+
+        await refreshRecapAggregates(transaction, {
+          momentIds: [existing.id],
+          sessionIds: [existing.sessionId],
+          userId,
+        });
+
+        return nextMoment;
+      });
+
+      persisted = true;
+
+      // Only delete the previous photo after the new one is safely committed, so a crash
+      // or failure between these two steps never leaves the moment without any photo file.
+      await deleteLocalUploadedFile(existing.photoUrl);
+
+      return momentLogToDto(updated);
+    } finally {
+      if (!persisted) {
+        await deleteLocalUploadedFile(nextPhotoUrl);
+      }
     }
-
-    const updated = await prisma.$transaction(async (transaction) => {
-      const nextMoment = await transaction.momentLog.update({
-        where: { id: existing.id },
-        data: { photoUrl: nextPhotoUrl },
-      });
-
-      await refreshRecapAggregates(transaction, {
-        momentIds: [existing.id],
-        sessionIds: [existing.sessionId],
-        userId,
-      });
-
-      return nextMoment;
-    });
-
-    await deleteLocalUploadedFile(existing.photoUrl);
-
-    return momentLogToDto(updated);
   },
 
   async deleteMomentLogPhoto(userId: string, momentLogId: string) {
