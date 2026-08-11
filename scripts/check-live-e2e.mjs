@@ -126,7 +126,7 @@ let primary;
 let companion;
 
 try {
-  await step('system health, OpenAPI, docs, and DB write', async () => {
+  await step('system health, OpenAPI, and docs', async () => {
     const health = await request('/v1/health');
     assert(health.payload?.data?.status === 'ok', 'Health status is not ok.');
     assert(health.payload?.data?.database === 'ok', 'Database status is not ok.');
@@ -135,12 +135,10 @@ try {
     assert(String(openApi.payload).includes('openapi: 3.1.0'), 'OpenAPI document is missing.');
     await request('/docs/', { expectedStatus: 200 });
 
-    const dbRecord = await request('/v1/dev/db-test-records', {
-      body: { label: `live-e2e-${runId}`, payload: { source: 'check-live-e2e' } },
-      expectedStatus: 201,
-      method: 'POST',
-    });
-    assert(dbRecord.payload?.data?.id, 'DB test write did not return an id.');
+    // /v1/dev/db-test-records now requires auth and is unregistered in
+    // production, so it is no longer exercised by this unauthenticated
+    // smoke step. DB write behavior is still covered by the authenticated
+    // steps below (registration, recap captures, etc.).
   });
 
   await step('register, login, refresh, profile, and migration', async () => {

@@ -1,12 +1,30 @@
 import bcrypt from 'bcrypt';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import request from 'supertest';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { createApp } from '../src/app.js';
+import { env } from '../src/config/env.js';
 import { prisma } from '../src/config/prisma.js';
 import { mockDb, resetMockDb } from '../src/mock/mock-db.js';
 import { reverseGeocodeLocation } from '../src/services/reverse-geocoding.service.js';
 import { disconnectSeedDatabase, seedDatabase } from '../prisma/seed.js';
+
+function fileIdFromPhotoUrl(photoUrl: string) {
+  return new URL(photoUrl).pathname.split('/').pop() as string;
+}
+
+// Real JPEG SOI + APP0/JFIF magic bytes. The server now determines Content-Type for
+// GET /v1/uploads/:fileId purely from the file's leading bytes (see
+// upload-file.service.ts#detectImageContentType) rather than trusting the client-supplied
+// upload MIME type, so test fixtures need genuine image bytes for "serves the file back
+// out" assertions to mean anything.
+const JPEG_MAGIC_BYTES = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46]);
+
+function fakeJpegBuffer(label: string) {
+  return Buffer.concat([JPEG_MAGIC_BYTES, Buffer.from(label)]);
+}
 
 const app = createApp();
 const useMockDb = process.env.USE_MOCK_DB === 'true';
@@ -116,7 +134,7 @@ async function createTestMomentLog(input: {
   }
 
   const response = await requestBuilder
-    .attach('photo', Buffer.from('fake-image'), {
+    .attach('photo', fakeJpegBuffer('fake-image'), {
       filename: input.filename,
       contentType: 'image/jpeg',
     });
@@ -173,9 +191,24 @@ describe('Soundlog API', () => {
     expect(v1Docs.headers.location).toBe('/docs');
   });
 
-  it('creates a DB test record without auth', async () => {
+  it('rejects the dev DB test route without auth', async () => {
     const response = await request(app)
       .post('/v1/dev/db-test-records')
+      .send({
+        label: 'swagger-smoke-test',
+        payload: {
+          source: 'api-test',
+        },
+      });
+
+    expect(response.status).toBe(401);
+    expect(response.body.error.code).toBe('UNAUTHORIZED');
+  });
+
+  it('creates a DB test record with auth', async () => {
+    const response = await request(app)
+      .post('/v1/dev/db-test-records')
+      .set('Authorization', authHeader)
       .send({
         label: 'swagger-smoke-test',
         payload: {
@@ -675,7 +708,7 @@ describe('Soundlog API', () => {
       .field('note', '카페 거리에서 남긴 테스트 메모')
       .field('placeName', '테스트 장소')
       .field('trackId', 'seoul-city')
-      .attach('photo', Buffer.from('fake-image'), {
+      .attach('photo', fakeJpegBuffer('fake-image'), {
         filename: 'moment.jpg',
         contentType: 'image/jpeg',
       });
@@ -693,7 +726,7 @@ describe('Soundlog API', () => {
       .field('note', '중복 요청 메모는 반영되지 않아야 함')
       .field('placeName', '중복 요청 장소')
       .field('trackId', 'seoul-city')
-      .attach('photo', Buffer.from('fake-image'), {
+      .attach('photo', fakeJpegBuffer('fake-image'), {
         filename: 'moment-duplicate.jpg',
         contentType: 'image/jpeg',
       });
@@ -735,7 +768,7 @@ describe('Soundlog API', () => {
       .field('note', '새 리캡 캡처 경로 테스트')
       .field('placeName', '리캡 캡처 테스트 장소')
       .field('trackId', 'seoul-city')
-      .attach('photo', Buffer.from('alias-image'), {
+      .attach('photo', fakeJpegBuffer('alias-image'), {
         filename: 'recap-capture.jpg',
         contentType: 'image/jpeg',
       });
@@ -783,7 +816,7 @@ describe('Soundlog API', () => {
     const photoUpdated = await request(app)
       .put(`/v1/moment-logs/${created.body.data.id}/photo`)
       .set('Authorization', authHeader)
-      .attach('photo', Buffer.from('replacement-image'), {
+      .attach('photo', fakeJpegBuffer('replacement-image'), {
         filename: 'moment-replacement.jpg',
         contentType: 'image/jpeg',
       });
@@ -806,7 +839,7 @@ describe('Soundlog API', () => {
     const aliasPhotoUpdated = await request(app)
       .put(`/v1/recap-captures/${aliasCreated.body.data.id}/photo`)
       .set('Authorization', authHeader)
-      .attach('photo', Buffer.from('alias-replacement-image'), {
+      .attach('photo', fakeJpegBuffer('alias-replacement-image'), {
         filename: 'recap-capture-replacement.jpg',
         contentType: 'image/jpeg',
       });
@@ -1259,17 +1292,22 @@ describe('Soundlog API', () => {
       trackTitle: '한강에서',
     });
     expect(JSON.stringify(mixedVisibilityMarker)).not.toContain('비공개 장소 이름');
-
-    const fixedRadiusMarkers = await request(app)
-      .get('/v1/recap-markers')
-      .query({ lat: 37.5512, lng: 126.9882, radiusMeters: 5000, scope: 'public' })
-      .set('Authorization', authHeader);
-    expect(fixedRadiusMarkers.status).toBe(200);
     expect(
-      fixedRadiusMarkers.body.data.some(
+      publicMarkersAfterUpdate.body.data.some(
         (marker: { recapId: string }) => marker.recapId === farCreated.body.data.id,
       ),
     ).toBe(false);
+
+    const expandedRadiusMarkers = await request(app)
+      .get('/v1/recap-markers')
+      .query({ lat: 37.5512, lng: 126.9882, radiusMeters: 5000, scope: 'public' })
+      .set('Authorization', authHeader);
+    expect(expandedRadiusMarkers.status).toBe(200);
+    expect(
+      expandedRadiusMarkers.body.data.some(
+        (marker: { recapId: string }) => marker.recapId === farCreated.body.data.id,
+      ),
+    ).toBe(true);
 
     const duplicate = await request(app)
       .post('/v1/recaps')
@@ -1859,6 +1897,375 @@ describe('Soundlog API', () => {
     expect(response.body.data.regionName).toBe('부산');
     expect(response.body.data.topTracks.length).toBeGreaterThan(0);
   });
+
+  (useMockDb ? describe.skip : describe)('GET /v1/uploads/:fileId access control', () => {
+    it('lets the owner fetch their own private moment photo', async () => {
+      const moment = await createTestMomentLog({
+        authHeader,
+        filename: 'owner-private.jpg',
+        placeName: '업로드 접근 테스트',
+      });
+      const fileId = fileIdFromPhotoUrl(moment.photoUrl);
+
+      const response = await request(app)
+        .get(`/v1/uploads/${fileId}`)
+        .set('Authorization', authHeader);
+
+      expect(response.status).toBe(200);
+    });
+
+    it('returns 404 (not 403) when another user requests a private photo', async () => {
+      const moment = await createTestMomentLog({
+        authHeader,
+        filename: 'owner-private-other.jpg',
+        placeName: '업로드 접근 테스트',
+      });
+      const fileId = fileIdFromPhotoUrl(moment.photoUrl);
+      const otherAccessToken = await getToken();
+
+      const response = await request(app)
+        .get(`/v1/uploads/${fileId}`)
+        .set('Authorization', `Bearer ${otherAccessToken}`);
+
+      expect(response.status).toBe(404);
+    });
+
+    it('rejects an unauthenticated request for a private photo', async () => {
+      const moment = await createTestMomentLog({
+        authHeader,
+        filename: 'owner-private-anon.jpg',
+        placeName: '업로드 접근 테스트',
+      });
+      const fileId = fileIdFromPhotoUrl(moment.photoUrl);
+
+      const response = await request(app).get(`/v1/uploads/${fileId}`);
+
+      expect([401, 404]).toContain(response.status);
+    });
+
+    it('lets another authenticated user fetch a public moment photo', async () => {
+      const moment = await createTestMomentLog({
+        authHeader,
+        filename: 'owner-public.jpg',
+        lat: 37.5665,
+        lng: 126.978,
+        placeName: '업로드 접근 테스트(공개)',
+        visibility: 'public',
+      });
+      const fileId = fileIdFromPhotoUrl(moment.photoUrl);
+      const otherAccessToken = await getToken();
+
+      const response = await request(app)
+        .get(`/v1/uploads/${fileId}`)
+        .set('Authorization', `Bearer ${otherAccessToken}`);
+
+      expect(response.status).toBe(200);
+    });
+
+    it('returns 404 for a well-formed file id that does not exist', async () => {
+      const response = await request(app)
+        .get(`/v1/uploads/${'a'.repeat(32)}`)
+        .set('Authorization', authHeader);
+
+      expect(response.status).toBe(404);
+    });
+
+    it('blocks path traversal, absolute paths, and encoded separators in the file id', async () => {
+      const maliciousIds = [
+        '../../../etc/passwd',
+        '..%2f..%2f..%2fetc%2fpasswd',
+        '%2e%2e%2f%2e%2e%2fsrc%2fapp.ts',
+        encodeURIComponent('../../../etc/passwd'),
+        encodeURIComponent('/etc/passwd'),
+        // Double URL-encoding: decodes once (by Express) to a still-encoded traversal
+        // sequence, which must still fail the anchored hex pattern rather than being
+        // decoded a second time and slipping through.
+        '%252e%252e%252fetc%252fpasswd',
+        encodeURIComponent(encodeURIComponent('../../../etc/passwd')),
+        // Backslash variants (meaningful as a path separator on Windows filesystems).
+        '..\\..\\..\\etc\\passwd',
+        encodeURIComponent('..\\..\\..\\etc\\passwd'),
+        '%5c..%5c..%5cetc%5cpasswd',
+        // A well-formed 32-hex id with an extra path segment before or after it.
+        `${'a'.repeat(32)}/../../../etc/passwd`,
+        `some-prefix/${'a'.repeat(32)}`,
+        `${'a'.repeat(32)}/extra-suffix`,
+        encodeURIComponent('a'.repeat(32) + ' '),
+      ];
+
+      for (const maliciousId of maliciousIds) {
+        const response = await request(app)
+          .get(`/v1/uploads/${maliciousId}`)
+          .set('Authorization', authHeader);
+
+        expect(response.status).not.toBe(200);
+        expect(response.text ?? '').not.toContain('root:');
+      }
+    });
+
+    it('rejects traversal attempts hidden behind a query string', async () => {
+      const response = await request(app)
+        .get('/v1/uploads/..%2f..%2f..%2fetc%2fpasswd?x=1')
+        .set('Authorization', authHeader);
+
+      expect(response.status).not.toBe(200);
+      expect(response.text ?? '').not.toContain('root:');
+    });
+
+    it('still resolves a valid file id when a harmless query string is appended', async () => {
+      const moment = await createTestMomentLog({
+        authHeader,
+        filename: 'owner-with-query.jpg',
+        placeName: '쿼리스트링 테스트',
+      });
+      const fileId = fileIdFromPhotoUrl(moment.photoUrl);
+
+      const response = await request(app)
+        .get(`/v1/uploads/${fileId}?cachebust=1`)
+        .set('Authorization', authHeader);
+
+      expect(response.status).toBe(200);
+    });
+
+    (useMockDb ? it.skip : it)(
+      'returns 404 for a real on-disk file that has no matching DB record',
+      async () => {
+        const uploadDir = path.resolve(env.UPLOAD_DIRECTORY);
+        const orphanFileId = 'f'.repeat(32);
+        const orphanFilePath = path.join(uploadDir, orphanFileId);
+
+        await fs.writeFile(orphanFilePath, fakeJpegBuffer('untracked-file'));
+
+        try {
+          const response = await request(app)
+            .get(`/v1/uploads/${orphanFileId}`)
+            .set('Authorization', authHeader);
+
+          expect(response.status).toBe(404);
+        } finally {
+          await fs.unlink(orphanFilePath).catch(() => undefined);
+        }
+      },
+    );
+
+    it('sets an image Content-Type derived from the file bytes and keeps nosniff enabled', async () => {
+      const moment = await createTestMomentLog({
+        authHeader,
+        filename: 'owner-content-type.jpg',
+        placeName: '콘텐츠 타입 테스트',
+      });
+      const fileId = fileIdFromPhotoUrl(moment.photoUrl);
+
+      const response = await request(app)
+        .get(`/v1/uploads/${fileId}`)
+        .set('Authorization', authHeader);
+
+      expect(response.status).toBe(200);
+      expect(response.headers['content-type']).toMatch(/^image\/jpeg/);
+      expect(response.headers['x-content-type-options']).toBe('nosniff');
+    });
+
+    (useMockDb ? it.skip : it)(
+      'never serves a stored file as an image when its on-disk bytes are not a recognized image signature',
+      async () => {
+        const uploadDir = path.resolve(env.UPLOAD_DIRECTORY);
+
+        const moment = await createTestMomentLog({
+          authHeader,
+          filename: 'will-be-corrupted.jpg',
+          placeName: '비이미지 바이트 테스트',
+        });
+        const fileId = fileIdFromPhotoUrl(moment.photoUrl);
+        const filePath = path.join(uploadDir, fileId);
+
+        // Overwrites the on-disk bytes with non-image content while keeping the same
+        // filename/DB row, so the fileId is legitimately owned but the bytes are not an
+        // image. This confirms the GET endpoint's own magic-byte check — not the
+        // upload-time filter — is the real boundary for what gets served as an image.
+        await fs.writeFile(filePath, Buffer.from('not an image at all'));
+
+        const response = await request(app)
+          .get(`/v1/uploads/${fileId}`)
+          .set('Authorization', authHeader);
+
+        expect(response.status).toBe(404);
+      },
+    );
+  });
+
+  describe('upload MIME whitelist', () => {
+    it('rejects a disallowed declared MIME type without writing a file to disk', async () => {
+      const uploadDir = path.resolve(env.UPLOAD_DIRECTORY);
+      const filesBefore = useMockDb ? undefined : new Set(await fs.readdir(uploadDir));
+
+      const response = await request(app)
+        .post('/v1/moment-logs')
+        .set('Authorization', authHeader)
+        .field('createdAt', new Date().toISOString())
+        .field('moodTags', 'fresh')
+        .field('placeName', 'MIME 화이트리스트 테스트')
+        .attach('photo', Buffer.from('#!/bin/sh\necho not an image\n'), {
+          contentType: 'application/x-sh',
+          filename: 'not-an-image.sh',
+        });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error.code).toBe('BAD_REQUEST');
+
+      if (!useMockDb) {
+        const filesAfter = new Set(await fs.readdir(uploadDir));
+        expect(filesAfter.size).toBe(filesBefore!.size);
+      }
+    });
+
+    it('accepts every image type on the allowed MIME whitelist', async () => {
+      const allowedMimeTypes = [
+        'image/jpeg',
+        'image/png',
+        'image/webp',
+        'image/heic',
+        'image/heif',
+        'image/gif',
+      ];
+
+      for (const mimeType of allowedMimeTypes) {
+        const response = await request(app)
+          .post('/v1/moment-logs')
+          .set('Authorization', authHeader)
+          .field('createdAt', new Date().toISOString())
+          .field('moodTags', 'fresh')
+          .field('placeName', `MIME 허용 테스트 ${mimeType}`)
+          .attach('photo', fakeJpegBuffer(mimeType), {
+            contentType: mimeType,
+            filename: `allowed.${mimeType.split('/')[1]}`,
+          });
+
+        expect(response.status).toBe(201);
+      }
+    });
+  });
+
+  (useMockDb ? describe.skip : describe)('orphaned upload cleanup on failure', () => {
+    it('deletes the newly uploaded file when creating the MomentLog row fails', async () => {
+      const uploadDir = path.resolve(env.UPLOAD_DIRECTORY);
+      const filesBefore = new Set(await fs.readdir(uploadDir));
+
+      // createMomentLog writes the row inside `prisma.$transaction(async (transaction) =>
+      // ...)`. The `transaction` client Prisma hands to that callback is a distinct proxy
+      // per call, so spying on `prisma.momentLog.create` would never intercept it —
+      // `$transaction` itself is the right interception point to simulate a failure deep
+      // inside the write.
+      const transactionSpy = vi
+        .spyOn(prisma, '$transaction')
+        .mockRejectedValueOnce(new Error('simulated DB failure'));
+
+      try {
+        const response = await request(app)
+          .post('/v1/moment-logs')
+          .set('Authorization', authHeader)
+          .field('createdAt', new Date().toISOString())
+          .field('moodTags', 'fresh')
+          .field('placeName', 'DB 실패 정리 테스트')
+          .attach('photo', fakeJpegBuffer('db-failure'), {
+            contentType: 'image/jpeg',
+            filename: 'db-failure.jpg',
+          });
+
+        expect(response.status).toBe(500);
+      } finally {
+        transactionSpy.mockRestore();
+      }
+
+      const filesAfter = new Set(await fs.readdir(uploadDir));
+      expect(filesAfter.size).toBe(filesBefore.size);
+    });
+
+    it('deletes the newly uploaded replacement photo (keeping the original) when the photo-update transaction fails', async () => {
+      const moment = await createTestMomentLog({
+        authHeader,
+        filename: 'photo-update-db-failure.jpg',
+        placeName: 'DB 실패 시 교체 사진 정리 테스트',
+      });
+      const originalFileId = fileIdFromPhotoUrl(moment.photoUrl);
+
+      const uploadDir = path.resolve(env.UPLOAD_DIRECTORY);
+      const filesBefore = new Set(await fs.readdir(uploadDir));
+
+      const transactionSpy = vi
+        .spyOn(prisma, '$transaction')
+        .mockRejectedValueOnce(new Error('simulated DB failure'));
+
+      try {
+        const response = await request(app)
+          .put(`/v1/moment-logs/${moment.id}/photo`)
+          .set('Authorization', authHeader)
+          .attach('photo', fakeJpegBuffer('replacement-db-failure'), {
+            contentType: 'image/jpeg',
+            filename: 'replacement-db-failure.jpg',
+          });
+
+        expect(response.status).toBe(500);
+      } finally {
+        transactionSpy.mockRestore();
+      }
+
+      // The newly uploaded replacement file must not linger on disk...
+      const filesAfter = new Set(await fs.readdir(uploadDir));
+      expect(filesAfter.size).toBe(filesBefore.size);
+
+      // ...and the original photo must still be intact and fetchable.
+      const originalStillServed = await request(app)
+        .get(`/v1/uploads/${originalFileId}`)
+        .set('Authorization', authHeader);
+      expect(originalStillServed.status).toBe(200);
+    });
+  });
+
+  (useMockDb ? it.skip : it)(
+    'deletes the orphaned upload file when an idempotent duplicate request is skipped',
+    async () => {
+      const uploadDir = path.resolve(env.UPLOAD_DIRECTORY);
+      const idempotencyKey = `orphan-cleanup-${Date.now()}`;
+
+      const filesBefore = new Set(await fs.readdir(uploadDir));
+
+      const created = await request(app)
+        .post('/v1/moment-logs')
+        .set('Authorization', authHeader)
+        .set('Idempotency-Key', idempotencyKey)
+        .field('createdAt', new Date().toISOString())
+        .field('moodTags', 'fresh')
+        .field('placeName', '고아 파일 정리 테스트')
+        .attach('photo', fakeJpegBuffer('fake-image-1'), {
+          contentType: 'image/jpeg',
+          filename: 'orphan-first.jpg',
+        });
+      expect(created.status).toBe(201);
+
+      const filesAfterFirst = new Set(await fs.readdir(uploadDir));
+      expect(filesAfterFirst.size).toBe(filesBefore.size + 1);
+
+      const duplicate = await request(app)
+        .post('/v1/moment-logs')
+        .set('Authorization', authHeader)
+        .set('Idempotency-Key', idempotencyKey)
+        .field('createdAt', new Date().toISOString())
+        .field('moodTags', 'fresh')
+        .field('placeName', '고아 파일 정리 테스트(중복)')
+        .attach('photo', fakeJpegBuffer('fake-image-2'), {
+          contentType: 'image/jpeg',
+          filename: 'orphan-duplicate.jpg',
+        });
+      expect(duplicate.status).toBe(201);
+      expect(duplicate.body.data.id).toBe(created.body.data.id);
+
+      // The duplicate request's upload must not be left behind on disk: the idempotency
+      // short-circuit skips the DB write, so the file it wrote is never referenced by any
+      // MomentLog row and should have been cleaned up.
+      const filesAfterDuplicate = new Set(await fs.readdir(uploadDir));
+      expect(filesAfterDuplicate.size).toBe(filesAfterFirst.size);
+    },
+  );
 
   afterAll(async () => {
     if (useMockDb) {
