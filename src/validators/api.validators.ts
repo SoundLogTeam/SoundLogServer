@@ -149,12 +149,6 @@ export const meValidators = {
     preferredMoods: z.array(z.string()),
     travelStyles: z.array(z.string()),
   }),
-  migrationBody: z.object({
-    idempotencyKey: z.string().min(1).max(128),
-    libraryTrackCount: z.number().int().min(0).optional().default(0),
-    momentLogCount: z.number().int().min(0).optional().default(0),
-    recapDraftCount: z.number().int().min(0).optional().default(0),
-  }),
 };
 
 export const tourValidators = {
@@ -256,6 +250,10 @@ export const momentLogValidators = {
   }),
   createBody: z.object({
     artistName: z.string().optional(),
+    createStandaloneRecap: z
+      .union([z.boolean(), z.enum(['true', 'false'])])
+      .transform((value) => value === true || value === 'true')
+      .optional(),
     createdAt: z.string().datetime(),
     lat: z.coerce.number().optional(),
     lng: z.coerce.number().optional(),
@@ -310,7 +308,6 @@ export const recommendationEventValidators = {
             'track_save',
             'track_unsave',
             'moment_log_saved',
-            'moment_log_sync_failed',
             'playlist_open',
             'mood_adjusted',
             'mood_filter_change',

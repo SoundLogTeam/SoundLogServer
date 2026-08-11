@@ -25,7 +25,7 @@ tags:
   - name: Auth
     description: 간편 로그인 및 토큰 관리
   - name: Me
-    description: 사용자 프로필과 로컬 데이터 마이그레이션
+    description: 사용자 프로필과 계정 데이터 관리
   - name: Tour
     description: 관광공사 데이터 기반 장소 컨텍스트
   - name: Home
@@ -289,35 +289,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/UserProfileResponse"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
-  /v1/me/migrate-local-data:
-    post:
-      tags:
-        - Me
-      summary: 로그인 전 로컬 데이터 계정 이관
-      description: |
-        로그인 전 이 기기에 저장된 순간 로그, 좋아요/저장 음악, Recap 초안을 로그인 계정으로 이관합니다.
-        동일한 `Idempotency-Key`로 재시도해도 중복 저장되지 않아야 합니다.
-      operationId: migrateLocalData
-      parameters:
-        - $ref: "#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/LocalDataMigrationRequest"
-      responses:
-        "200":
-          description: 이관 처리 결과
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/LocalDataMigrationResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -756,7 +727,7 @@ paths:
       summary: 리캡 캡처 생성
       description: |
         카메라 버튼으로 촬영한 사진, 현재 위치, 현재 장소, 재생 중인 음악, 무드 태그를 하나의 리캡으로 저장합니다.
-        여행모드 중 `sessionId`가 포함되면 해당 여행 로그에 묶이고, `sessionId`가 없으면 낱개 리캡으로 남습니다.
+        여행모드 중 `sessionId`가 포함되면 해당 여행 로그에 묶입니다. `sessionId`가 없고 `createStandaloneRecap`이 true이면 독립 리캡 공유 데이터를 함께 만들고 응답의 `recapId`로 반환합니다.
         MVP 저장 정책상 사진, 위치, 장소, 곡은 모두 선택값입니다. 음악이나 위치가 없어도 리캡 캡처는 생성할 수 있습니다.
         사진 업로드는 `multipart/form-data`를 기본으로 정의합니다.
       operationId: createRecapCapture
@@ -2769,6 +2740,9 @@ components:
           type: string
           format: binary
           description: 카메라 촬영 이미지 파일. 사진 없이 음악/장소 리캡만 저장할 때는 생략할 수 있습니다.
+        createStandaloneRecap:
+          type: boolean
+          description: 독립 캡처의 리캡 공유 데이터까지 한 요청에서 생성할지 여부입니다. 새 앱이 true로 전송하며 생략하면 기존 클라이언트 방식으로 캡처만 생성합니다.
         createdAt:
           type: string
           format: date-time
@@ -2877,12 +2851,14 @@ components:
         - createdAt
         - moodTags
         - recapVisibility
-        - syncStatus
         - templateId
       properties:
         id:
           type: string
           example: moment_001
+        recapId:
+          type: string
+          description: 여행모드 밖에서 만든 독립 리캡의 공유 식별자입니다. 여행 세션에 속한 리캡은 여행 종료 전까지 이 값이 없습니다.
         photoUrl:
           type: string
           format: uri
@@ -2920,11 +2896,10 @@ components:
             - camera
         syncStatus:
           type: string
+          deprecated: true
+          description: 이전 앱 버전과의 배포 호환을 위해 한시적으로 반환하는 상수입니다. 신규 클라이언트는 사용하지 않습니다.
           enum:
-            - pending
             - synced
-            - failed
-          example: synced
 
     RecommendationEventType:
       type: string
@@ -2937,7 +2912,6 @@ components:
         - track_save
         - track_unsave
         - moment_log_saved
-        - moment_log_sync_failed
         - playlist_open
         - mood_adjusted
         - mood_filter_change
@@ -3968,54 +3942,6 @@ components:
           type: string
           description: 무효화할 refresh token. 없으면 클라이언트 로컬 세션만 정리합니다.
 
-    LocalDataMigrationRequest:
-      type: object
-      required:
-        - idempotencyKey
-      properties:
-        idempotencyKey:
-          type: string
-          maxLength: 128
-          description: 중복 이관 방지용 클라이언트 생성 키
-        momentLogCount:
-          type: integer
-          minimum: 0
-          default: 0
-        libraryTrackCount:
-          type: integer
-          minimum: 0
-          default: 0
-        recapDraftCount:
-          type: integer
-          minimum: 0
-          default: 0
-
-    LocalDataMigrationResult:
-      type: object
-      required:
-        - accepted
-        - migrated
-      properties:
-        accepted:
-          type: boolean
-          example: true
-        migrated:
-          type: object
-          required:
-            - momentLogCount
-            - libraryTrackCount
-            - recapDraftCount
-          properties:
-            momentLogCount:
-              type: integer
-              example: 3
-            libraryTrackCount:
-              type: integer
-              example: 6
-            recapDraftCount:
-              type: integer
-              example: 1
-
     AuthToken:
       type: object
       required:
@@ -4121,14 +4047,6 @@ components:
               $ref: "#/components/schemas/AuthUser"
             profile:
               $ref: "#/components/schemas/UserProfile"
-
-    LocalDataMigrationResponse:
-      type: object
-      required:
-        - data
-      properties:
-        data:
-          $ref: "#/components/schemas/LocalDataMigrationResult"
 
     LibraryTrackListResponse:
       type: object
