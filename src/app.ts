@@ -1,5 +1,6 @@
 import express from 'express';
 
+import { env } from './config/env.js';
 import { ERROR_MESSAGES } from './constants/error.constants.js';
 import {
   jsonBodyParserMiddleware,
@@ -18,10 +19,12 @@ import { notFound } from './utils/http-error.js';
 export function createApp() {
   const app = express();
 
-  // Behind a single Caddy reverse proxy hop (see Caddyfile / docker-compose.prod.yml).
-  // Trusting exactly 1 hop lets req.ip reflect the real client IP (needed for
-  // rate limiting) without allowing X-Forwarded-For spoofing from the client.
-  app.set('trust proxy', 1);
+  // Keep the direct-server default safe: trusting forwarded IP headers without a
+  // known proxy topology lets clients spoof the address used by auth rate limits.
+  // Deployments behind a reverse proxy must set the exact trusted hop count.
+  if (env.TRUST_PROXY_HOPS > 0) {
+    app.set('trust proxy', env.TRUST_PROXY_HOPS);
+  }
 
   app.use(corsMiddleware);
   app.use(securityMiddleware);

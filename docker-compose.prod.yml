@@ -6,8 +6,6 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-soundlog}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB:-soundlog}
-    ports:
-      - "${API_PORT:-4000}:4000"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -39,10 +37,12 @@ services:
       TOUR_API_BASE_URL: ${TOUR_API_BASE_URL:-https://apis.data.go.kr/B551011/KorService2}
       TOUR_API_SERVICE_KEY: ${TOUR_API_SERVICE_KEY:-}
       ALLOW_DEV_AUTH_FALLBACK: ${ALLOW_DEV_AUTH_FALLBACK:-false}
+      TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-0}
       UPLOAD_DIRECTORY: /app/uploads
       UPLOAD_PUBLIC_BASE_URL: ${UPLOAD_PUBLIC_BASE_URL}
-      UPLOAD_PUBLIC_PATH: ${UPLOAD_PUBLIC_PATH:-/uploads}
       USE_MOCK_DB: ${USE_MOCK_DB:-false}
+    ports:
+      - "${API_PORT:-4000}:4000"
     volumes:
       - uploads_data:/app/uploads
     healthcheck:

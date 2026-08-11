@@ -36,6 +36,7 @@ const envSchema = z.object({
     .default('Soundlog/0.1 (+https://github.com/SoundLogTeam/SoundLogServer)'),
   TOUR_API_BASE_URL: z.string().url().default('https://apis.data.go.kr/B551011/KorService2'),
   TOUR_API_SERVICE_KEY: z.string().optional(),
+  TRUST_PROXY_HOPS: z.coerce.number().int().min(0).default(0),
   USE_MOCK_DB: z
     .string()
     .optional()

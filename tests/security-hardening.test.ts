@@ -20,6 +20,7 @@ const MUTATED_KEYS = [
   'AUTH_RATE_LIMIT_IP_MAX',
   'AUTH_RATE_LIMIT_IP_WINDOW_MS',
   'ML_RECOMMENDATION_API_URL',
+  'TRUST_PROXY_HOPS',
 ] as const;
 const originalEnv = Object.fromEntries(
   MUTATED_KEYS.map((key) => [key, process.env[key]]),
@@ -171,5 +172,29 @@ describe('auth rate limiting', () => {
       const response = await request(app).post('/v1/auth/login').send(credentials);
       expect(response.status).not.toBe(429);
     }
+  });
+});
+
+describe('proxy trust configuration', () => {
+  afterEach(() => {
+    restoreEnv();
+  });
+
+  it('does not trust forwarded IP headers by default', async () => {
+    process.env.NODE_ENV = 'test';
+    delete process.env.TRUST_PROXY_HOPS;
+
+    const app = await freshApp();
+
+    expect(app.get('trust proxy')).toBe(false);
+  });
+
+  it('uses the explicitly configured reverse-proxy hop count', async () => {
+    process.env.NODE_ENV = 'test';
+    process.env.TRUST_PROXY_HOPS = '2';
+
+    const app = await freshApp();
+
+    expect(app.get('trust proxy')).toBe(2);
   });
 });
