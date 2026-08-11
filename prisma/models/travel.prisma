@@ -31,7 +31,6 @@ model MomentLog {
   travelMode    String?
   moodTags      String[]
   source        String
-  syncStatus    String
   visibility    String   @default("private")
   user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }

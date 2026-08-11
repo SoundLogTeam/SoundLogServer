@@ -42,10 +42,13 @@ API/DB 호환성 때문에 기술 이름을 즉시 바꾸지 않더라도 제품
 
 ### Standalone Recap
 
-1. 클라이언트가 `sessionId` 없이 Product Recap을 저장한다.
-2. 서버는 독립 리캡 원본을 저장한다.
-3. 공유/지도용 서버 `Recap` row가 필요하면 `sessionId = null`로 생성할 수 있다.
-4. 이 결과는 Product Log 목록에서 제외한다.
+1. 신규 클라이언트가 `POST /v1/recap-captures`에 `sessionId` 없이 `createStandaloneRecap: true`를 보내 Product Recap을 저장한다.
+2. 서버는 독립 리캡 원본과 공유 및 지도용 서버 `Recap` row를 함께 만든다.
+3. 응답은 독립 리캡의 공유 식별자를 `recapId`로 반환한다.
+4. 같은 idempotency key로 재요청하면 기존 원본과 공유 데이터를 반환한다.
+5. 이 결과는 Product Log 목록에서 제외한다.
+
+기존 클라이언트는 이 옵션을 보내지 않으므로 서버가 원본만 만들고 기존의 후속 `POST /v1/recaps` 요청을 처리한다. 신규 클라이언트가 이전 서버를 호출해 응답에 `recapId`가 없으면 같은 멱등성 키로 후속 요청을 한 번 수행한다. 이 호환 계약으로 앱과 서버의 배포 순서에 따른 중복 리캡을 막는다.
 
 ### Travel Log
 
@@ -54,7 +57,14 @@ API/DB 호환성 때문에 기술 이름을 즉시 바꾸지 않더라도 제품
 3. 세션 중 `routePoints`를 동기화한다.
 4. 여행 종료 시 같은 `sessionId`의 Product Recap ID만 사용해 서버 `Recap` row를 생성한다.
 5. 서버는 일반 여행 로그의 `Recap.travelSessionId`를 여행 세션과 1:1로 저장하고 외부 DTO에는 `sessionId`로 응답한다.
-6. 오프라인에서 만든 로컬 세션은 소유한 Product Recap이 확인될 때 종료 세션으로 복구한 뒤 Log를 만든다.
+6. 서버 저장에 실패하면 클라이언트는 여행 종료를 완료하지 않고 사용자가 다시 시도할 수 있게 한다.
+
+## Server-first policy
+
+- 서버 저장이 끝난 Product Recap과 Product Log만 사용자 기록으로 취급한다.
+- 클라이언트의 로컬 기록 이관 API와 저장 대기 큐를 서버 계약에 포함하지 않는다.
+- 서버에 저장된 `MomentLog`는 별도의 동기화 상태를 갖지 않는다. 이전 앱 배포 호환을 위한 응답의 `syncStatus: synced` 상수는 한시적으로 유지한다.
+- 활성 여행의 GPS 경로 버퍼는 센서 데이터 복구 목적으로 기기에 남을 수 있지만 서버 기록을 대신하지 않는다.
 
 ## Read flow
 

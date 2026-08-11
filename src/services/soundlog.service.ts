@@ -1243,7 +1243,7 @@ function momentLogToDto(log: MomentLog) {
     travelMode: log.travelMode ?? undefined,
     moodTags: log.moodTags,
     source: log.source,
-    syncStatus: log.syncStatus,
+    syncStatus: 'synced' as const,
   });
 }
 
@@ -1774,23 +1774,6 @@ export const soundlogService = {
     return { deleted: true };
   },
 
-  async migrateLocalData(_userId: string, input: {
-    idempotencyKey: string;
-    libraryTrackCount: number;
-    momentLogCount: number;
-    recapDraftCount: number;
-  }) {
-    return {
-      accepted: true,
-      idempotencyKey: input.idempotencyKey,
-      migrated: {
-        libraryTrackCount: input.libraryTrackCount,
-        momentLogCount: input.momentLogCount,
-        recapDraftCount: input.recapDraftCount,
-      },
-    };
-  },
-
   async getNearbyPlaces(params: {
     contentTypes?: string;
     lat: number;
@@ -2271,7 +2254,6 @@ export const soundlogService = {
               travelMode: input.travelMode,
               moodTags: input.moodTags,
               source: 'camera',
-              syncStatus: 'synced',
               visibility: input.visibility ?? 'private',
             },
           });

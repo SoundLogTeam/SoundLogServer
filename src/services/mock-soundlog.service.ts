@@ -233,7 +233,7 @@ function momentLogToDto(log: (typeof mockDb.momentLogs)[number]) {
     travelMode: log.travelMode,
     moodTags: log.moodTags,
     source: log.source,
-    syncStatus: log.syncStatus,
+    syncStatus: 'synced' as const,
   });
 }
 
@@ -945,23 +945,6 @@ export const mockSoundlogService = {
     return { deleted: true };
   },
 
-  async migrateLocalData(_userId: string, input: {
-    idempotencyKey: string;
-    libraryTrackCount: number;
-    momentLogCount: number;
-    recapDraftCount: number;
-  }) {
-    return {
-      accepted: true,
-      idempotencyKey: input.idempotencyKey,
-      migrated: {
-        libraryTrackCount: input.libraryTrackCount,
-        momentLogCount: input.momentLogCount,
-        recapDraftCount: input.recapDraftCount,
-      },
-    };
-  },
-
   async getNearbyPlaces(params: {
     lat: number;
     limit?: number;
@@ -1373,7 +1356,6 @@ export const mockSoundlogService = {
           travelMode: input.travelMode,
           moodTags: input.moodTags,
           source: 'camera' as const,
-          syncStatus: 'synced' as const,
           visibility: input.visibility ?? 'private',
         };
 

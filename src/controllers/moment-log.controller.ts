@@ -33,6 +33,48 @@ export const momentLogController = {
     );
   },
 
+  async createRecapCapture(req: Request, res: Response) {
+    const user = requireUser(req);
+    const photoPath = req.file
+      ? createUploadedFilePublicPath(req.file.filename)
+      : undefined;
+    const idempotencyKey = req.header('Idempotency-Key');
+    const capture = await apiService.createMomentLog(
+      user.id,
+      {
+        ...req.body,
+        photoPath,
+      },
+      idempotencyKey,
+    );
+
+    if (req.body.sessionId || !req.body.createStandaloneRecap) {
+      res.status(201).json(dataResponse(capture));
+      return;
+    }
+
+    if (!capture.id) {
+      throw new Error('Created recap capture did not return an id.');
+    }
+
+    const recap = await apiService.createRecap(
+      user.id,
+      {
+        momentLogIds: [capture.id],
+        templateId: req.body.templateId ?? 'film',
+        visibility: req.body.visibility ?? 'private',
+      },
+      `standalone-recap:${idempotencyKey ?? capture.id}`,
+    );
+
+    res.status(201).json(
+      dataResponse({
+        ...capture,
+        recapId: recap.id,
+      }),
+    );
+  },
+
   async updateMomentLog(req: Request, res: Response) {
     const user = requireUser(req);
 

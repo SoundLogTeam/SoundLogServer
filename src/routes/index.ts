@@ -94,13 +94,6 @@ export function createApiRouter() {
     validate({ body: meValidators.profileBody }),
     asyncHandler(meController.upsertProfile),
   );
-  router.post(
-    '/v1/me/migrate-local-data',
-    authMiddleware,
-    validate({ body: meValidators.migrationBody }),
-    asyncHandler(meController.migrateLocalData),
-  );
-
   router.get(
     '/v1/tour/places',
     authMiddleware,
@@ -188,7 +181,7 @@ export function createApiRouter() {
     authMiddleware,
     momentPhotoUpload.single('photo'),
     validate({ body: momentLogValidators.createBody }),
-    asyncHandler(momentLogController.createMomentLog),
+    asyncHandler(momentLogController.createRecapCapture),
   );
   router.patch(
     '/v1/recap-captures/:momentLogId',

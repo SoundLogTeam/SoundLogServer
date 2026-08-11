@@ -2,7 +2,7 @@
 
 SoundLog React Native/Expo 앱과 연동되는 Express + TypeScript API 서버입니다.
 
-API 구현 기준은 `openapi/soundlog-api.yaml`이며, 현재 Express와 OpenAPI에 동기화된 61개 HTTP 연산을 제공합니다.
+API 구현 기준은 `openapi/soundlog-api.yaml`이며, 현재 Express와 OpenAPI에 동기화된 62개 HTTP 연산을 제공합니다.
 
 리캡, 여행 로그, 여행 세션, GPS 경로를 변경할 때는 [Recap / Log 서버 도메인 계약](docs/recap-log-domain-contract.md)을 먼저 확인합니다.
 
@@ -136,7 +136,6 @@ pnpm db:seed     # 로컬 seed 데이터 적재
   - `POST /v1/auth/logout`
   - `GET /v1/me`
   - `PATCH /v1/me/profile`
-  - `POST /v1/me/migrate-local-data`
 - Tour / Home / Playlists
   - `GET /v1/tour/nearby-places`
   - `GET /v1/tour/reverse-geocode`

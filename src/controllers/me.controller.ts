@@ -25,9 +25,4 @@ export const meController = {
     const user = requireUser(req);
     res.json(dataResponse(await apiService.upsertMyProfile(user.id, req.body)));
   },
-
-  async migrateLocalData(req: Request, res: Response) {
-    const user = requireUser(req);
-    res.json(dataResponse(await apiService.migrateLocalData(user.id, req.body)));
-  },
 };

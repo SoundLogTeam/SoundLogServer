@@ -314,24 +314,17 @@ describe('Soundlog API', () => {
     expect(wrongPassword.body.error.code).toBe('UNAUTHORIZED');
   });
 
-  it('returns account summary, migrates local data, and logs out', async () => {
+  it('returns account summary, rejects the removed local migration route, and logs out', async () => {
     const me = await request(app).get('/v1/me').set('Authorization', authHeader);
     expect(me.status).toBe(200);
     expect(me.body.data.user.id).toEqual(expect.any(String));
     expect(me.body.data.profile).toBeDefined();
 
-    const migration = await request(app)
+    const removedMigration = await request(app)
       .post('/v1/me/migrate-local-data')
       .set('Authorization', authHeader)
-      .send({
-        idempotencyKey: `test-migration-${Date.now()}`,
-        libraryTrackCount: 2,
-        momentLogCount: 3,
-        recapDraftCount: 1,
-      });
-    expect(migration.status).toBe(200);
-    expect(migration.body.data.accepted).toBe(true);
-    expect(migration.body.data.migrated.momentLogCount).toBe(3);
+      .send({});
+    expect(removedMigration.status).toBe(404);
 
     const login = await request(app).post('/v1/auth/register').send({
       email: `logout-${Date.now()}@soundlog.test`,
@@ -759,11 +752,13 @@ describe('Soundlog API', () => {
     expect(minimalMoment.body.data.moodTags).toEqual([]);
     expect(minimalMoment.body.data.syncStatus).toBe('synced');
 
+    const recapCaptureIdempotencyKey = `recap-capture-${Date.now()}`;
     const aliasCreated = await request(app)
       .post('/v1/recap-captures')
       .set('Authorization', authHeader)
-      .set('Idempotency-Key', `recap-capture-${Date.now()}`)
+      .set('Idempotency-Key', recapCaptureIdempotencyKey)
       .field('createdAt', new Date().toISOString())
+      .field('createStandaloneRecap', 'true')
       .field('moodTags', 'fresh')
       .field('note', '새 리캡 캡처 경로 테스트')
       .field('placeName', '리캡 캡처 테스트 장소')
@@ -774,6 +769,51 @@ describe('Soundlog API', () => {
       });
     expect(aliasCreated.status).toBe(201);
     expect(aliasCreated.body.data.note).toBe('새 리캡 캡처 경로 테스트');
+    expect(aliasCreated.body.data.recapId).toEqual(expect.any(String));
+
+    const aliasDuplicate = await request(app)
+      .post('/v1/recap-captures')
+      .set('Authorization', authHeader)
+      .set('Idempotency-Key', recapCaptureIdempotencyKey)
+      .field('createdAt', new Date().toISOString())
+      .field('createStandaloneRecap', 'true')
+      .field('moodTags', 'calm')
+      .field('placeName', '중복 리캡 캡처');
+    expect(aliasDuplicate.status).toBe(201);
+    expect(aliasDuplicate.body.data.id).toBe(aliasCreated.body.data.id);
+    expect(aliasDuplicate.body.data.recapId).toBe(aliasCreated.body.data.recapId);
+
+    const standaloneRecap = await request(app)
+      .get(`/v1/recaps/${aliasCreated.body.data.recapId}/share`)
+      .set('Authorization', authHeader);
+    expect(standaloneRecap.status).toBe(200);
+    expect(standaloneRecap.body.data.moments).toHaveLength(1);
+    expect(standaloneRecap.body.data.moments[0].id).toBe(aliasCreated.body.data.id);
+
+    const legacyCapture = await request(app)
+      .post('/v1/recap-captures')
+      .set('Authorization', authHeader)
+      .set('Idempotency-Key', `legacy-recap-capture-${Date.now()}`)
+      .field('createdAt', new Date().toISOString())
+      .field('moodTags', 'calm');
+    expect(legacyCapture.status).toBe(201);
+    expect(legacyCapture.body.data.recapId).toBeUndefined();
+
+    const legacyRecap = await request(app)
+      .post('/v1/recaps')
+      .set('Authorization', authHeader)
+      .set('Idempotency-Key', `legacy-recap-${legacyCapture.body.data.id}`)
+      .send({
+        momentLogIds: [legacyCapture.body.data.id],
+        templateId: 'album',
+    });
+    expect(legacyRecap.status).toBe(201);
+
+    const legacyRecapShare = await request(app)
+      .get(`/v1/recaps/${legacyRecap.body.data.id}/share`)
+      .set('Authorization', authHeader);
+    expect(legacyRecapShare.status).toBe(200);
+    expect(legacyRecapShare.body.data.moments[0].id).toBe(legacyCapture.body.data.id);
 
     const aliasUpdated = await request(app)
       .patch(`/v1/recap-captures/${aliasCreated.body.data.id}`)
@@ -944,17 +984,7 @@ describe('Soundlog API', () => {
             playlistId: 'seoul-night',
             context: { moodFilter: '잔잔한', placeName: '서울 야경 산책' },
             createdAt: new Date().toISOString(),
-            value: 'pending',
-          },
-          {
-            id: `event-moment-sync-failed-${Date.now()}`,
-            sessionId: 'seed-session',
-            type: 'moment_log_sync_failed',
-            trackId: 'seoul-city',
-            playlistId: 'seoul-night',
-            context: { moodFilter: '잔잔한', placeName: '서울 야경 산책' },
-            createdAt: new Date().toISOString(),
-            value: 'network_error',
+            value: 'server',
           },
         ],
       });

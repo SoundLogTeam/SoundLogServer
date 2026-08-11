@@ -32,7 +32,6 @@ type MockMomentLog = {
   note?: string;
   sessionId?: string;
   source: 'camera';
-  syncStatus: 'failed' | 'pending' | 'synced';
   templateId: string;
   trackSnapshot?: MockTrack;
   travelMode?: string;
@@ -254,7 +253,6 @@ function createMockDb() {
       note: log.note,
       moodTags: [...log.moodTags],
       source: 'camera' as const,
-      syncStatus: 'synced' as const,
       templateId: log.templateId,
       trackSnapshot: trackById.get(log.trackId),
       travelMode: log.travelMode,
