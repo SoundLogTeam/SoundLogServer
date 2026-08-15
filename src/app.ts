@@ -1,4 +1,5 @@
 import express from 'express';
+import path from 'node:path';
 
 import { env } from './config/env.js';
 import { ERROR_MESSAGES } from './constants/error.constants.js';
@@ -32,6 +33,13 @@ export function createApp() {
   app.use(urlencodedBodyParserMiddleware);
   app.use(requestLoggerMiddleware);
   app.use(createLegalRouter());
+  app.use(
+    '/assets',
+    express.static(path.resolve('public/assets'), {
+      immutable: true,
+      maxAge: '1y',
+    }),
+  );
   // Uploaded photos are served only through an authenticated, ownership/visibility-checked
   // endpoint (see uploads.router.ts) — there is no unauthenticated static file serving of
   // the uploads directory.

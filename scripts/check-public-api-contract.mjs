@@ -188,13 +188,47 @@ async function verifyMusicMetadata() {
 
 async function verifyPlaylistCatalog() {
   try {
-    const payload = await fetchJson('/v1/playlists/geoje-ocean', {
+    const payload = await fetchJson('/v1/playlists/jeju-island', {
       authenticated: true,
     });
     const playlist = payload?.data;
 
-    if (playlist?.id !== 'geoje-ocean' || !Array.isArray(playlist.tracks) || playlist.tracks.length === 0) {
-      addError('/v1/playlists/geoje-ocean did not return a seeded playlist with tracks.');
+    if (playlist?.id !== 'jeju-island' || !Array.isArray(playlist.tracks) || playlist.tracks.length === 0) {
+      addError('/v1/playlists/jeju-island did not return a seeded playlist with tracks.');
+    }
+
+    if (typeof playlist?.backgroundImageUrl !== 'string') {
+      addError('/v1/playlists/jeju-island did not return a background image URL.');
+    } else {
+      const artworkPath = new URL(playlist.backgroundImageUrl).pathname;
+      const { response } = await fetchText(artworkPath);
+
+      if (!response.ok || response.headers.get('content-type') !== 'image/webp') {
+        addError(`${artworkPath} did not return a WebP playlist image.`);
+      }
+    }
+
+    const featuredPayload = await fetchJson(
+      '/v1/home/featured-playlists?limit=20&locationRecommendationEnabled=true&recommendationMode=travel&lat=33.4996&lng=126.5312',
+      { authenticated: true },
+    );
+    const featuredIds = new Set(
+      Array.isArray(featuredPayload?.data)
+        ? featuredPayload.data.map((item) => item?.id)
+        : [],
+    );
+
+    if (
+      !Array.isArray(featuredPayload?.data) ||
+      featuredPayload.data.some((item) => typeof item?.coverImageUrl !== 'string')
+    ) {
+      addError('/v1/home/featured-playlists contains an item without a cover image URL.');
+    }
+
+    for (const regionalPlaylistId of ['jeju-island', 'gangneung-sea', 'yeosu-night-sea']) {
+      if (!featuredIds.has(regionalPlaylistId)) {
+        addError(`/v1/home/featured-playlists is missing ${regionalPlaylistId}.`);
+      }
     }
   } catch (error) {
     addError(error instanceof Error ? error.message : String(error));

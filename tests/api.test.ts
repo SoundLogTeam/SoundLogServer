@@ -501,9 +501,19 @@ describe('Soundlog API', () => {
       .query({ locationRecommendationEnabled: true, lat: 35.1532, lng: 129.1186 });
     expect(featured.status).toBe(200);
     expect(featured.body.data.length).toBeGreaterThan(0);
+    expect(featured.body.data[0]).toEqual(
+      expect.objectContaining({
+        coverImageUrl: expect.stringMatching(/^http:\/\/localhost:4000\/assets\/playlists\//),
+      }),
+    );
     expect(
       featured.body.data.some((playlist: { source?: string }) =>
         playlist.source === 'personalized',
+      ),
+    ).toBe(false);
+    expect(
+      featured.body.data.some((playlist: { source?: string }) =>
+        playlist.source === 'ml-recommendation',
       ),
     ).toBe(false);
 
@@ -512,6 +522,11 @@ describe('Soundlog API', () => {
       .query({ locationRecommendationEnabled: true, recommendationMode: 'travel', lat: 35.1532, lng: 129.1186 });
     expect(unauthenticatedFeatured.status).toBe(401);
     expect(unauthenticatedFeatured.body.error.code).toBe('UNAUTHORIZED');
+
+    const playlistArtwork = await request(app).get('/assets/playlists/busan.webp');
+    expect(playlistArtwork.status).toBe(200);
+    expect(playlistArtwork.headers['content-type']).toBe('image/webp');
+    expect(playlistArtwork.headers['cache-control']).toContain('immutable');
 
     const playlistIds = new Set<string>();
 
@@ -665,7 +680,7 @@ describe('Soundlog API', () => {
 
   it('handles library APIs', async () => {
     const updated = await request(app)
-      .put('/v1/library/tracks/moon-seoul')
+      .put('/v1/library/tracks/busan-vacance')
       .set('Authorization', authHeader)
       .send({ action: 'like', playlistId: 'busan-ocean' });
     expect(updated.status).toBe(200);
@@ -677,16 +692,16 @@ describe('Soundlog API', () => {
       .query({ kind: 'liked' });
     expect(list.status).toBe(200);
     expect(list.body.page.limit).toBeGreaterThan(0);
-    const moonRecord = list.body.data.find(
-      (item: { track: { id: string } }) => item.track.id === 'moon-seoul',
+    const busanRecord = list.body.data.find(
+      (item: { track: { id: string } }) => item.track.id === 'busan-vacance',
     );
 
-    expect(moonRecord).toBeTruthy();
-    expect(moonRecord.playlist).toMatchObject({
+    expect(busanRecord).toBeTruthy();
+    expect(busanRecord.playlist).toMatchObject({
       id: 'busan-ocean',
       placeName: '광안리 해변',
       regionName: '부산',
-      trackCount: 5,
+      trackCount: 6,
     });
   });
 

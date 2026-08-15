@@ -5,7 +5,9 @@ import {
   playlists,
   recaps,
   seedMomentLogs,
+  tracks,
 } from '../src/data/seed-data.js';
+import { regionalPlaylistFallbacks } from '../src/data/regional-playlist-data.js';
 
 describe('seed recap/log domain consistency', () => {
   it('keeps one log per travel session and includes every session recap', () => {
@@ -50,5 +52,36 @@ describe('seed recap/log domain consistency', () => {
       expect(playlistIds.has(recommendation.playlistId)).toBe(true);
       expect(recommendation.imageUrl).toMatch(/^https:\/\//);
     }
+  });
+
+  it('keeps a complete regional fallback catalog with valid tracks', () => {
+    const playlistIds = new Set(playlists.map((playlist) => playlist.id));
+    const trackIds = new Set(tracks.map((track) => track.id));
+    const referencedTrackIds = new Set<string>(
+      playlists.flatMap((playlist) => [...playlist.trackIds]),
+    );
+    const regionalPlaylistIds = regionalPlaylistFallbacks.map(
+      (region) => region.playlistId,
+    );
+
+    expect(regionalPlaylistFallbacks).toHaveLength(17);
+    expect(new Set(regionalPlaylistIds).size).toBe(regionalPlaylistIds.length);
+
+    for (const region of regionalPlaylistFallbacks) {
+      expect(playlistIds.has(region.playlistId)).toBe(true);
+      expect(region.aliases.length).toBeGreaterThanOrEqual(3);
+
+      const playlist = playlists.find((item) => item.id === region.playlistId);
+      expect(playlist?.coverImageUrl).toMatch(/^\/assets\/playlists\/[a-z-]+\.webp$/);
+      expect(playlist?.backgroundImageUrl).toBe(playlist?.coverImageUrl);
+    }
+
+    for (const playlist of playlists) {
+      expect(new Set(playlist.trackIds).size).toBe(playlist.trackIds.length);
+      expect(playlist.trackIds.length).toBeGreaterThanOrEqual(5);
+      expect(playlist.trackIds.every((trackId) => trackIds.has(trackId))).toBe(true);
+    }
+
+    expect(tracks.every((track) => referencedTrackIds.has(track.id))).toBe(true);
   });
 });

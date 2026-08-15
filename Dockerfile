@@ -38,6 +38,7 @@ COPY --chown=node:node --from=build /app/dist ./dist
 COPY --chown=node:node --from=build /app/prisma ./prisma
 COPY --chown=node:node --from=build /app/src/data ./src/data
 COPY --chown=node:node openapi ./openapi
+COPY --chown=node:node public ./public
 COPY --chown=node:node scripts/check-public-api-contract.mjs ./scripts/check-public-api-contract.mjs
 
 RUN mkdir -p uploads && chown -R node:node /app

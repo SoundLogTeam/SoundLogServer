@@ -2371,6 +2371,12 @@ components:
         description:
           type: string
           example: 부산광역시에 어울리는 노래를 추천해드립니다.
+        coverImageUrl:
+          type: string
+          format: uri
+        backgroundImageUrl:
+          type: string
+          format: uri
         trackCount:
           type: integer
           example: 12

@@ -29,6 +29,7 @@ import { UPLOAD_FILE_ID_PATTERN } from '../middlewares/upload.middleware.js';
 import { getLimit, paginateByCursor } from '../utils/pagination.js';
 import { createPublicId } from '../utils/tokens.js';
 import { badRequest, forbidden, notFound } from '../utils/http-error.js';
+import { findRegionalPlaylistId } from '../utils/regional-playlist.js';
 import { reverseGeocodeLocation } from './reverse-geocoding.service.js';
 
 type MaybeUser = { id: string } | undefined;
@@ -605,6 +606,14 @@ function normalizePublicUrl(baseUrl: string, path: string) {
   return `${baseUrl.replace(/\/$/, '')}/${path.replace(/^\//, '')}`;
 }
 
+function normalizePlaylistArtworkUrl(url?: string | null) {
+  if (!url || !url.startsWith('/')) {
+    return url ?? undefined;
+  }
+
+  return normalizePublicUrl(env.UPLOAD_PUBLIC_BASE_URL, url);
+}
+
 function getLocalUploadedFilePath(photoUrl?: string | null) {
   if (!photoUrl) {
     return undefined;
@@ -1144,8 +1153,8 @@ function playlistSummaryToDto(playlist: PlaylistSummarySource) {
     placeName: playlist.placeName ?? undefined,
     description: playlist.description ?? undefined,
     reason: playlist.reason,
-    coverImageUrl: playlist.coverImageUrl ?? undefined,
-    backgroundImageUrl: playlist.backgroundImageUrl ?? undefined,
+    coverImageUrl: normalizePlaylistArtworkUrl(playlist.coverImageUrl),
+    backgroundImageUrl: normalizePlaylistArtworkUrl(playlist.backgroundImageUrl),
     trackCount: playlist.trackCount,
     durationText: playlist.durationText,
   });
@@ -1180,8 +1189,8 @@ async function playlistToDto(playlist: PlaylistWithTracks, userId?: string) {
     regionName: playlist.regionName,
     placeName: playlist.placeName ?? undefined,
     reason: playlist.reason,
-    coverImageUrl: playlist.coverImageUrl ?? undefined,
-    backgroundImageUrl: playlist.backgroundImageUrl ?? undefined,
+    coverImageUrl: normalizePlaylistArtworkUrl(playlist.coverImageUrl),
+    backgroundImageUrl: normalizePlaylistArtworkUrl(playlist.backgroundImageUrl),
     trackCount: playlist.trackCount,
     durationText: playlist.durationText,
     context: (playlist.context as RecommendationContext | null) ?? undefined,
@@ -1676,23 +1685,27 @@ function scoreMoodRecommendation(
   return score;
 }
 
-async function findDefaultPlaylist(params?: { lat?: number; placeId?: string }) {
+async function findDefaultPlaylist(params?: { lat?: number; lng?: number; placeId?: string }) {
+  let placeText = params?.placeId ?? '';
+
   if (params?.placeId) {
     const place = await prisma.place.findUnique({
       where: { id: toStoragePlaceId(params.placeId) },
     });
-    const placeText = [place?.title, place?.category, place?.overview].join(' ');
-
-    if (/해변|바다|해수욕장|ocean|beach/i.test(placeText)) {
-      return 'busan-ocean';
-    }
+    placeText = [
+      params.placeId,
+      place?.title,
+      place?.address,
+      place?.category,
+      place?.overview,
+    ].join(' ');
   }
 
-  if (params?.lat && params.lat < 36.5) {
-    return 'busan-ocean';
-  }
-
-  return 'seoul-night';
+  return findRegionalPlaylistId({
+    lat: params?.lat,
+    lng: params?.lng,
+    placeText,
+  });
 }
 
 export const soundlogService = {
@@ -1857,6 +1870,7 @@ export const soundlogService = {
     params: {
       lat?: number;
       limit?: number;
+      lng?: number;
       locationRecommendationEnabled: boolean;
       placeId?: string;
       recommendationMode?: 'everyday' | 'travel';
@@ -1867,15 +1881,19 @@ export const soundlogService = {
       where: {
         OR: [
           { source: null },
-          { source: { not: 'personalized' } },
+          { source: { in: ['location', 'trend'] } },
         ],
       },
     });
     const preferredId =
       params.recommendationMode === 'travel' &&
       params.locationRecommendationEnabled &&
-      (params.lat || params.placeId)
-        ? await findDefaultPlaylist({ lat: params.lat, placeId: params.placeId })
+      (params.lat !== undefined || params.placeId)
+        ? await findDefaultPlaylist({
+            lat: params.lat,
+            lng: params.lng,
+            placeId: params.placeId,
+          })
         : undefined;
 
     return playlists
@@ -1896,6 +1914,8 @@ export const soundlogService = {
           id: playlist.id,
           regionName: playlist.regionName,
           description: playlist.description ?? '',
+          coverImageUrl: normalizePlaylistArtworkUrl(playlist.coverImageUrl),
+          backgroundImageUrl: normalizePlaylistArtworkUrl(playlist.backgroundImageUrl),
           trackCount: playlist.trackCount,
           durationText: playlist.durationText,
           source: playlist.source ?? undefined,
@@ -1966,6 +1986,7 @@ export const soundlogService = {
 
         const playlistId = await findDefaultPlaylist({
           lat: input.location?.lat,
+          lng: input.location?.lng,
           placeId: input.placeId,
         });
         const playlist = await prisma.playlist.findUnique({
@@ -2006,6 +2027,7 @@ export const soundlogService = {
 
     const playlistId = await findDefaultPlaylist({
       lat: input.location?.lat,
+      lng: input.location?.lng,
       placeId: input.placeId,
     });
     const playlist = await prisma.playlist.findUnique({
@@ -2033,7 +2055,7 @@ export const soundlogService = {
   async getPlaylist(
     userId: string | undefined,
     playlistId: string,
-    query: { lat?: number; placeId?: string },
+    query: { lat?: number; lng?: number; placeId?: string },
   ) {
     const id = playlistId === 'fallback' ? await findDefaultPlaylist(query) : playlistId;
     const playlist = await prisma.playlist.findUnique({

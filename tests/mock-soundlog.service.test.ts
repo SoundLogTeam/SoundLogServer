@@ -49,6 +49,7 @@ describe('mockSoundlogService', () => {
     const playlists = await mockSoundlogService.getFeaturedPlaylists(undefined, {
       lat: 35.1532,
       limit: 3,
+      lng: 129.1186,
       locationRecommendationEnabled: true,
       recommendationMode: 'travel',
     });
@@ -75,6 +76,11 @@ describe('mockSoundlogService', () => {
       location: { lat: 35.1532, lng: 129.1186 },
       mood: '시원한',
       state: '바다',
+    });
+    const jejuRecommendedPlaylist = await mockSoundlogService.getRecommendedPlaylist(ownerId, {
+      location: { lat: 33.4996, lng: 126.5312 },
+      mood: '시원한',
+      state: '드라이브',
     });
 
     expect(profile.completedOnboarding).toBe(true);
@@ -103,6 +109,8 @@ describe('mockSoundlogService', () => {
       source: 'seed-fallback',
       state: '바다',
     });
+    expect(recommendedPlaylist.id).toBe('busan-ocean');
+    expect(jejuRecommendedPlaylist.id).toBe('jeju-island');
   });
 
   it('stores library state and paginates saved or liked tracks', async () => {
