@@ -5,6 +5,10 @@ const required = [
   'JWT_SECRET',
   'CLIENT_URLS',
   'UPLOAD_PUBLIC_BASE_URL',
+  'MODERATION_ADMIN_KEY',
+  'MODERATION_ALERT_MODE',
+  'APP_REVIEW_EMAIL',
+  'APP_REVIEW_PASSWORD',
 ];
 
 const errors = [];
@@ -74,6 +78,25 @@ clientUrls.forEach((url) => {
 
 if ((process.env.JWT_SECRET ?? '').length < 32) {
   addWarning('JWT_SECRET is shorter than 32 characters. Use a long random secret in production.');
+}
+
+if ((process.env.MODERATION_ADMIN_KEY ?? '').length < 32) {
+  addError('MODERATION_ADMIN_KEY must be at least 32 characters in production.');
+}
+
+if (!['cloud_logging', 'webhook'].includes(process.env.MODERATION_ALERT_MODE)) {
+  addError('MODERATION_ALERT_MODE must be cloud_logging or webhook.');
+}
+
+if (
+  process.env.MODERATION_ALERT_MODE === 'webhook' &&
+  !isHttpsUrl(process.env.MODERATION_ALERT_WEBHOOK_URL)
+) {
+  addError('Webhook alert mode requires an HTTPS MODERATION_ALERT_WEBHOOK_URL.');
+}
+
+if ((process.env.APP_REVIEW_PASSWORD ?? '').length < 8) {
+  addError('APP_REVIEW_PASSWORD must be at least 8 characters.');
 }
 
 if (!process.env.TOUR_API_SERVICE_KEY) {

@@ -120,7 +120,7 @@ async function resolveUploadedFileForUser(
   // which filename exists and who owns it.
   const momentLog = await prisma.momentLog.findFirst({
     where: { photoUrl: { endsWith: `/${fileId}` } },
-    select: { userId: true, visibility: true },
+    select: { moderationStatus: true, userId: true, visibility: true },
   });
 
   if (!momentLog) {
@@ -128,10 +128,26 @@ async function resolveUploadedFileForUser(
   }
 
   const isOwner = momentLog.userId === userId;
-  const isPublic = momentLog.visibility === 'public';
+  const isPublic =
+    momentLog.visibility === 'public' && momentLog.moderationStatus === 'approved';
 
   if (!isOwner && !isPublic) {
     return undefined;
+  }
+
+  if (!isOwner) {
+    const block = await prisma.communityBlock.findFirst({
+      where: {
+        OR: [
+          { blockerId: userId, blockedUserId: momentLog.userId },
+          { blockerId: momentLog.userId, blockedUserId: userId },
+        ],
+      },
+      select: { id: true },
+    });
+    if (block) {
+      return undefined;
+    }
   }
 
   // Build the path from the server-known upload root and the validated fileId only, then
@@ -155,7 +171,36 @@ async function resolveUploadedFileForUser(
   return { absolutePath };
 }
 
+async function resolveUploadedFileForModeration(
+  fileId: string,
+): Promise<ResolvedUploadedFile | undefined> {
+  if (!UPLOAD_FILE_ID_PATTERN.test(fileId)) {
+    return undefined;
+  }
+
+  const referenced = await prisma.momentLog.findFirst({
+    where: { photoUrl: { endsWith: `/${fileId}` } },
+    select: { id: true },
+  });
+  if (!referenced) {
+    return undefined;
+  }
+
+  const absolutePath = path.resolve(uploadRoot, fileId);
+  if (absolutePath !== path.join(uploadRoot, fileId) || !absolutePath.startsWith(`${uploadRoot}${path.sep}`)) {
+    return undefined;
+  }
+
+  try {
+    const stat = await fs.stat(absolutePath);
+    return stat.isFile() ? { absolutePath } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export const uploadFileService = {
   detectImageContentType,
+  resolveUploadedFileForModeration,
   resolveUploadedFileForUser,
 };

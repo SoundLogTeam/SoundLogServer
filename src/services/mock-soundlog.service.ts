@@ -5,6 +5,7 @@ import { badRequest, forbidden, notFound } from '../utils/http-error.js';
 import { getLimit, paginateByCursor } from '../utils/pagination.js';
 import { findRegionalPlaylistId } from '../utils/regional-playlist.js';
 import { createPublicId } from '../utils/tokens.js';
+import { assertUserTextAllowed, type ModerationTargetType } from './content-moderation.service.js';
 
 type TrackDto = {
   albumImageUrl?: string;
@@ -492,6 +493,12 @@ function refreshMockRecapAggregates(input: {
         moment.lat !== undefined &&
         moment.lng !== undefined,
     );
+    const hasPendingPublicPhoto = moments.some(
+      (moment) =>
+        moment.visibility === 'public' &&
+        moment.moderationStatus === 'pending' &&
+        Boolean(moment.photoUrl),
+    );
 
     return [{
       ...recap,
@@ -522,6 +529,12 @@ function refreshMockRecapAggregates(input: {
       templateId: recap.travelSessionId
         ? recap.templateId
         : representativeMoment.templateId,
+      moderationStatus:
+        recap.visibility === 'public' && hasPendingPublicPhoto
+          ? 'pending' as const
+          : recap.moderationStatus === 'pending'
+            ? 'approved' as const
+            : recap.moderationStatus,
       visibility:
         recap.visibility === 'public' && !hasPublicLocatedMoment
           ? 'private' as const
@@ -565,6 +578,7 @@ function mockRecapMapMarkerToDto(
       : recap.title,
     placeName: publicRepresentative?.placeName ?? recap.placeName,
     ownerAlias: isMine ? '나' : 'Soundlog 여행자',
+    isMine,
     location,
     trackTitle: publicTrack?.title ?? track.title,
     artistName: publicTrack?.artist ?? track.artist,
@@ -656,8 +670,12 @@ function hasMockCommunityBlockBetween(userId: string, targetUserId: string) {
   );
 }
 
-function roomToDto(room: (typeof mockDb.travelRooms)[number]) {
-  const members = mockDb.travelRoomMembers.filter((member) => member.roomId === room.id);
+function roomToDto(room: (typeof mockDb.travelRooms)[number], viewerId?: string) {
+  const members = mockDb.travelRoomMembers.filter(
+    (member) =>
+      member.roomId === room.id &&
+      (!viewerId || member.userId === viewerId || !hasMockCommunityBlockBetween(viewerId, member.userId)),
+  );
   const moments = mockDb.travelRoomMoments
     .filter((moment) => moment.roomId === room.id)
     .sort((first, second) => second.createdAt.getTime() - first.createdAt.getTime());
@@ -887,6 +905,102 @@ export const mockSoundlogService = {
       status: 'ok',
       checkedAt: new Date().toISOString(),
       mode: 'mock-db',
+    };
+  },
+
+  async reviewModerationContent(input: {
+    contentId: string;
+    decision: 'approved' | 'rejected';
+    reviewedBy?: string;
+    type: 'moment_log' | 'recap';
+  }) {
+    if (input.type === 'moment_log') {
+      const moment = mockDb.momentLogs.find(
+        (item) => item.id === input.contentId && item.moderationStatus === 'pending',
+      );
+      if (!moment) throw notFound('검토 대기 중인 리캡 촬영본을 찾을 수 없습니다.');
+      moment.moderationStatus = input.decision;
+      if (input.decision === 'rejected') moment.visibility = 'private';
+      refreshMockRecapAggregates({
+        momentIds: [moment.id],
+        sessionIds: [moment.sessionId],
+        userId: moment.userId,
+      });
+    } else {
+      const recap = mockDb.recaps.find(
+        (item) => item.id === input.contentId && item.moderationStatus === 'pending',
+      );
+      if (!recap) throw notFound('검토 대기 중인 리캡을 찾을 수 없습니다.');
+      const memberIds = new Set(getMockRecapMoments(recap).map((moment) => moment.id));
+      const members = mockDb.momentLogs.filter((moment) => memberIds.has(moment.id));
+      if (input.decision === 'approved' && members.some((moment) => moment.moderationStatus === 'pending')) {
+        throw badRequest('리캡에 포함된 사진을 각각 먼저 검토해야 합니다.');
+      }
+      recap.moderationStatus = input.decision;
+      if (input.decision === 'rejected') {
+        recap.visibility = 'private';
+        members.forEach((moment) => {
+          if (moment.moderationStatus === 'pending') {
+            moment.moderationStatus = 'rejected';
+            moment.visibility = 'private';
+          }
+        });
+      }
+    }
+
+    return { ...input, reviewedAt: new Date().toISOString() };
+  },
+
+  async listPendingModerationContent(limit: number) {
+    return [
+      ...mockDb.recaps
+        .filter((item) => item.moderationStatus === 'pending')
+        .map((item) => ({ ...item, type: 'recap' as const })),
+      ...mockDb.momentLogs
+        .filter((item) => item.moderationStatus === 'pending')
+        .map((item) => ({ ...item, type: 'moment_log' as const })),
+    ]
+      .sort((first, second) => first.createdAt.getTime() - second.createdAt.getTime())
+      .slice(0, limit);
+  },
+
+  async listModerationReports(input: { limit: number; status?: string }) {
+    const now = new Date();
+    return mockDb.communityReports
+      .filter((report) => !input.status || report.status === input.status)
+      .sort((first, second) => first.dueAt.getTime() - second.dueAt.getTime())
+      .slice(0, input.limit)
+      .map((report) => ({
+        ...report,
+        createdAt: report.createdAt.toISOString(),
+        dueAt: report.dueAt.toISOString(),
+        isOverdue: report.status === 'pending' && report.dueAt <= now,
+      }));
+  },
+
+  async resolveModerationReport(reportId: string, input: {
+    action: 'dismiss' | 'hide_content' | 'hide_and_suspend';
+    note: string;
+    resolvedBy: string;
+  }) {
+    const report = mockDb.communityReports.find((item) => item.id === reportId);
+    if (!report) throw notFound('신고를 찾을 수 없습니다.');
+    report.status = input.action === 'dismiss' ? 'dismissed' : 'resolved';
+    if (input.action === 'hide_and_suspend' && report.targetUserId) {
+      const target = mockDb.passwordUsers.find((user) => user.id === report.targetUserId);
+      if (target) target.moderationStatus = 'suspended';
+    }
+    return { ...report, resolution: `${input.action}: ${input.note}`, resolvedBy: input.resolvedBy };
+  },
+
+  async sweepModerationDeadlines() {
+    const now = new Date();
+    return {
+      overdue: mockDb.communityReports.filter(
+        (report) => report.status === 'pending' && report.dueAt <= now,
+      ).length,
+      overdueNotificationsAttempted: 0,
+      remindersAttempted: 0,
     };
   },
 
@@ -1345,6 +1459,12 @@ export const mockSoundlogService = {
     travelMode?: string;
     visibility?: RecapVisibility;
   }, idempotencyKey?: string) {
+    assertUserTextAllowed({
+      artistName: input.artistName,
+      note: input.note,
+      placeName: input.placeName,
+      trackTitle: input.trackTitle,
+    });
     return withMockIdempotency(
       { idempotencyKey, scope: 'moment-log.create', userId },
       () => {
@@ -1383,6 +1503,9 @@ export const mockSoundlogService = {
           moodTags: input.moodTags,
           source: 'camera' as const,
           visibility: input.visibility ?? 'private',
+          moderationStatus:
+            input.visibility === 'public' && Boolean(input.photoPath) ? 'pending' as const : 'approved' as const,
+          userId,
         };
 
         mockDb.momentLogs.unshift(log);
@@ -1407,6 +1530,13 @@ export const mockSoundlogService = {
     if (!log) {
       throw notFound(ERROR_MESSAGES.MOMENT_LOG_NOT_FOUND);
     }
+
+    assertUserTextAllowed({
+      artistName: input.artistName,
+      note: input.note ?? undefined,
+      placeName: input.placeName ?? undefined,
+      trackTitle: input.trackTitle,
+    });
 
     const previousSessionId = log.sessionId;
 
@@ -1505,6 +1635,7 @@ export const mockSoundlogService = {
     }
 
     log.photoUrl = `${env.UPLOAD_PUBLIC_BASE_URL}${photoPath}`;
+    log.moderationStatus = log.visibility === 'public' ? 'pending' : 'approved';
     refreshMockRecapAggregates({
       momentIds: [log.id],
       sessionIds: [log.sessionId],
@@ -1522,6 +1653,7 @@ export const mockSoundlogService = {
     }
 
     log.photoUrl = undefined;
+    log.moderationStatus = 'approved';
     refreshMockRecapAggregates({
       momentIds: [log.id],
       sessionIds: [log.sessionId],
@@ -1581,6 +1713,7 @@ export const mockSoundlogService = {
     title: string;
     visibility: string;
   }) {
+    assertUserTextAllowed({ title: input.title });
     const now = new Date();
     const room = {
       id: createPublicId('room'),
@@ -1606,7 +1739,7 @@ export const mockSoundlogService = {
       visibility: room.visibility,
     }, { sessionId: room.sessionId ?? room.id });
 
-    return roomToDto(room);
+    return roomToDto(room, userId);
   },
 
   async getTravelRooms(userId: string, query: {
@@ -1624,7 +1757,7 @@ export const mockSoundlogService = {
       .filter((room) => !query.sessionId || room.sessionId === query.sessionId)
       .sort((first, second) => second.updatedAt.getTime() - first.updatedAt.getTime())
       .slice(0, getLimit(query.limit))
-      .map(roomToDto);
+      .map((room) => roomToDto(room, userId));
   },
 
   async getTravelRoom(userId: string, roomId: string) {
@@ -1637,13 +1770,14 @@ export const mockSoundlogService = {
       throw notFound(ERROR_MESSAGES.TRAVEL_ROOM_NOT_FOUND);
     }
 
-    return roomToDto(room);
+    return roomToDto(room, userId);
   },
 
   async joinTravelRoom(userId: string, roomId: string, input: {
     displayName?: string;
     inviteCode?: string;
   }) {
+    assertUserTextAllowed({ displayName: input.displayName });
     const room = mockDb.travelRooms.find((item) => item.id === roomId);
 
     if (!room) {
@@ -1681,7 +1815,7 @@ export const mockSoundlogService = {
       roomId,
     }, { sessionId: room.sessionId ?? roomId });
 
-    return roomToDto(room);
+    return roomToDto(room, userId);
   },
 
   async joinTravelRoomByInviteCode(userId: string, input: {
@@ -1706,6 +1840,12 @@ export const mockSoundlogService = {
     trackId?: string;
     trackTitle?: string;
   }) {
+    assertUserTextAllowed({
+      artistName: input.artistName,
+      note: input.note,
+      placeName: input.placeName,
+      trackTitle: input.trackTitle,
+    });
     const isMember = mockDb.travelRoomMembers.some(
       (member) => member.roomId === roomId && member.userId === userId,
     );
@@ -1816,6 +1956,7 @@ export const mockSoundlogService = {
   async addTravelRoomMomentComment(userId: string, roomId: string, momentId: string, input: {
     body: string;
   }) {
+    assertUserTextAllowed({ body: input.body });
     const isMember = mockDb.travelRoomMembers.some(
       (member) => member.roomId === roomId && member.userId === userId,
     );
@@ -1863,6 +2004,7 @@ export const mockSoundlogService = {
     templateId?: string;
     title?: string;
   }, idempotencyKey?: string) {
+    assertUserTextAllowed({ title: input.title });
     return withMockIdempotency(
       { idempotencyKey, scope: `travel-room-recap.create.${roomId}`, userId },
       () => {
@@ -1895,6 +2037,7 @@ export const mockSoundlogService = {
           recordedAt: recapMoments[0]?.createdAt ?? new Date(),
           templateId: input.templateId ?? 'album',
           visibility: 'private' as const,
+          moderationStatus: 'approved' as const,
           moments: recapMoments.map((moment) => ({
             id: moment.id,
             placeName: moment.placeName ?? '위치 없음',
@@ -1935,6 +2078,11 @@ export const mockSoundlogService = {
     ttlMinutes?: number;
     visibility: string;
   }) {
+    assertUserTextAllowed({
+      artistName: input.artistName,
+      placeName: input.placeName,
+      trackTitle: input.trackTitle,
+    });
     if (!input.sessionId) {
       throw badRequest(ERROR_MESSAGES.TRAVEL_SESSION_ACTIVE_REQUIRED);
     }
@@ -2228,11 +2376,27 @@ export const mockSoundlogService = {
     return mateRequestToDto(request);
   },
 
-  async blockCommunityUser(userId: string, input: { targetPinId?: string; targetUserId?: string }) {
-    const targetPin = input.targetPinId
-      ? mockDb.soundMapPins.find((pin) => pin.id === input.targetPinId)
-      : undefined;
-    const targetUserId = input.targetUserId ?? targetPin?.userId;
+  async blockCommunityUser(userId: string, input: {
+    targetContentId?: string;
+    targetPinId?: string;
+    targetType?: ModerationTargetType;
+    targetUserId?: string;
+  }) {
+    const targetType = input.targetType ?? (input.targetPinId ? 'sound_pin' : input.targetContentId ? 'recap' : 'user');
+    const contentId = input.targetContentId ?? input.targetPinId;
+    const targetUserId = contentId
+      ? targetType === 'sound_pin'
+        ? mockDb.soundMapPins.find((pin) => pin.id === contentId)?.userId
+        : targetType === 'recap'
+          ? mockDb.recaps.find((recap) => recap.id === contentId)?.userId
+          : targetType === 'travel_room_moment'
+            ? mockDb.travelRoomMoments.find((moment) => moment.id === contentId)?.userId
+            : targetType === 'travel_room_comment'
+              ? mockDb.travelRoomMomentComments.find((comment) => comment.id === contentId)?.userId
+              : targetType === 'mate_request'
+                ? mockDb.travelMateRequests.find((request) => request.id === contentId)?.requesterId
+                : input.targetUserId
+      : input.targetUserId;
 
     if (!targetUserId) {
       throw badRequest(ERROR_MESSAGES.TRAVEL_MATE_TARGET_REQUIRED);
@@ -2272,25 +2436,36 @@ export const mockSoundlogService = {
     details?: string;
     reason: string;
     requestId?: string;
+    targetContentId?: string;
     targetPinId?: string;
+    targetType?: ModerationTargetType;
     targetUserId?: string;
   }) {
-    mockDb.communityReports.push({
+    assertUserTextAllowed({ details: input.details });
+    const createdAt = new Date();
+    const dueAt = new Date(createdAt.getTime() + 24 * 60 * 60 * 1000);
+    const report = {
       id: createPublicId('report'),
       reporterId: userId,
       reason: input.reason,
       details: input.details,
       requestId: input.requestId,
+      status: 'pending',
+      targetContentId: input.targetContentId,
       targetPinId: input.targetPinId,
+      targetType: input.targetType ?? (input.targetPinId ? 'sound_pin' : 'user'),
       targetUserId: input.targetUserId,
-      createdAt: new Date(),
-    });
+      createdAt,
+      dueAt,
+    };
+    mockDb.communityReports.push(report);
     recordMockCommunityRecommendationEvent(userId, 'community_user_reported', {
       reason: input.reason,
       requestId: input.requestId,
       targetPinId: input.targetPinId,
       targetUserId: input.targetUserId,
     }, { sessionId: input.requestId ?? input.targetPinId ?? input.targetUserId ?? 'community' });
+    return { id: report.id, dueAt: report.dueAt.toISOString(), notified: false };
   },
 
   async getRecaps(userId: string, params: {
@@ -2301,6 +2476,8 @@ export const mockSoundlogService = {
     const scope = params.scope ?? 'mine';
     const recaps = mockDb.recaps
       .filter((recap) => Boolean(recap.sessionId))
+      .filter((recap) => recap.userId === userId || recap.moderationStatus === 'approved')
+      .filter((recap) => !hasMockCommunityBlockBetween(userId, recap.userId))
       .filter((recap) =>
         scope === 'mine'
           ? recap.userId === userId
@@ -2343,6 +2520,8 @@ export const mockSoundlogService = {
     const radiusMeters = params.radiusMeters ?? RECAP_DISCOVERY_RADIUS_METERS;
 
     return mockDb.recaps
+      .filter((recap) => recap.userId === userId || recap.moderationStatus === 'approved')
+      .filter((recap) => !hasMockCommunityBlockBetween(userId, recap.userId))
       .filter((recap) =>
         scope === 'mine'
           ? recap.userId === userId
@@ -2372,6 +2551,7 @@ export const mockSoundlogService = {
     title?: string;
     visibility?: RecapVisibility;
   }, idempotencyKey?: string) {
+    assertUserTextAllowed({ title: input.title });
     return withMockIdempotency(
       { idempotencyKey, scope: 'recap.create', userId },
       () => {
@@ -2534,6 +2714,12 @@ export const mockSoundlogService = {
           templateId: input.templateId ?? 'album',
           thumbnailMomentId: thumbnailMoment.id,
           visibility: input.visibility ?? 'private',
+          moderationStatus:
+            input.visibility === 'public' && moments.some(
+              (moment) => moment.moderationStatus === 'pending' && Boolean(moment.photoUrl),
+            )
+              ? 'pending' as const
+              : 'approved' as const,
           moments: moments.map((moment) => ({
             id: moment.id,
             imageUrl: moment.photoUrl,
@@ -2560,7 +2746,11 @@ export const mockSoundlogService = {
 
   async getRecapShare(userId: string, recapId: string) {
     const recap = mockDb.recaps.find(
-      (item) => item.id === recapId && (item.userId === userId || item.visibility === 'public'),
+      (item) =>
+        item.id === recapId &&
+        (item.userId === userId ||
+          (item.visibility === 'public' && item.moderationStatus === 'approved')) &&
+        !hasMockCommunityBlockBetween(userId, item.userId),
     );
 
     if (!recap) {

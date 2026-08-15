@@ -331,6 +331,13 @@ describe('mockSoundlogService', () => {
       title: '다른 사람 공개 로그',
       visibility: 'public',
     });
+    const pendingOthersList = await mockSoundlogService.getRecaps(ownerId, { scope: 'others' });
+    expect(pendingOthersList.data.map((item) => item.id)).not.toContain(otherPublicRecap.id);
+    await mockSoundlogService.reviewModerationContent({
+      contentId: requireValue(otherMoment.id),
+      decision: 'approved',
+      type: 'moment_log',
+    });
     const mineList = await mockSoundlogService.getRecaps(ownerId, { scope: 'mine' });
     const othersList = await mockSoundlogService.getRecaps(ownerId, { scope: 'others' });
     const allList = await mockSoundlogService.getRecaps(ownerId, { scope: 'all' });

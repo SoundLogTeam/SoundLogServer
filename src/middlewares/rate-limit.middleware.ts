@@ -75,3 +75,13 @@ export const authIpRateLimitMiddleware = rateLimit({
   standardHeaders: true,
   windowMs: env.AUTH_RATE_LIMIT_IP_WINDOW_MS,
 });
+
+export const communitySafetyRateLimitMiddleware = rateLimit({
+  handler,
+  keyGenerator: (req) => req.user?.id ?? ipKeyGeneratorForRequest(req),
+  legacyHeaders: false,
+  limit: 20,
+  skip,
+  standardHeaders: true,
+  windowMs: 60 * 60 * 1000,
+});

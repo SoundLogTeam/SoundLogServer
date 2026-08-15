@@ -15,8 +15,8 @@ info:
 servers:
   - url: http://localhost:4000
     description: Local Docker/API server
-  - url: https://soundlog.shop/api/soundlog
-    description: Production API through the frontend Vercel proxy
+  - url: https://api.soundlog.shop
+    description: Production API
 tags:
   - name: System
     description: 서버 상태 확인
@@ -48,6 +48,8 @@ tags:
     description: 지역 사운드 트렌드
   - name: Community
     description: 공동 여행방, Live Sound Map, 취향 매칭, 신고/차단
+  - name: ModerationAdmin
+    description: 관리자 키로 보호되는 신고 및 공개 콘텐츠 운영 API
 security:
   - bearerAuth: []
 paths:
@@ -1830,6 +1832,11 @@ paths:
             schema:
               type: object
               properties:
+                targetType:
+                  type: string
+                  enum: [user, sound_pin, recap, travel_room_moment, travel_room_comment, mate_request]
+                targetContentId:
+                  type: string
                 targetUserId:
                   type: string
                   description: 대상 사용자 ID를 알고 있을 때 사용합니다.
@@ -1864,9 +1871,162 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AcceptedResponse"
+                $ref: "#/components/schemas/CommunityReportAcceptedResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
+
+  /v1/admin/moderation/reports:
+    get:
+      security:
+        - moderationAdminKey: []
+      tags: [ModerationAdmin]
+      summary: 신고 운영 큐 조회
+      operationId: listModerationReports
+      parameters:
+        - name: x-soundlog-admin-key
+          in: header
+          required: true
+          schema: { type: string }
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, resolved, dismissed]
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50 }
+      responses:
+        "200": { description: 처리 기한이 빠른 순서의 신고 목록 }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/admin/moderation/reports/{reportId}:
+    patch:
+      security:
+        - moderationAdminKey: []
+      tags: [ModerationAdmin]
+      summary: 신고 해결 및 콘텐츠 삭제와 사용자 제재
+      operationId: resolveModerationReport
+      parameters:
+        - name: reportId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: x-soundlog-admin-key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action, note]
+              properties:
+                action:
+                  type: string
+                  enum: [dismiss, hide_content, hide_and_suspend]
+                note: { type: string, maxLength: 500 }
+      responses:
+        "200": { description: 처리된 신고 }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/admin/moderation/content:
+    get:
+      security:
+        - moderationAdminKey: []
+      tags: [ModerationAdmin]
+      summary: 공개 전 이미지 검토 대기 목록 조회
+      operationId: listPendingModerationContent
+      parameters:
+        - name: x-soundlog-admin-key
+          in: header
+          required: true
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50 }
+      responses:
+        "200": { description: 검토 대기 콘텐츠 목록 }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/admin/moderation/content-images/{fileId}:
+    get:
+      security:
+        - moderationAdminKey: []
+      tags: [ModerationAdmin]
+      summary: 관리자용 검토 대기 이미지 조회
+      operationId: getPendingModerationContentImage
+      parameters:
+        - name: fileId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^[a-fA-F0-9]{32}$"
+        - name: x-soundlog-admin-key
+          in: header
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: 검토할 이미지 원본
+          content:
+            image/jpeg: { schema: { type: string, format: binary } }
+            image/png: { schema: { type: string, format: binary } }
+            image/webp: { schema: { type: string, format: binary } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/admin/moderation/content/{contentId}:
+    patch:
+      security:
+        - moderationAdminKey: []
+      tags: [ModerationAdmin]
+      summary: 공개 이미지 승인 또는 거절
+      operationId: reviewModerationContent
+      parameters:
+        - name: contentId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: x-soundlog-admin-key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type, decision]
+              properties:
+                type:
+                  type: string
+                  enum: [moment_log, recap]
+                decision:
+                  type: string
+                  enum: [approved, rejected]
+      responses:
+        "200": { description: 검토 결과 }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/admin/moderation/sweep:
+    post:
+      security:
+        - moderationAdminKey: []
+      tags: [ModerationAdmin]
+      summary: 20시간 알림과 24시간 초과 신고 점검
+      operationId: sweepModerationDeadlines
+      parameters:
+        - name: x-soundlog-admin-key
+          in: header
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: 점검 결과 }
+        "401": { $ref: "#/components/responses/Unauthorized" }
 
   /v1/travel-sessions:
     post:
@@ -1965,6 +2125,10 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+    moderationAdminKey:
+      type: apiKey
+      in: header
+      name: x-soundlog-admin-key
 
   parameters:
     Lat:
@@ -3084,6 +3248,7 @@ components:
         - title
         - placeName
         - ownerAlias
+        - isMine
         - location
         - trackTitle
         - artistName
@@ -3106,6 +3271,8 @@ components:
         ownerAlias:
           type: string
           example: Soundlog 여행자
+        isMine:
+          type: boolean
         location:
           $ref: "#/components/schemas/GeoPoint"
         trackTitle:
@@ -3704,6 +3871,11 @@ components:
             - other
         targetUserId:
           type: string
+        targetType:
+          type: string
+          enum: [user, sound_pin, recap, travel_room_moment, travel_room_comment, mate_request]
+        targetContentId:
+          type: string
         targetPinId:
           type: string
         requestId:
@@ -3711,6 +3883,22 @@ components:
         details:
           type: string
           maxLength: 500
+
+    CommunityReportAcceptedResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [id, dueAt, notified]
+          properties:
+            id:
+              type: string
+            dueAt:
+              type: string
+              format: date-time
+            notified:
+              type: boolean
 
     TravelRoomResponse:
       type: object
@@ -3911,11 +4099,20 @@ components:
       allOf:
         - $ref: "#/components/schemas/LoginRequest"
         - type: object
+          required:
+            - termsAccepted
+            - termsVersion
           properties:
             displayName:
               type: string
               maxLength: 120
               example: Soundlog User
+            termsAccepted:
+              type: boolean
+              const: true
+            termsVersion:
+              type: string
+              const: "2026-08-15"
 
     AuthUser:
       type: object

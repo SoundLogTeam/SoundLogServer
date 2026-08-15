@@ -40,6 +40,7 @@ COPY --chown=node:node --from=build /app/src/data ./src/data
 COPY --chown=node:node openapi ./openapi
 COPY --chown=node:node public ./public
 COPY --chown=node:node scripts/check-public-api-contract.mjs ./scripts/check-public-api-contract.mjs
+COPY --chown=node:node scripts/check-production-env.mjs ./scripts/check-production-env.mjs
 COPY --chown=node:node scripts/start-container.sh ./scripts/start-container.sh
 
 RUN mkdir -p uploads && chown -R node:node /app

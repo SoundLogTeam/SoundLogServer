@@ -9,6 +9,8 @@ import { env } from '../src/config/env.js';
 import { prisma } from '../src/config/prisma.js';
 import { mockDb, resetMockDb } from '../src/mock/mock-db.js';
 import { reverseGeocodeLocation } from '../src/services/reverse-geocoding.service.js';
+import { apiService } from '../src/services/api.service.js';
+import { mockSoundlogService } from '../src/services/mock-soundlog.service.js';
 import { disconnectSeedDatabase, seedDatabase } from '../prisma/seed.js';
 
 function fileIdFromPhotoUrl(photoUrl: string) {
@@ -28,12 +30,17 @@ function fakeJpegBuffer(label: string) {
 
 const app = createApp();
 const useMockDb = process.env.USE_MOCK_DB === 'true';
+const currentTermsAcceptance = {
+  termsAccepted: true,
+  termsVersion: '2026-08-15',
+};
 
 async function getToken() {
   const email = `local-${Date.now()}@soundlog.test`;
   const password = 'soundlog-password';
 
   const register = await request(app).post('/v1/auth/register').send({
+    ...currentTermsAcceptance,
     displayName: 'Local Soundlog User',
     email,
     password,
@@ -261,6 +268,7 @@ describe('Soundlog API', () => {
   it('refreshes auth tokens', async () => {
     const password = 'refresh-password';
     const register = await request(app).post('/v1/auth/register').send({
+      ...currentTermsAcceptance,
       displayName: 'Refresh User',
       email: `refresh-${Date.now()}@soundlog.test`,
       password,
@@ -275,11 +283,94 @@ describe('Soundlog API', () => {
     expect(response.body.data.user.id).toEqual(expect.any(String));
   });
 
+  it('requires the current terms and stores acceptance evidence', async () => {
+    const email = `terms-${Date.now()}@soundlog.test`;
+    const rejected = await request(app).post('/v1/auth/register').send({
+      email,
+      password: 'soundlog-password',
+    });
+    expect(rejected.status).toBe(400);
+
+    const accepted = await request(app).post('/v1/auth/register').send({
+      ...currentTermsAcceptance,
+      displayName: 'Terms User',
+      email,
+      password: 'soundlog-password',
+    });
+    expect(accepted.status).toBe(201);
+    expect(accepted.body.data.user.termsVersion).toBe('2026-08-15');
+    expect(accepted.body.data.user.termsAcceptedAt).toEqual(expect.any(String));
+  });
+
+  it('filters unsafe text and operates the 24-hour moderation queue', async () => {
+    const unsafeRoom = await request(app)
+      .post('/v1/travel-rooms')
+      .set('Authorization', authHeader)
+      .send({ title: '시 발 우회 제목', visibility: 'invite_only' });
+    expect(unsafeRoom.status).toBe(422);
+    expect(unsafeRoom.body.error.code).toBe('CONTENT_REJECTED');
+
+    const targetEmail = `moderation-target-${Date.now()}@soundlog.test`;
+    const targetPassword = 'soundlog-password';
+    const target = await request(app).post('/v1/auth/register').send({
+      ...currentTermsAcceptance,
+      displayName: 'Moderation Target',
+      email: targetEmail,
+      password: targetPassword,
+    });
+    expect(target.status).toBe(201);
+
+    const report = await request(app)
+      .post('/v1/community/reports')
+      .set('Authorization', authHeader)
+      .send({
+        reason: 'safety',
+        targetType: 'user',
+        targetUserId: target.body.data.user.id,
+      });
+    expect(report.status).toBe(202);
+    expect(new Date(report.body.data.dueAt).getTime()).toBeGreaterThan(Date.now());
+
+    const previousAdminKey = env.MODERATION_ADMIN_KEY;
+    env.MODERATION_ADMIN_KEY = 'test-moderation-admin-key';
+    try {
+      const unauthorizedList = await request(app)
+        .get('/v1/admin/moderation/reports')
+        .set('x-soundlog-admin-key', 'wrong-key');
+      expect(unauthorizedList.status).toBe(401);
+
+      const list = await request(app)
+        .get('/v1/admin/moderation/reports')
+        .query({ status: 'pending' })
+        .set('x-soundlog-admin-key', env.MODERATION_ADMIN_KEY);
+      expect(list.status).toBe(200);
+      expect(list.body.data.some((item: { id: string }) => item.id === report.body.data.id)).toBe(true);
+
+      const resolved = await request(app)
+        .patch(`/v1/admin/moderation/reports/${report.body.data.id}`)
+        .set('x-soundlog-admin-key', env.MODERATION_ADMIN_KEY)
+        .set('x-soundlog-admin-actor', 'api-test')
+        .send({ action: 'hide_and_suspend', note: 'API moderation test' });
+      expect(resolved.status).toBe(200);
+      expect(resolved.body.data.status).toBe('resolved');
+
+      const suspendedLogin = await request(app).post('/v1/auth/login').send({
+        email: targetEmail,
+        password: targetPassword,
+      });
+      expect(suspendedLogin.status).toBe(401);
+      expect(suspendedLogin.body.error.message).toContain('이용이 제한된 계정');
+    } finally {
+      env.MODERATION_ADMIN_KEY = previousAdminKey;
+    }
+  });
+
   it('stores first-party passwords only as one-way bcrypt hashes', async () => {
     const email = `secure-${Date.now()}@soundlog.test`;
     const password = 'soundlog-password-SECURE-123!';
 
     const register = await request(app).post('/v1/auth/register').send({
+      ...currentTermsAcceptance,
       displayName: 'Password Security User',
       email,
       password,
@@ -327,6 +418,7 @@ describe('Soundlog API', () => {
     expect(removedMigration.status).toBe(404);
 
     const login = await request(app).post('/v1/auth/register').send({
+      ...currentTermsAcceptance,
       email: `logout-${Date.now()}@soundlog.test`,
       password: 'logout-password',
     });
@@ -341,6 +433,7 @@ describe('Soundlog API', () => {
     const email = `delete-${Date.now()}@soundlog.test`;
     const password = 'delete-account-password';
     const register = await request(app).post('/v1/auth/register').send({
+      ...currentTermsAcceptance,
       displayName: 'Delete Account User',
       email,
       password,
@@ -1223,6 +1316,7 @@ describe('Soundlog API', () => {
 
     const otherEmail = `public-log-${Date.now()}@soundlog.test`;
     const otherRegister = await request(app).post('/v1/auth/register').send({
+      ...currentTermsAcceptance,
       displayName: 'Public Log Traveler',
       email: otherEmail,
       password: 'soundlog-password',
@@ -1256,7 +1350,7 @@ describe('Soundlog API', () => {
       trackId: 'moon-seoul',
       visibility: 'private',
     });
-    await createTestMomentLog({
+    const otherLatestPublicMoment = await createTestMomentLog({
       authHeader: otherAuthHeader,
       filename: 'other-latest-public-recap.jpg',
       lat: 37.5515,
@@ -1287,6 +1381,96 @@ describe('Soundlog API', () => {
     expect(
       mineList.body.data.some((recap: { id: string }) => recap.id === otherPublicCreated.body.data.id),
     ).toBe(false);
+
+    const pendingOthersList = await request(app)
+      .get('/v1/recaps')
+      .query({ scope: 'others' })
+      .set('Authorization', authHeader);
+    expect(
+      pendingOthersList.body.data.some(
+        (recap: { id: string }) => recap.id === otherPublicCreated.body.data.id,
+      ),
+    ).toBe(false);
+
+    if (!useMockDb) {
+      const previousAdminKey = env.MODERATION_ADMIN_KEY;
+      env.MODERATION_ADMIN_KEY = 'test-content-review-admin-key';
+      try {
+        const publicTextMoment = await request(app)
+          .post('/v1/moment-logs')
+          .set('Authorization', otherAuthHeader)
+          .field('createdAt', new Date().toISOString())
+          .field('lat', '37.552')
+          .field('lng', '126.989')
+          .field('moodTags', 'fresh,calm')
+          .field('placeName', '사진 교체 검토 장소')
+          .field('trackId', 'seoul-city')
+          .field('visibility', 'public');
+        expect(publicTextMoment.status).toBe(201);
+        expect(publicTextMoment.body.data.moderationStatus).toBe('approved');
+
+        const publicPhotoUpdated = await request(app)
+          .put(`/v1/moment-logs/${publicTextMoment.body.data.id}/photo`)
+          .set('Authorization', otherAuthHeader)
+          .attach('photo', fakeJpegBuffer('public-photo-review'), {
+            filename: 'public-photo-review.jpg',
+            contentType: 'image/jpeg',
+          });
+        expect(publicPhotoUpdated.status).toBe(200);
+        expect(publicPhotoUpdated.body.data.moderationStatus).toBe('pending');
+
+        const publicPhotoDeleted = await request(app)
+          .delete(`/v1/moment-logs/${publicTextMoment.body.data.id}/photo`)
+          .set('Authorization', otherAuthHeader);
+        expect(publicPhotoDeleted.status).toBe(200);
+        expect(publicPhotoDeleted.body.data.moderationStatus).toBe('approved');
+
+        const pendingContent = await request(app)
+          .get('/v1/admin/moderation/content')
+          .query({ limit: 100 })
+          .set('x-soundlog-admin-key', env.MODERATION_ADMIN_KEY);
+        expect(pendingContent.status).toBe(200);
+        expect(pendingContent.body.data).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ id: otherPublicCreated.body.data.id, type: 'recap' }),
+          ]),
+        );
+
+        const approved = await request(app)
+          .patch(`/v1/admin/moderation/content/${otherFirstPublicMoment.id}`)
+          .set('x-soundlog-admin-key', env.MODERATION_ADMIN_KEY)
+          .send({ decision: 'approved', type: 'moment_log' });
+        expect(approved.status).toBe(200);
+        const latestApproved = await request(app)
+          .patch(`/v1/admin/moderation/content/${otherLatestPublicMoment.id}`)
+          .set('x-soundlog-admin-key', env.MODERATION_ADMIN_KEY)
+          .send({ decision: 'approved', type: 'moment_log' });
+        expect(latestApproved.status).toBe(200);
+
+        const approvedMemberMoments = await prisma.momentLog.findMany({
+          where: {
+            id: { in: [otherFirstPublicMoment.id] },
+          },
+          select: { moderationStatus: true },
+        });
+        expect(approvedMemberMoments).toEqual([
+          expect.objectContaining({ moderationStatus: 'approved' }),
+        ]);
+      } finally {
+        env.MODERATION_ADMIN_KEY = previousAdminKey;
+      }
+    } else {
+      await mockSoundlogService.reviewModerationContent({
+        contentId: otherFirstPublicMoment.id,
+        decision: 'approved',
+        type: 'moment_log',
+      });
+      await mockSoundlogService.reviewModerationContent({
+        contentId: otherLatestPublicMoment.id,
+        decision: 'approved',
+        type: 'moment_log',
+      });
+    }
 
     const othersList = await request(app)
       .get('/v1/recaps')
@@ -1402,6 +1586,17 @@ describe('Soundlog API', () => {
       .set('Authorization', otherAuthHeader)
       .send({ momentId: secondRecapMoment.id });
     expect(forbiddenThumbnailUpdate.status).toBe(404);
+
+    await apiService.reviewModerationContent({
+      contentId: firstRecapMoment.id,
+      decision: 'approved',
+      type: 'moment_log',
+    });
+    await apiService.reviewModerationContent({
+      contentId: secondRecapMoment.id,
+      decision: 'approved',
+      type: 'moment_log',
+    });
 
     const publicShareAsOther = await request(app)
       .get(`/v1/recaps/${createdRecapId}/share`)
@@ -1554,6 +1749,7 @@ describe('Soundlog API', () => {
     const targetEmail = `target-${Date.now()}@soundlog.test`;
     const targetPassword = 'soundlog-password';
     const targetRegister = await request(app).post('/v1/auth/register').send({
+      ...currentTermsAcceptance,
       displayName: 'Nearby Sound Traveler',
       email: targetEmail,
       password: targetPassword,
@@ -1570,6 +1766,7 @@ describe('Soundlog API', () => {
     const outsiderEmail = `outsider-${Date.now()}@soundlog.test`;
     const outsiderPassword = 'soundlog-password';
     const outsiderRegister = await request(app).post('/v1/auth/register').send({
+      ...currentTermsAcceptance,
       displayName: 'Unrelated Traveler',
       email: outsiderEmail,
       password: outsiderPassword,
@@ -1911,7 +2108,10 @@ describe('Soundlog API', () => {
     const block = await request(app)
       .post('/v1/community/blocks')
       .set('Authorization', authHeader)
-      .send({ targetPinId: targetPin.body.data.id });
+      .send({
+        targetContentId: sharedMoment.body.data.id,
+        targetType: 'travel_room_moment',
+      });
     expect(block.status).toBe(202);
 
     const blockedMateRequest = await request(app)
@@ -1988,7 +2188,7 @@ describe('Soundlog API', () => {
       expect([401, 404]).toContain(response.status);
     });
 
-    it('lets another authenticated user fetch a public moment photo', async () => {
+    it('keeps a public photo private until moderation approves it', async () => {
       const moment = await createTestMomentLog({
         authHeader,
         filename: 'owner-public.jpg',
@@ -2004,7 +2204,31 @@ describe('Soundlog API', () => {
         .get(`/v1/uploads/${fileId}`)
         .set('Authorization', `Bearer ${otherAccessToken}`);
 
-      expect(response.status).toBe(200);
+      expect(response.status).toBe(404);
+
+      const previousAdminKey = env.MODERATION_ADMIN_KEY;
+      env.MODERATION_ADMIN_KEY = 'test-content-image-admin-key';
+      try {
+        const moderationImage = await request(app)
+          .get(`/v1/admin/moderation/content-images/${fileId}`)
+          .set('x-soundlog-admin-key', env.MODERATION_ADMIN_KEY);
+        expect(moderationImage.status).toBe(200);
+        expect(moderationImage.headers['content-type']).toMatch(/^image\/jpeg/);
+
+        const approved = await request(app)
+          .patch(`/v1/admin/moderation/content/${moment.id}`)
+          .set('x-soundlog-admin-key', env.MODERATION_ADMIN_KEY)
+          .send({ decision: 'approved', type: 'moment_log' });
+        expect(approved.status).toBe(200);
+      } finally {
+        env.MODERATION_ADMIN_KEY = previousAdminKey;
+      }
+
+      const approvedResponse = await request(app)
+        .get(`/v1/uploads/${fileId}`)
+        .set('Authorization', `Bearer ${otherAccessToken}`);
+
+      expect(approvedResponse.status).toBe(200);
     });
 
     it('returns 404 for a well-formed file id that does not exist', async () => {

@@ -20,7 +20,8 @@
     "db:migrate": "prisma migrate dev --schema prisma",
     "db:deploy": "prisma migrate deploy --schema prisma",
     "db:seed": "tsx prisma/seed.ts",
-    "db:seed:public": "tsx prisma/seed.ts --public-catalog"
+    "db:seed:public": "tsx prisma/seed.ts --public-catalog",
+    "db:seed:review": "tsx prisma/seed-review.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

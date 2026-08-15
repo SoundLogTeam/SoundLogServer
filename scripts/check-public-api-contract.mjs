@@ -70,6 +70,8 @@ async function createContractSession() {
         displayName: 'Soundlog Contract Check',
         email: `soundlog-contract-${uniqueId}@example.com`,
         password: 'SoundlogContract!2026',
+        termsAccepted: true,
+        termsVersion: '2026-08-15',
       },
       method: 'POST',
     });

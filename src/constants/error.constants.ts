@@ -1,5 +1,6 @@
 export const ERROR_CODES = {
   BAD_REQUEST: 'BAD_REQUEST',
+  CONTENT_REJECTED: 'CONTENT_REJECTED',
   DATABASE_ERROR: 'DATABASE_ERROR',
   FORBIDDEN: 'FORBIDDEN',
   INTERNAL_SERVER_ERROR: 'INTERNAL_SERVER_ERROR',
@@ -9,6 +10,8 @@ export const ERROR_CODES = {
 
 export const ERROR_MESSAGES = {
   AUTH_REQUIRED: '인증이 필요합니다.',
+  ACCOUNT_SUSPENDED: '커뮤니티 운영 정책 위반으로 이용이 제한된 계정입니다.',
+  CONTENT_REJECTED: '커뮤니티 운영 정책에 맞지 않는 내용이 포함되어 있습니다. 내용을 수정해 주세요.',
   DATABASE_ERROR: '데이터 처리 중 오류가 발생했습니다.',
   ENDED_TRAVEL_SESSION_CANNOT_ACTIVATE: '종료된 여행 세션은 다시 활성화할 수 없습니다.',
   FILE_UPLOAD_INVALID: '파일 업로드 요청이 올바르지 않습니다.',
@@ -19,6 +22,7 @@ export const ERROR_MESSAGES = {
   INVALID_REFRESH_TOKEN: 'refresh token이 유효하지 않습니다.',
   INVALID_REQUEST: '요청 값이 올바르지 않습니다.',
   INVALID_TOKEN: '유효하지 않은 토큰입니다.',
+  MODERATION_ADMIN_NOT_CONFIGURED: '신고 운영 관리자 인증이 설정되지 않았습니다.',
   PHOTO_REQUIRED: 'photo 파일이 필요합니다.',
   PLAYLIST_NOT_FOUND: '플레이리스트를 찾을 수 없습니다.',
   MOMENT_LOG_NOT_FOUND: 'Moment Log를 찾을 수 없습니다.',

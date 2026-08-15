@@ -136,7 +136,6 @@ export const communityController = {
 
   async reportCommunityTarget(req: Request, res: Response) {
     const user = requireUser(req);
-    await apiService.reportCommunityTarget(user.id, req.body);
-    res.status(202).json(acceptedResponse());
+    res.status(202).json(dataResponse(await apiService.reportCommunityTarget(user.id, req.body)));
   },
 };
