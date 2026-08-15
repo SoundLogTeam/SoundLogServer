@@ -2,6 +2,7 @@ import bcrypt from 'bcrypt';
 
 import { env } from '../config/env.js';
 import { ERROR_MESSAGES } from '../constants/error.constants.js';
+import { CURRENT_TERMS_VERSION } from '../constants/legal.constants.js';
 import { prisma } from '../config/prisma.js';
 import { mockDb } from '../mock/mock-db.js';
 import {
@@ -10,11 +11,14 @@ import {
   signAccessToken,
 } from '../utils/tokens.js';
 import { badRequest, unauthorized } from '../utils/http-error.js';
+import { assertUserTextAllowed, inspectUserText } from './content-moderation.service.js';
 
 type EmailPasswordAuthInput = {
   displayName?: string;
   email: string;
   password: string;
+  termsAccepted?: boolean;
+  termsVersion?: string;
 };
 
 const FIRST_PARTY_PROVIDER = 'email';
@@ -31,7 +35,13 @@ function getDefaultDisplayName(email: string) {
 function getEmailDisplayName(input: EmailPasswordAuthInput) {
   const displayName = input.displayName?.trim();
 
-  return displayName || getDefaultDisplayName(normalizeEmail(input.email));
+  if (displayName) {
+    assertUserTextAllowed({ displayName });
+    return displayName;
+  }
+
+  const fallback = getDefaultDisplayName(normalizeEmail(input.email));
+  return inspectUserText(fallback).allowed ? fallback : 'Soundlog User';
 }
 
 export const authService = {
@@ -50,7 +60,10 @@ export const authService = {
       },
       select: {
         id: true,
+        moderationStatus: true,
         passwordHash: true,
+        termsAcceptedAt: true,
+        termsVersion: true,
       },
     });
 
@@ -64,10 +77,32 @@ export const authService = {
       throw unauthorized(ERROR_MESSAGES.INVALID_EMAIL_OR_PASSWORD);
     }
 
+    if (user.moderationStatus === 'suspended') {
+      throw unauthorized(ERROR_MESSAGES.ACCOUNT_SUSPENDED);
+    }
+
+    if (!user.termsAcceptedAt || user.termsVersion !== CURRENT_TERMS_VERSION) {
+      if (!input.termsAccepted || input.termsVersion !== CURRENT_TERMS_VERSION) {
+        throw badRequest('최신 이용약관에 동의해야 로그인할 수 있습니다.');
+      }
+      await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          termsAcceptedAt: new Date(),
+          termsVersion: CURRENT_TERMS_VERSION,
+        },
+      });
+    }
+
     return createTokenPair(user.id, false);
   },
 
   async register(input: EmailPasswordAuthInput) {
+    if (!input.termsAccepted || input.termsVersion !== CURRENT_TERMS_VERSION) {
+      throw badRequest('현재 이용약관에 동의해야 가입할 수 있습니다.');
+    }
+    const displayName = getEmailDisplayName(input);
+
     if (env.USE_MOCK_DB) {
       return registerMockEmailUser(input);
     }
@@ -90,10 +125,12 @@ export const authService = {
     const passwordHash = await bcrypt.hash(input.password, PASSWORD_SALT_ROUNDS);
     const user = await prisma.user.create({
       data: {
-        displayName: getEmailDisplayName(input),
+        displayName,
         passwordHash,
         provider: FIRST_PARTY_PROVIDER,
         providerUserId: email,
+        termsAcceptedAt: new Date(),
+        termsVersion: input.termsVersion,
         profile: {
           create: {
             locationRecommendationEnabled: true,
@@ -179,6 +216,17 @@ export const authService = {
 };
 
 async function createTokenPair(userId: string, isNewUser: boolean) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { moderationStatus: true, termsAcceptedAt: true, termsVersion: true },
+  });
+  if (!user || user.moderationStatus === 'suspended') {
+    throw unauthorized(ERROR_MESSAGES.ACCOUNT_SUSPENDED);
+  }
+  if (!user.termsAcceptedAt || user.termsVersion !== CURRENT_TERMS_VERSION) {
+    throw unauthorized('최신 이용약관 동의가 필요합니다. 다시 로그인해 주세요.');
+  }
+
   const refreshToken = createRefreshToken();
 
   await prisma.refreshToken.create({
@@ -228,6 +276,8 @@ async function getUserDto(userId: string) {
       id: true,
       provider: true,
       providerUserId: true,
+      termsAcceptedAt: true,
+      termsVersion: true,
     },
   });
 
@@ -236,6 +286,8 @@ async function getUserDto(userId: string) {
     email: user.provider === FIRST_PARTY_PROVIDER ? user.providerUserId : undefined,
     id: user.id,
     provider: user.provider,
+    termsAcceptedAt: user.termsAcceptedAt?.toISOString(),
+    termsVersion: user.termsVersion ?? undefined,
   };
 }
 
@@ -276,15 +328,25 @@ function mockUserToDto() {
         : undefined,
     id: mockDb.user.id,
     provider: mockDb.user.provider,
+    termsAcceptedAt: mockDb.user.termsAcceptedAt?.toISOString(),
+    termsVersion: mockDb.user.termsVersion,
   };
 }
 
-function setMockEmailUser(user: { displayName: string; email: string; id: string }) {
+function setMockEmailUser(user: {
+  displayName: string;
+  email: string;
+  id: string;
+  termsAcceptedAt: Date;
+  termsVersion: string;
+}) {
   Object.assign(mockDb.user, {
     displayName: user.displayName,
     id: user.id,
     provider: FIRST_PARTY_PROVIDER,
     providerUserId: user.email,
+    termsAcceptedAt: user.termsAcceptedAt,
+    termsVersion: user.termsVersion,
   });
 }
 
@@ -301,6 +363,9 @@ async function registerMockEmailUser(input: EmailPasswordAuthInput) {
     email,
     id: `mock-user-email-${hashToken(email).slice(0, 12)}`,
     passwordHash: await bcrypt.hash(input.password, PASSWORD_SALT_ROUNDS),
+    moderationStatus: 'active' as const,
+    termsAcceptedAt: new Date(),
+    termsVersion: input.termsVersion ?? CURRENT_TERMS_VERSION,
   };
 
   mockDb.passwordUsers.push(user);
@@ -315,6 +380,18 @@ async function loginMockEmailUser(input: EmailPasswordAuthInput) {
 
   if (!user || !(await bcrypt.compare(input.password, user.passwordHash))) {
     throw unauthorized(ERROR_MESSAGES.INVALID_EMAIL_OR_PASSWORD);
+  }
+
+  if (user.moderationStatus === 'suspended') {
+    throw unauthorized(ERROR_MESSAGES.ACCOUNT_SUSPENDED);
+  }
+
+  if (!user.termsAcceptedAt || user.termsVersion !== CURRENT_TERMS_VERSION) {
+    if (!input.termsAccepted || input.termsVersion !== CURRENT_TERMS_VERSION) {
+      throw badRequest('최신 이용약관에 동의해야 로그인할 수 있습니다.');
+    }
+    user.termsAcceptedAt = new Date();
+    user.termsVersion = CURRENT_TERMS_VERSION;
   }
 
   setMockEmailUser(user);

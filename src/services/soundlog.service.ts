@@ -31,6 +31,11 @@ import { createPublicId } from '../utils/tokens.js';
 import { badRequest, forbidden, notFound } from '../utils/http-error.js';
 import { findRegionalPlaylistId } from '../utils/regional-playlist.js';
 import { reverseGeocodeLocation } from './reverse-geocoding.service.js';
+import {
+  assertUserTextAllowed,
+  contentModerationService,
+  type ModerationTargetType,
+} from './content-moderation.service.js';
 
 type MaybeUser = { id: string } | undefined;
 
@@ -310,23 +315,42 @@ function createTrackSnapshot(track?: Track | null, fallback?: {
   };
 }
 
-function roomToDto(room: RoomWithCommunity) {
+function roomToDto(room: RoomWithCommunity, viewerId?: string, hiddenUserIds: string[] = []) {
+  const visibleMembers = room.members.filter(
+    (member) => member.userId === viewerId || !hiddenUserIds.includes(member.userId),
+  );
+  const displayNameByUserId = new Map(
+    room.members.map((member) => [member.userId, member.displayName ?? undefined]),
+  );
+  const visibleMoments = room.moments
+    .filter((moment) =>
+      !hiddenUserIds.includes(moment.userId) &&
+      (moment.moderationStatus === 'approved' || moment.userId === viewerId),
+    )
+    .map((moment) => ({
+      ...moment,
+      comments: moment.comments?.filter((comment) =>
+        !hiddenUserIds.includes(comment.userId) &&
+        (comment.moderationStatus === 'approved' || comment.userId === viewerId),
+      ),
+    }));
+
   return {
     id: room.id,
     title: room.title,
     inviteCode: room.inviteCode,
     sessionId: room.sessionId ?? undefined,
     visibility: room.visibility,
-    memberCount: room.members.length,
-    momentCount: room.moments.length,
-    members: room.members.map((member) => ({
+    memberCount: visibleMembers.length,
+    momentCount: visibleMoments.length,
+    members: visibleMembers.map((member) => ({
       id: member.id,
       userId: member.userId,
       role: member.role,
       displayName: member.displayName ?? undefined,
       joinedAt: member.joinedAt.toISOString(),
     })),
-    moments: room.moments.map((moment) => ({
+    moments: visibleMoments.map((moment) => ({
       id: moment.id,
       userId: moment.userId,
       momentLogId: moment.momentLogId ?? undefined,
@@ -338,6 +362,7 @@ function roomToDto(room: RoomWithCommunity) {
       comments: moment.comments?.map((comment) => ({
         id: comment.id,
         userId: comment.userId,
+        displayName: displayNameByUserId.get(comment.userId),
         body: comment.body,
         createdAt: comment.createdAt.toISOString(),
       })) ?? [],
@@ -497,6 +522,47 @@ async function hasCommunityBlockBetween(userId: string, targetUserId: string) {
   });
 
   return Boolean(block);
+}
+
+function inferModerationTargetType(input: {
+  requestId?: string;
+  targetContentId?: string;
+  targetPinId?: string;
+  targetType?: ModerationTargetType;
+}) {
+  if (input.targetType) return input.targetType;
+  if (input.targetPinId) return 'sound_pin';
+  if (input.requestId) return 'mate_request';
+  return input.targetContentId ? 'recap' : 'user';
+}
+
+async function resolveCommunityTargetUserId(input: {
+  requestId?: string;
+  targetContentId?: string;
+  targetPinId?: string;
+  targetType?: ModerationTargetType;
+  targetUserId?: string;
+}) {
+  const targetType = inferModerationTargetType(input);
+  const targetContentId = input.targetContentId ?? input.targetPinId ?? input.requestId;
+  if (!targetContentId) return input.targetUserId;
+
+  if (targetType === 'sound_pin') {
+    return (await prisma.soundMapPin.findUnique({ where: { id: targetContentId } }))?.userId;
+  }
+  if (targetType === 'recap') {
+    return (await prisma.recap.findUnique({ where: { id: targetContentId } }))?.userId;
+  }
+  if (targetType === 'travel_room_moment') {
+    return (await prisma.travelRoomMoment.findUnique({ where: { id: targetContentId } }))?.userId;
+  }
+  if (targetType === 'travel_room_comment') {
+    return (await prisma.travelRoomMomentComment.findUnique({ where: { id: targetContentId } }))?.userId;
+  }
+  if (targetType === 'mate_request') {
+    return (await prisma.travelMateRequest.findUnique({ where: { id: targetContentId } }))?.requesterId;
+  }
+  return undefined;
 }
 
 function mateRequestToDto(request: TravelMateRequest) {
@@ -1246,6 +1312,7 @@ function momentLogToDto(log: MomentLog) {
     placeId: log.placeId ?? undefined,
     placeName: log.placeName ?? undefined,
     note: log.note ?? undefined,
+    moderationStatus: log.moderationStatus,
     recapVisibility: log.visibility as RecapVisibility,
     templateId: log.templateId,
     track: (log.trackSnapshot as TrackDto | null) ?? undefined,
@@ -1361,6 +1428,7 @@ function recapItemToDto(
     backgroundImageUrl: thumbnailMoment?.imageUrl ?? (isMine ? recap.backgroundImageUrl ?? undefined : undefined),
     thumbnailMomentId: thumbnailMoment?.id,
     visibility: recap.visibility,
+    moderationStatus: recap.moderationStatus,
   });
 }
 
@@ -1395,6 +1463,7 @@ function recapShareToDto(
     templateId: recap.templateId,
     thumbnailMomentId: thumbnailMoment?.id,
     visibility: recap.visibility,
+    moderationStatus: recap.moderationStatus,
   });
 }
 
@@ -1469,6 +1538,7 @@ function recapMapMarkerToDto(
       : recap.title,
     placeName: publicRepresentative?.placeName ?? recap.placeName,
     ownerAlias: isMine ? '나' : recap.user.displayName ?? 'Soundlog 여행자',
+    isMine,
     location,
     trackTitle: publicTrack?.title ?? recap.representativeTrack.title,
     artistName: publicTrack?.artist ?? recap.representativeTrack.artist,
@@ -1601,6 +1671,12 @@ async function refreshRecapAggregates(
         moment.lat !== null &&
         moment.lng !== null,
     );
+    const hasPendingPublicPhoto = moments.some(
+      (moment) =>
+        moment.visibility === 'public' &&
+        moment.moderationStatus === 'pending' &&
+        Boolean(moment.photoUrl),
+    );
 
     await client.recap.update({
       where: { id: recap.id },
@@ -1618,6 +1694,12 @@ async function refreshRecapAggregates(
         templateId: recap.travelSessionId
           ? recap.templateId
           : representativeMoment.templateId,
+        moderationStatus:
+          recap.visibility === 'public' && hasPendingPublicPhoto
+            ? 'pending'
+            : recap.moderationStatus === 'pending'
+              ? 'approved'
+              : recap.moderationStatus,
         visibility:
           recap.visibility === 'public' && !hasPublicLocatedMoment
             ? 'private'
@@ -1723,6 +1805,102 @@ export const soundlogService = {
       checkedAt: new Date().toISOString(),
       database,
     };
+  },
+
+  async reviewModerationContent(input: {
+    contentId: string;
+    decision: 'approved' | 'rejected';
+    reviewedBy?: string;
+    type: 'moment_log' | 'recap';
+  }) {
+    await prisma.$transaction(async (transaction) => {
+      if (input.type === 'recap') {
+        const recap = await transaction.recap.findFirst({
+          where: { id: input.contentId, moderationStatus: 'pending' },
+        });
+        if (!recap) throw notFound('검토 대기 중인 리캡을 찾을 수 없습니다.');
+
+        const memberMomentIds = recapMomentsToDto(recap).map((moment) => moment.id);
+        if (input.decision === 'approved') {
+          const pendingMemberCount = await transaction.momentLog.count({
+            where: {
+              id: { in: memberMomentIds },
+              moderationStatus: 'pending',
+              userId: recap.userId,
+            },
+          });
+          if (pendingMemberCount > 0) {
+            throw badRequest('리캡에 포함된 사진을 각각 먼저 검토해야 합니다.');
+          }
+        } else {
+          await transaction.momentLog.updateMany({
+            where: {
+              id: { in: memberMomentIds },
+              moderationStatus: 'pending',
+              userId: recap.userId,
+            },
+            data: { moderationStatus: 'rejected', visibility: 'private' },
+          });
+        }
+        await transaction.recap.update({
+          where: { id: recap.id },
+          data: {
+            moderationStatus: input.decision,
+            moderationReviewedAt: new Date(),
+            moderationReviewedBy: input.reviewedBy ?? 'admin',
+            ...(input.decision === 'rejected' ? { visibility: 'private' } : {}),
+          },
+        });
+        await refreshRecapAggregates(transaction, {
+          momentIds: memberMomentIds,
+          sessionIds: [recap.sessionId],
+          userId: recap.userId,
+        });
+        return;
+      }
+
+      const moment = await transaction.momentLog.findFirst({
+        where: { id: input.contentId, moderationStatus: 'pending' },
+      });
+      if (!moment) throw notFound('검토 대기 중인 리캡 촬영본을 찾을 수 없습니다.');
+
+      await transaction.momentLog.update({
+        where: { id: moment.id },
+        data: {
+          moderationStatus: input.decision,
+          moderationReviewedAt: new Date(),
+          moderationReviewedBy: input.reviewedBy ?? 'admin',
+          ...(input.decision === 'rejected' ? { visibility: 'private' } : {}),
+        },
+      });
+      await refreshRecapAggregates(transaction, {
+        momentIds: [moment.id],
+        sessionIds: [moment.sessionId],
+        userId: moment.userId,
+      });
+    });
+
+    return { ...input, reviewedAt: new Date().toISOString() };
+  },
+
+  async listPendingModerationContent(limit: number) {
+    return contentModerationService.listPendingContent(limit);
+  },
+
+  async listModerationReports(input: { limit: number; status?: string }) {
+    return contentModerationService.listReports(input);
+  },
+
+  async resolveModerationReport(reportId: string, input: {
+    action: 'dismiss' | 'hide_content' | 'hide_and_suspend';
+    note: string;
+    resolvedBy: string;
+  }) {
+    return contentModerationService.resolveReport(reportId, input);
+  },
+
+  async sweepModerationDeadlines() {
+    return contentModerationService.sweepReportDeadlines();
   },
 
   async getMyProfile(userId: string) {
@@ -2230,6 +2408,13 @@ export const soundlogService = {
     // to a saved row so the `finally` block can clean it up in every other case.
     let persisted = false;
 
+    assertUserTextAllowed({
+      artistName: input.artistName,
+      note: input.note,
+      placeName: input.placeName,
+      trackTitle: input.trackTitle,
+    });
+
     try {
       return await withIdempotency(
         { idempotencyKey, scope: 'moment-log.create', userId },
@@ -2277,6 +2462,9 @@ export const soundlogService = {
               moodTags: input.moodTags,
               source: 'camera',
               visibility: input.visibility ?? 'private',
+              moderationStatus: input.visibility === 'public' && input.photoPath
+                ? 'pending'
+                : 'approved',
             },
           });
 
@@ -2325,6 +2513,13 @@ export const soundlogService = {
 
     const data: Prisma.MomentLogUpdateInput = {};
 
+    assertUserTextAllowed({
+      artistName: input.artistName,
+      note: input.note ?? undefined,
+      placeName: input.placeName ?? undefined,
+      trackTitle: input.trackTitle,
+    });
+
     if (input.createdAt) {
       data.createdAt = new Date(input.createdAt);
     }
@@ -2371,6 +2566,9 @@ export const soundlogService = {
 
     if (input.visibility) {
       data.visibility = input.visibility;
+      data.moderationStatus = input.visibility === 'public' && existing.photoUrl
+        ? 'pending'
+        : 'approved';
     }
 
     if (hasOwn(input, 'lat') || hasOwn(input, 'lng') || input.visibility) {
@@ -2449,7 +2647,10 @@ export const soundlogService = {
       const updated = await prisma.$transaction(async (transaction) => {
         const nextMoment = await transaction.momentLog.update({
           where: { id: existing.id },
-          data: { photoUrl: nextPhotoUrl },
+          data: {
+            photoUrl: nextPhotoUrl,
+            moderationStatus: existing.visibility === 'public' ? 'pending' : 'approved',
+          },
         });
 
         await refreshRecapAggregates(transaction, {
@@ -2494,7 +2695,7 @@ export const soundlogService = {
     const updated = await prisma.$transaction(async (transaction) => {
       const nextMoment = await transaction.momentLog.update({
         where: { id: existing.id },
-        data: { photoUrl: null },
+        data: { moderationStatus: 'approved', photoUrl: null },
       });
 
       await refreshRecapAggregates(transaction, {
@@ -2584,6 +2785,7 @@ export const soundlogService = {
     title: string;
     visibility: string;
   }) {
+    assertUserTextAllowed({ title: input.title });
     const room = await prisma.travelRoom.create({
       data: {
         id: createPublicId('room'),
@@ -2613,7 +2815,7 @@ export const soundlogService = {
       visibility: room.visibility,
     }, { sessionId: room.sessionId ?? room.id });
 
-    return roomToDto(room);
+    return roomToDto(room, userId);
   },
 
   async getTravelRooms(userId: string, query: {
@@ -2636,7 +2838,8 @@ export const soundlogService = {
       take: getLimit(query.limit),
     });
 
-    return rooms.map(roomToDto);
+    const hiddenUserIds = await getCommunityHiddenUserIds(userId);
+    return rooms.map((room) => roomToDto(room, userId, hiddenUserIds));
   },
 
   async getTravelRoom(userId: string, roomId: string) {
@@ -2658,13 +2861,15 @@ export const soundlogService = {
       throw notFound(ERROR_MESSAGES.TRAVEL_ROOM_NOT_FOUND);
     }
 
-    return roomToDto(room);
+    const hiddenUserIds = await getCommunityHiddenUserIds(userId);
+    return roomToDto(room, userId, hiddenUserIds);
   },
 
   async joinTravelRoom(userId: string, roomId: string, input: {
     displayName?: string;
     inviteCode?: string;
   }) {
+    assertUserTextAllowed({ displayName: input.displayName });
     const room = await prisma.travelRoom.findUnique({
       where: { id: roomId },
       include: {
@@ -2741,6 +2946,12 @@ export const soundlogService = {
     trackId?: string;
     trackTitle?: string;
   }) {
+    assertUserTextAllowed({
+      artistName: input.artistName,
+      note: input.note,
+      placeName: input.placeName,
+      trackTitle: input.trackTitle,
+    });
     const member = await prisma.travelRoomMember.findUnique({
       where: {
         roomId_userId: {
@@ -2814,6 +3025,7 @@ export const soundlogService = {
         id: roomId,
         ownerId: userId,
       },
+      include: { members: true },
     });
 
     if (!room) {
@@ -2853,6 +3065,8 @@ export const soundlogService = {
       comments: updated.comments.map((comment) => ({
         id: comment.id,
         userId: comment.userId,
+        displayName: room.members.find((member) => member.userId === comment.userId)?.displayName
+          ?? undefined,
         body: comment.body,
         createdAt: comment.createdAt.toISOString(),
       })),
@@ -2863,6 +3077,7 @@ export const soundlogService = {
   async addTravelRoomMomentComment(userId: string, roomId: string, momentId: string, input: {
     body: string;
   }) {
+    assertUserTextAllowed({ body: input.body });
     const member = await prisma.travelRoomMember.findUnique({
       where: {
         roomId_userId: {
@@ -2902,6 +3117,7 @@ export const soundlogService = {
     return {
       id: comment.id,
       userId: comment.userId,
+      displayName: member.displayName ?? undefined,
       body: comment.body,
       createdAt: comment.createdAt.toISOString(),
     };
@@ -2917,6 +3133,7 @@ export const soundlogService = {
     },
     idempotencyKey?: string,
   ) {
+    assertUserTextAllowed({ title: input.title });
     return withIdempotency(
       { idempotencyKey, scope: `travel-room-recap.create.${roomId}`, userId },
       async () => {
@@ -3003,6 +3220,11 @@ export const soundlogService = {
     ttlMinutes?: number;
     visibility: CommunityVisibility;
   }) {
+    assertUserTextAllowed({
+      artistName: input.artistName,
+      placeName: input.placeName,
+      trackTitle: input.trackTitle,
+    });
     if (!input.sessionId) {
       throw badRequest(ERROR_MESSAGES.TRAVEL_SESSION_ACTIVE_REQUIRED);
     }
@@ -3392,11 +3614,13 @@ export const soundlogService = {
     return mateRequestToDto(updated);
   },
 
-  async blockCommunityUser(userId: string, input: { targetPinId?: string; targetUserId?: string }) {
-    const targetPin = input.targetPinId
-      ? await prisma.soundMapPin.findUnique({ where: { id: input.targetPinId } })
-      : undefined;
-    const targetUserId = input.targetUserId ?? targetPin?.userId;
+  async blockCommunityUser(userId: string, input: {
+    targetContentId?: string;
+    targetPinId?: string;
+    targetType?: ModerationTargetType;
+    targetUserId?: string;
+  }) {
+    const targetUserId = await resolveCommunityTargetUserId(input);
 
     if (!targetUserId) {
       throw badRequest(ERROR_MESSAGES.TRAVEL_MATE_TARGET_REQUIRED);
@@ -3435,32 +3659,38 @@ export const soundlogService = {
       targetPinId: input.targetPinId,
       targetUserId,
     }, { sessionId: input.targetPinId ?? targetUserId });
+
+    await contentModerationService.createBlockReport(userId, {
+      targetContentId: input.targetContentId,
+      targetPinId: input.targetPinId,
+      targetType: inferModerationTargetType(input),
+      targetUserId,
+    });
   },
 
   async reportCommunityTarget(userId: string, input: {
     details?: string;
     reason: string;
     requestId?: string;
+    targetContentId?: string;
     targetPinId?: string;
+    targetType?: ModerationTargetType;
     targetUserId?: string;
   }) {
-    await prisma.communityReport.create({
-      data: {
-        details: input.details,
-        reason: input.reason,
-        reporterId: userId,
-        requestId: input.requestId,
-        targetPinId: input.targetPinId,
-        targetUserId: input.targetUserId,
-      },
+    const targetType = inferModerationTargetType(input);
+    const report = await contentModerationService.createReport(userId, {
+      ...input,
+      targetType,
     });
 
     await recordCommunityRecommendationEvent(userId, 'community_user_reported', {
       reason: input.reason,
       requestId: input.requestId,
       targetPinId: input.targetPinId,
-      targetUserId: input.targetUserId,
+      targetUserId: report.targetUserId,
     }, { sessionId: input.requestId ?? input.targetPinId ?? input.targetUserId ?? 'community' });
+
+    return { id: report.id, dueAt: report.dueAt.toISOString(), notified: report.notified };
   },
 
   async getRecaps(userId: string, params: {
@@ -3469,15 +3699,24 @@ export const soundlogService = {
     scope?: RecapListScope;
   }) {
     const scope = params.scope ?? 'mine';
+    const hiddenUserIds = await getCommunityHiddenUserIds(userId);
     const scopeWhere: Prisma.RecapWhereInput =
       scope === 'mine'
         ? { userId }
         : scope === 'others'
-          ? { userId: { not: userId }, visibility: 'public' }
+          ? {
+              moderationStatus: 'approved',
+              userId: { not: userId, notIn: hiddenUserIds },
+              visibility: 'public',
+            }
           : {
               OR: [
                 { userId },
-                { userId: { not: userId }, visibility: 'public' },
+                {
+                  moderationStatus: 'approved',
+                  userId: { not: userId, notIn: hiddenUserIds },
+                  visibility: 'public',
+                },
               ],
             };
     const recaps = await prisma.recap.findMany({
@@ -3512,6 +3751,7 @@ export const soundlogService = {
     },
   ) {
     const scope = params.scope ?? 'public';
+    const hiddenUserIds = await getCommunityHiddenUserIds(userId);
     const origin =
       scope === 'public' && hasGeoPoint(params)
         ? { lat: params.lat!, lng: params.lng! }
@@ -3520,7 +3760,13 @@ export const soundlogService = {
     const recaps = await prisma.recap.findMany({
       where: scope === 'mine'
         ? { userId }
-        : { visibility: 'public' },
+        : {
+            visibility: 'public',
+            OR: [
+              { userId },
+              { moderationStatus: 'approved', userId: { notIn: hiddenUserIds } },
+            ],
+          },
       include: {
         representativeTrack: true,
         user: {
@@ -3562,6 +3808,7 @@ export const soundlogService = {
     },
     idempotencyKey?: string,
   ) {
+    assertUserTextAllowed({ title: input.title });
     return withIdempotency(
       { idempotencyKey, scope: 'recap.create', userId },
       async () => {
@@ -3747,6 +3994,9 @@ export const soundlogService = {
             templateId: input.templateId,
             thumbnailMomentId: thumbnailMoment.id,
             visibility: input.visibility ?? 'private',
+            moderationStatus: input.visibility === 'public' && Boolean(thumbnailMoment.photoUrl)
+              ? 'pending'
+              : 'approved',
             lat: recapLocation?.lat,
             lng: recapLocation?.lng,
             },
@@ -3777,12 +4027,17 @@ export const soundlogService = {
   },
 
   async getRecapShare(userId: string, recapId: string) {
+    const hiddenUserIds = await getCommunityHiddenUserIds(userId);
     const recap = await prisma.recap.findFirst({
       where: {
         id: recapId,
         OR: [
           { userId },
-          { visibility: 'public' },
+          {
+            moderationStatus: 'approved',
+            userId: { notIn: hiddenUserIds },
+            visibility: 'public',
+          },
         ],
       },
       include: { representativeTrack: true, travelSession: true },
@@ -3860,7 +4115,13 @@ export const soundlogService = {
 
       await transaction.recap.update({
         where: { id: recapId },
-        data: { visibility: input.visibility },
+        data: {
+          visibility: input.visibility,
+          moderationStatus:
+            input.visibility === 'public' && Boolean(recap.backgroundImageUrl)
+              ? 'pending'
+              : 'approved',
+        },
       });
 
       await refreshRecapAggregates(transaction, {

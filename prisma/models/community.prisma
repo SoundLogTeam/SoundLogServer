@@ -33,6 +33,7 @@ model TravelRoomMoment {
   placeName     String?
   note          String?
   status        String                    @default("candidate")
+  moderationStatus String                 @default("approved")
   trackSnapshot Json?
   createdAt     DateTime                  @default(now())
   room          TravelRoom                @relation(fields: [roomId], references: [id], onDelete: Cascade)
@@ -45,6 +46,7 @@ model TravelRoomMomentComment {
   momentId  String
   userId    String
   body      String
+  moderationStatus String      @default("approved")
   createdAt DateTime         @default(now())
   moment    TravelRoomMoment @relation(fields: [momentId], references: [id], onDelete: Cascade)
   user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -100,10 +102,23 @@ model CommunityReport {
   targetUserId String?
   targetPinId  String?
   requestId    String?
+  targetType   String             @default("user")
+  targetContentId String?
+  contentSnapshot Json?
   reason       String
   details      String?
+  status       String             @default("pending")
+  dueAt        DateTime
+  reminderSentAt DateTime?
+  overdueSentAt DateTime?
+  resolvedAt   DateTime?
+  resolvedBy   String?
+  resolution   String?
   createdAt    DateTime           @default(now())
   reporter     User               @relation("CommunityReporter", fields: [reporterId], references: [id], onDelete: Cascade)
   targetUser   User?              @relation("CommunityReportedUser", fields: [targetUserId], references: [id], onDelete: SetNull)
   mateRequest  TravelMateRequest? @relation(fields: [requestId], references: [id], onDelete: SetNull)
+
+  @@index([status, dueAt])
+  @@index([targetType, targetContentId])
 }

@@ -50,4 +50,13 @@ describe('public legal pages', () => {
     expect(support.text).toContain('별도의 웹 서비스나 웹 계정 기능을 제공하지 않습니다');
     expect(terms.text).toContain('별도의 웹 서비스를 제공하지 않습니다');
   });
+
+  it('publishes the App Review user-content safeguards in the terms', async () => {
+    const response = await request(app).get('/legal/terms');
+
+    expect(response.status).toBe(200);
+    expect(response.text).toContain('불쾌하거나 폭력적이거나 혐오적이거나 성적인 콘텐츠를 용납하지 않습니다');
+    expect(response.text).toContain('신고 접수 후 24시간 안에 검토');
+    expect(response.text).toContain('차단한 사용자의 콘텐츠는 즉시 피드와 지도에서 숨겨집니다');
+  });
 });

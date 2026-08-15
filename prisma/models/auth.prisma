@@ -4,6 +4,11 @@ model User {
   providerUserId           String
   displayName              String?
   passwordHash             String?
+  termsAcceptedAt          DateTime?
+  termsVersion             String?
+  moderationStatus         String                    @default("active")
+  suspendedAt              DateTime?
+  suspensionReason         String?
   createdAt                DateTime                  @default(now())
   updatedAt                DateTime                  @updatedAt
   profile                  UserProfile?

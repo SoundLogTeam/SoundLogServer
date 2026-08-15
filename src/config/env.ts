@@ -22,6 +22,13 @@ const envSchema = z.object({
     z.string().url().optional(),
   ),
   ML_RECOMMENDATION_TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
+  MODERATION_ADMIN_KEY: z.string().min(32).optional(),
+  MODERATION_ALERT_MODE: z.enum(['cloud_logging', 'webhook']).default('cloud_logging'),
+  MODERATION_ALERT_WEBHOOK_URL: z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z.string().url().optional(),
+  ),
+  MODERATION_SWEEP_INTERVAL_MS: z.coerce.number().int().positive().default(15 * 60 * 1000),
   MOMENT_PHOTO_MAX_FILE_SIZE_MB: z.coerce.number().int().positive().default(10),
   NODE_ENV: z.string().default('development'),
   PORT: z.coerce.number().int().positive().default(4000),

@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { CURRENT_TERMS_VERSION } from '../constants/legal.constants.js';
+
 import { ERROR_MESSAGES } from '../constants/error.constants.js';
 
 const optionalCsvArray = z.preprocess((value) => {
@@ -113,11 +115,15 @@ export const authValidators = {
   loginBody: z.object({
     email: z.string().trim().email(),
     password: z.string().min(8).max(128),
+    termsAccepted: z.literal(true).optional(),
+    termsVersion: z.literal(CURRENT_TERMS_VERSION).optional(),
   }),
   registerBody: z.object({
     displayName: z.string().trim().min(1).max(120).optional(),
     email: z.string().trim().email(),
     password: z.string().min(8).max(128),
+    termsAccepted: z.literal(true),
+    termsVersion: z.literal(CURRENT_TERMS_VERSION),
   }),
   logoutBody: z
     .object({
@@ -492,18 +498,61 @@ export const communityValidators = {
   }),
   blockBody: z
     .object({
+      targetContentId: z.string().min(1).optional(),
       targetPinId: z.string().optional(),
+      targetType: z
+        .enum(['user', 'sound_pin', 'recap', 'travel_room_moment', 'travel_room_comment', 'mate_request'])
+        .optional(),
       targetUserId: z.string().min(1).optional(),
     })
-    .refine((value) => Boolean(value.targetUserId || value.targetPinId), {
+    .refine(
+      (value) => Boolean(value.targetUserId || value.targetPinId || value.targetContentId),
+      {
       message: ERROR_MESSAGES.TRAVEL_MATE_TARGET_REQUIRED,
-    }),
+      },
+    ),
   reportBody: z.object({
     details: z.string().trim().max(500).optional(),
     reason: z.enum(['safety', 'spam', 'inappropriate', 'other']),
     requestId: z.string().optional(),
+    targetContentId: z.string().min(1).optional(),
     targetPinId: z.string().optional(),
+    targetType: z
+      .enum(['user', 'sound_pin', 'recap', 'travel_room_moment', 'travel_room_comment', 'mate_request'])
+      .optional(),
     targetUserId: z.string().optional(),
+  }).refine(
+    (value) => Boolean(
+      value.targetUserId || value.targetPinId || value.targetContentId || value.requestId,
+    ),
+    { message: '신고 대상이 필요합니다.' },
+  ),
+};
+
+export const moderationValidators = {
+  contentListQuery: z.object({
+    limit: z.coerce.number().int().min(1).max(100).optional().default(50),
+  }),
+  contentParams: z.object({
+    contentId: z.string().min(1),
+  }),
+  contentImageParams: z.object({
+    fileId: z.string().regex(/^[a-f0-9]{32}$/i),
+  }),
+  contentReviewBody: z.object({
+    decision: z.enum(['approved', 'rejected']),
+    type: z.enum(['moment_log', 'recap']),
+  }),
+  listQuery: z.object({
+    limit: z.coerce.number().int().min(1).max(100).optional().default(50),
+    status: z.enum(['pending', 'resolved', 'dismissed']).optional(),
+  }),
+  reportParams: z.object({
+    reportId: z.string().min(1),
+  }),
+  resolveBody: z.object({
+    action: z.enum(['dismiss', 'hide_content', 'hide_and_suspend']),
+    note: z.string().trim().min(1).max(500),
   }),
 };
 

@@ -17,6 +17,9 @@ model Recap {
   routePoints           Json?
   templateId            String            @default("album")
   visibility            String            @default("private")
+  moderationStatus      String            @default("approved")
+  moderationReviewedAt  DateTime?
+  moderationReviewedBy  String?
   lat                   Float?
   lng                   Float?
   user                  User              @relation(fields: [userId], references: [id], onDelete: Cascade)

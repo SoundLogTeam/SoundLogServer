@@ -4,6 +4,7 @@ export { devDbTestController } from './dev-db-test.controller.js';
 export { homeController } from './home.controller.js';
 export { libraryController } from './library.controller.js';
 export { meController } from './me.controller.js';
+export { moderationController } from './moderation.controller.js';
 export { momentLogController } from './moment-log.controller.js';
 export { playlistController } from './playlist.controller.js';
 export { recapController } from './recap.controller.js';

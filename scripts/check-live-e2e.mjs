@@ -73,6 +73,8 @@ async function registerUser(label) {
       displayName: `Live ${label}`,
       email,
       password,
+      termsAccepted: true,
+      termsVersion: '2026-08-15',
     },
     expectedStatus: 201,
     method: 'POST',

@@ -2,10 +2,11 @@ import type { NextFunction, Request, Response } from 'express';
 
 import { env } from '../config/env.js';
 import { ERROR_MESSAGES } from '../constants/error.constants.js';
+import { CURRENT_TERMS_VERSION } from '../constants/legal.constants.js';
 import { prisma } from '../config/prisma.js';
 import { defaultUser } from '../data/seed-data.js';
 import { mockDb } from '../mock/mock-db.js';
-import { unauthorized } from '../utils/http-error.js';
+import { HttpError, unauthorized } from '../utils/http-error.js';
 import { verifyAccessToken } from '../utils/tokens.js';
 
 export async function authMiddleware(req: Request, _res: Response, next: NextFunction) {
@@ -50,6 +51,13 @@ export async function authMiddleware(req: Request, _res: Response, next: NextFun
         throw unauthorized(ERROR_MESSAGES.INVALID_TOKEN);
       }
 
+      if (
+        passwordUser &&
+        (!passwordUser.termsAcceptedAt || passwordUser.termsVersion !== CURRENT_TERMS_VERSION)
+      ) {
+        throw unauthorized('최신 이용약관 동의가 필요합니다. 다시 로그인해 주세요.');
+      }
+
       req.user = passwordUser
         ? {
             id: passwordUser.id,
@@ -69,8 +77,11 @@ export async function authMiddleware(req: Request, _res: Response, next: NextFun
       where: { id: userId },
       select: {
         id: true,
+        moderationStatus: true,
         provider: true,
         providerUserId: true,
+        termsAcceptedAt: true,
+        termsVersion: true,
       },
     });
 
@@ -78,9 +89,20 @@ export async function authMiddleware(req: Request, _res: Response, next: NextFun
       throw unauthorized(ERROR_MESSAGES.INVALID_TOKEN);
     }
 
+    if (user.moderationStatus === 'suspended') {
+      throw unauthorized(ERROR_MESSAGES.ACCOUNT_SUSPENDED);
+    }
+
+    if (!user.termsAcceptedAt || user.termsVersion !== CURRENT_TERMS_VERSION) {
+      throw unauthorized('최신 이용약관 동의가 필요합니다. 다시 로그인해 주세요.');
+    }
+
     req.user = user;
     next();
-  } catch {
+  } catch (error) {
+    if (error instanceof HttpError) {
+      throw error;
+    }
     throw unauthorized(ERROR_MESSAGES.INVALID_TOKEN);
   }
 }

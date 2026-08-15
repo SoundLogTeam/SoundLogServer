@@ -32,6 +32,9 @@ model MomentLog {
   moodTags      String[]
   source        String
   visibility    String   @default("private")
+  moderationStatus String @default("approved")
+  moderationReviewedAt DateTime?
+  moderationReviewedBy String?
   user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 

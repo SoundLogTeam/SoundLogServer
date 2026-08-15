@@ -36,6 +36,8 @@ type MockMomentLog = {
   trackSnapshot?: MockTrack;
   travelMode?: string;
   visibility: 'private' | 'public';
+  moderationStatus: 'approved' | 'pending' | 'rejected';
+  userId: string;
 };
 
 type MockLibraryTrackState = {
@@ -69,6 +71,7 @@ type MockRecap = {
   title: string;
   userId: string;
   visibility: 'private' | 'public';
+  moderationStatus: 'approved' | 'pending' | 'rejected';
 };
 
 type MockTravelSession = {
@@ -100,6 +103,9 @@ type MockPasswordUser = {
   email: string;
   id: string;
   passwordHash: string;
+  termsAcceptedAt: Date;
+  termsVersion: string;
+  moderationStatus: 'active' | 'suspended';
 };
 
 type MockTravelRoom = {
@@ -195,6 +201,8 @@ function createMockDb() {
       id: 'mock-user-local',
       ...defaultUser,
       displayName: 'Local Soundlog Mock User',
+      termsAcceptedAt: undefined as Date | undefined,
+      termsVersion: undefined as string | undefined,
     },
     profile: {
       companionType: 'friends',
@@ -257,6 +265,8 @@ function createMockDb() {
       trackSnapshot: trackById.get(log.trackId),
       travelMode: log.travelMode,
       visibility: log.visibility,
+      moderationStatus: 'approved' as const,
+      userId: 'mock-user-local',
     })) as MockMomentLog[],
     recommendationEvents: [] as Array<{
       context: Record<string, unknown>;
@@ -291,6 +301,7 @@ function createMockDb() {
         routePoints: routePoints ? [...routePoints] : undefined,
         templateId: recap.templateId ?? 'album',
         visibility: recap.visibility ?? 'private',
+        moderationStatus: 'approved' as const,
         lat: recap.lat,
         lng: recap.lng,
       };
@@ -324,11 +335,15 @@ function createMockDb() {
     communityReports: [] as Array<{
       createdAt: Date;
       details?: string;
+      dueAt: Date;
       id: string;
       reason: string;
       reporterId: string;
       requestId?: string;
+      status: string;
+      targetContentId?: string;
       targetPinId?: string;
+      targetType: string;
       targetUserId?: string;
     }>,
     idempotencyRecords: [] as Array<{

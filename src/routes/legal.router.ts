@@ -1,7 +1,7 @@
 import { Router } from 'express';
 
 const SUPPORT_EMAIL = 'support@soundlog.shop';
-const EFFECTIVE_DATE = '2026.08.02';
+const EFFECTIVE_DATE = '2026.08.15';
 
 type LegalSection = {
   body: string;
@@ -80,7 +80,11 @@ const termsPage: LegalPage = {
     },
     {
       title: '제한 사항',
-      body: '타인의 권리를 침해하는 콘텐츠, 불법적인 목적의 이용, 서비스 안정성을 해치는 행위는 허용되지 않습니다. 필요한 경우 서비스 이용이 제한될 수 있습니다.',
+      body: 'Soundlog는 불쾌하거나 폭력적이거나 혐오적이거나 성적인 콘텐츠를 용납하지 않습니다. 타인을 괴롭히거나 사칭하거나 위협하거나 스팸을 보내는 행위와 불법적인 목적의 이용도 허용하지 않습니다. 위반 콘텐츠는 즉시 숨김 또는 삭제될 수 있으며 위반 사용자는 서비스 이용이 정지될 수 있습니다.',
+    },
+    {
+      title: '신고와 차단',
+      body: `사용자는 앱에서 부적절한 콘텐츠를 신고하고 해당 사용자를 차단할 수 있습니다. 차단한 사용자의 콘텐츠는 즉시 피드와 지도에서 숨겨집니다. 신고는 ${SUPPORT_EMAIL}으로도 접수할 수 있으며 Soundlog는 신고 접수 후 24시간 안에 검토하고 필요한 콘텐츠 삭제와 사용자 제재를 진행합니다.`,
     },
     {
       title: '문의와 변경',

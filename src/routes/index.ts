@@ -7,6 +7,7 @@ import {
   homeController,
   libraryController,
   meController,
+  moderationController,
   momentLogController,
   playlistController,
   recapController,
@@ -19,9 +20,11 @@ import {
 import { env } from '../config/env.js';
 import { asyncHandler } from '../utils/async-handler.js';
 import { authMiddleware } from '../middlewares/auth.middleware.js';
+import { moderationAdminMiddleware } from '../middlewares/moderation-admin.middleware.js';
 import {
   authAccountRateLimitMiddleware,
   authIpRateLimitMiddleware,
+  communitySafetyRateLimitMiddleware,
 } from '../middlewares/rate-limit.middleware.js';
 import { momentPhotoUpload } from '../middlewares/upload.middleware.js';
 import { validate } from '../middlewares/validate.middleware.js';
@@ -32,6 +35,7 @@ import {
   homeValidators,
   libraryValidators,
   meValidators,
+  moderationValidators,
   momentLogValidators,
   playlistValidators,
   recapValidators,
@@ -431,14 +435,57 @@ export function createApiRouter() {
   router.post(
     '/v1/community/blocks',
     authMiddleware,
+    communitySafetyRateLimitMiddleware,
     validate({ body: communityValidators.blockBody }),
     asyncHandler(communityController.blockCommunityUser),
   );
   router.post(
     '/v1/community/reports',
     authMiddleware,
+    communitySafetyRateLimitMiddleware,
     validate({ body: communityValidators.reportBody }),
     asyncHandler(communityController.reportCommunityTarget),
+  );
+  router.get(
+    '/v1/admin/moderation/reports',
+    moderationAdminMiddleware,
+    validate({ query: moderationValidators.listQuery }),
+    asyncHandler(moderationController.listReports),
+  );
+  router.get(
+    '/v1/admin/moderation/content',
+    moderationAdminMiddleware,
+    validate({ query: moderationValidators.contentListQuery }),
+    asyncHandler(moderationController.listPendingContent),
+  );
+  router.get(
+    '/v1/admin/moderation/content-images/:fileId',
+    moderationAdminMiddleware,
+    validate({ params: moderationValidators.contentImageParams }),
+    asyncHandler(moderationController.getPendingContentImage),
+  );
+  router.patch(
+    '/v1/admin/moderation/content/:contentId',
+    moderationAdminMiddleware,
+    validate({
+      params: moderationValidators.contentParams,
+      body: moderationValidators.contentReviewBody,
+    }),
+    asyncHandler(moderationController.reviewContent),
+  );
+  router.patch(
+    '/v1/admin/moderation/reports/:reportId',
+    moderationAdminMiddleware,
+    validate({
+      params: moderationValidators.reportParams,
+      body: moderationValidators.resolveBody,
+    }),
+    asyncHandler(moderationController.resolveReport),
+  );
+  router.post(
+    '/v1/admin/moderation/sweep',
+    moderationAdminMiddleware,
+    asyncHandler(moderationController.sweepDeadlines),
   );
 
   router.post(
