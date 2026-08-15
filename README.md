@@ -49,7 +49,7 @@ docker compose --profile seed run --rm seed
 curl http://localhost:4000/v1/health
 ```
 
-API 컨테이너는 시작 시 `prisma migrate deploy`를 먼저 실행합니다. seed는 기존 사용자 데이터를 초기화할 수 있으므로 필요할 때만 별도 프로필로 실행합니다.
+API 컨테이너는 시작할 때 `prisma migrate deploy`를 실행한 뒤 `--public-catalog` 공개 시드를 멱등 적용합니다. 이 시작 시드는 지역 플레이리스트와 곡 및 장소 카탈로그만 `upsert`하며 기존 사용자와 리캡 데이터는 초기화하지 않습니다. 전체 데모 seed는 필요한 로컬 환경에서만 별도로 실행합니다.
 
 ## Prisma schema
 

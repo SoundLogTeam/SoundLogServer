@@ -3,6 +3,7 @@ import { ERROR_MESSAGES } from '../constants/error.constants.js';
 import { findMockTrack, mockDb } from '../mock/mock-db.js';
 import { badRequest, forbidden, notFound } from '../utils/http-error.js';
 import { getLimit, paginateByCursor } from '../utils/pagination.js';
+import { findRegionalPlaylistId } from '../utils/regional-playlist.js';
 import { createPublicId } from '../utils/tokens.js';
 
 type TrackDto = {
@@ -54,6 +55,14 @@ function compact<T extends Record<string, unknown>>(value: T) {
   return Object.fromEntries(
     Object.entries(value).filter(([, item]) => item !== undefined && item !== null),
   ) as Partial<T>;
+}
+
+function normalizePlaylistArtworkUrl(url?: string) {
+  if (!url || !url.startsWith('/')) {
+    return url;
+  }
+
+  return `${env.UPLOAD_PUBLIC_BASE_URL.replace(/\/$/, '')}/${url.replace(/^\//, '')}`;
 }
 
 function normalizeRoutePoints(routePoints?: RoutePointDto[]) {
@@ -790,19 +799,27 @@ function mateRequestToDto(request: (typeof mockDb.travelMateRequests)[number]) {
   };
 }
 
-function getDefaultPlaylistId(params?: { lat?: number; placeId?: string }) {
+function getDefaultPlaylistId(params?: { lat?: number; lng?: number; placeId?: string }) {
+  let placeText = params?.placeId ?? '';
+
   if (params?.placeId) {
     const place = mockDb.places.find(
       (item) => item.id === toStoragePlaceId(params.placeId),
     );
-    const placeText = [place?.title, place?.category, place?.overview].join(' ');
-
-    if (/해변|바다|해수욕장|ocean|beach/i.test(placeText)) {
-      return 'busan-ocean';
-    }
+    placeText = [
+      params.placeId,
+      place?.title,
+      place?.address,
+      place?.category,
+      place?.overview,
+    ].join(' ');
   }
 
-  return params?.lat && params.lat < 36.5 ? 'busan-ocean' : 'seoul-night';
+  return findRegionalPlaylistId({
+    lat: params?.lat,
+    lng: params?.lng,
+    placeText,
+  });
 }
 
 function toPublicPlaceId(id: string) {
@@ -1039,6 +1056,7 @@ export const mockSoundlogService = {
   async getFeaturedPlaylists(_user: unknown, params: {
     lat?: number;
     limit?: number;
+    lng?: number;
     locationRecommendationEnabled: boolean;
     placeId?: string;
     recommendationMode?: 'everyday' | 'travel';
@@ -1046,8 +1064,12 @@ export const mockSoundlogService = {
     const preferredId =
       params.recommendationMode === 'travel' &&
       params.locationRecommendationEnabled &&
-      (params.lat || params.placeId)
-        ? getDefaultPlaylistId({ lat: params.lat, placeId: params.placeId })
+      (params.lat !== undefined || params.placeId)
+        ? getDefaultPlaylistId({
+            lat: params.lat,
+            lng: params.lng,
+            placeId: params.placeId,
+          })
         : undefined;
 
     return [...mockDb.playlists]
@@ -1068,6 +1090,8 @@ export const mockSoundlogService = {
         id: playlist.id,
         regionName: playlist.regionName,
         description: playlist.description,
+        coverImageUrl: normalizePlaylistArtworkUrl(playlist.coverImageUrl),
+        backgroundImageUrl: normalizePlaylistArtworkUrl(playlist.backgroundImageUrl),
         trackCount: playlist.trackIds.length,
         durationText: playlist.durationText,
         source: playlist.source,
@@ -1126,6 +1150,7 @@ export const mockSoundlogService = {
   }, _idempotencyKey?: string) {
     const playlistId = getDefaultPlaylistId({
       lat: input.location?.lat,
+      lng: input.location?.lng,
       placeId: input.placeId,
     });
     const playlist = mockDb.playlists.find((item) => item.id === playlistId);
@@ -1151,6 +1176,7 @@ export const mockSoundlogService = {
   }) {
     const playlistId = getDefaultPlaylistId({
       lat: input.location?.lat,
+      lng: input.location?.lng,
     });
     const playlist = mockDb.playlists.find((item) => item.id === playlistId);
 
@@ -1165,7 +1191,7 @@ export const mockSoundlogService = {
     });
   },
 
-  async getPlaylist(_userId: string | undefined, playlistId: string, query: { lat?: number; placeId?: string }) {
+  async getPlaylist(_userId: string | undefined, playlistId: string, query: { lat?: number; lng?: number; placeId?: string }) {
     const id = playlistId === 'fallback' ? getDefaultPlaylistId(query) : playlistId;
     const playlist = mockDb.playlists.find((item) => item.id === id);
 
