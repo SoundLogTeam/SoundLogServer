@@ -7,6 +7,7 @@ const apiBaseUrl = (
 ).replace(/\/+$/, '');
 const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 const password = 'SoundlogLive!2026';
+const moderationAdminKey = process.env.LIVE_MODERATION_ADMIN_KEY;
 const users = [];
 const passedSteps = [];
 
@@ -22,6 +23,11 @@ async function request(path, options = {}) {
 
   if (options.token) {
     headers.Authorization = `Bearer ${options.token}`;
+  }
+  if (options.admin) {
+    assert(moderationAdminKey, 'LIVE_MODERATION_ADMIN_KEY is required for moderation checks.');
+    headers['x-soundlog-admin-key'] = moderationAdminKey;
+    headers['x-soundlog-admin-actor'] = 'live-e2e';
   }
 
   if (options.form) {
@@ -143,7 +149,7 @@ try {
     // steps below (registration, recap captures, etc.).
   });
 
-  await step('register, login, refresh, profile, and migration', async () => {
+  await step('register, login, refresh, and profile', async () => {
     primary = await registerUser('primary');
     companion = await registerUser('companion');
 
@@ -177,12 +183,8 @@ try {
     assert(me.payload?.data?.profile?.completedOnboarding === true, 'Profile was not completed.');
 
     await request('/v1/me/migrate-local-data', {
-      body: {
-        idempotencyKey: `live-migration-${runId}`,
-        libraryTrackCount: 1,
-        momentLogCount: 2,
-        recapDraftCount: 1,
-      },
+      body: {},
+      expectedStatus: 404,
       method: 'POST',
       token: primary.accessToken,
     });
@@ -376,6 +378,14 @@ try {
     });
     recapId = recap.payload?.data?.id;
     assert(recapId, 'Travel log was not created.');
+
+    for (const contentId of [firstCaptureId, secondCaptureId]) {
+      await request(`/v1/admin/moderation/content/${contentId}`, {
+        admin: true,
+        body: { decision: 'approved', type: 'moment_log' },
+        method: 'PATCH',
+      });
+    }
 
     const mine = await request('/v1/recaps?scope=mine', { token: primary.accessToken });
     assert(mine.payload?.data?.some((item) => item.id === recapId), 'Created log is missing.');
