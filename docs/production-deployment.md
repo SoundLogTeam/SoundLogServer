@@ -19,7 +19,10 @@ GitHub Actions의 `Deploy API to production` 워크플로를 수동으로 실행
 - `GCP_SSH_PORT`에는 SSH 포트를 넣습니다.
 - `GCP_SSH_KEY`에는 해당 서버에 접속할 개인키를 넣습니다.
 - `GCP_APP_DIR`에는 서버에서 compose 파일과 `.env`를 관리할 절대 경로를 넣습니다.
-- `PRODUCTION_ENV`에는 아래 운영 환경변수를 여러 줄 형식으로 넣습니다.
+- `PRODUCTION_ENV`에는 DB와 API의 기본 운영 환경변수를 여러 줄 형식으로 넣습니다.
+- `MODERATION_ADMIN_KEY`에는 32자 이상의 신고 운영 API 비밀키를 넣습니다.
+- `APP_REVIEW_EMAIL`과 `APP_REVIEW_PASSWORD`에는 Apple 심사 전용 로그인 정보를 넣습니다.
+- `SUPPORT_EMAIL`에는 약관과 지원 페이지에 공개할 실제 수신 가능한 메일 주소를 넣습니다.
 
 시크릿 값은 저장소 파일이나 Pull Request 본문에 기록하지 않습니다.
 
@@ -34,17 +37,13 @@ POSTGRES_PASSWORD=
 POSTGRES_DB=
 JWT_SECRET=
 UPLOAD_PUBLIC_BASE_URL=https://api.soundlog.p-e.kr
-MODERATION_ADMIN_KEY=
-MODERATION_ALERT_MODE=cloud_logging
-APP_REVIEW_EMAIL=
-APP_REVIEW_PASSWORD=
-SUPPORT_EMAIL=
-TRUST_PROXY_HOPS=1
 USE_MOCK_DB=false
 ALLOW_DEV_AUTH_FALLBACK=false
 ```
 
-`SUPPORT_EMAIL`에는 실제로 메일을 받을 수 있고 심사 대응에 사용할 주소를 넣습니다. 수신 설정이 확인되지 않은 `@soundlog.shop` 주소는 운영 검사에서 거부합니다. `DOCKER_IMAGE`, `DATABASE_URL`, `NODE_ENV`는 워크플로가 안전하게 생성하므로 `PRODUCTION_ENV`에 직접 넣지 않습니다.
+심사 운영값은 각각 별도 Repository secret으로 관리합니다. 워크플로가 기존 `PRODUCTION_ENV`에서 같은 이름의 오래된 값을 제거하고 별도 시크릿을 최종 환경 파일에 덧붙입니다. 신고 알림 방식은 `cloud_logging`으로 설정하고 nginx 프록시 단계는 `1`로 고정합니다.
+
+`SUPPORT_EMAIL`에는 실제로 메일을 받을 수 있고 심사 대응에 사용할 주소를 넣습니다. 수신 설정이 확인되지 않은 `@soundlog.shop` 주소는 운영 검사에서 거부합니다. `DOCKER_IMAGE`, `DATABASE_URL`, `NODE_ENV`, `MODERATION_ALERT_MODE`, `TRUST_PROXY_HOPS`는 워크플로가 안전하게 생성하므로 `PRODUCTION_ENV`에 직접 넣지 않습니다.
 
 ## 배포 중 보호 절차
 
