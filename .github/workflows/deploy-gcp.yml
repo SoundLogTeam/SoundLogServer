@@ -147,7 +147,6 @@ jobs:
             POSTGRES_PASSWORD
             POSTGRES_DB
             JWT_SECRET
-            UPLOAD_PUBLIC_BASE_URL
           )
           for key in "${required_env[@]}"; do
             value="$(sed -n "s/^${key}=//p" <<< "$PRODUCTION_ENV" | tail -n 1 | tr -d '\r')"
@@ -166,12 +165,6 @@ jobs:
             exit 1
           fi
 
-          upload_origin="$(sed -n 's/^UPLOAD_PUBLIC_BASE_URL=//p' <<< "$PRODUCTION_ENV" | tail -n 1 | tr -d '\r')"
-
-          if [ "$upload_origin" != 'https://api.soundlog.p-e.kr' ]; then
-            echo 'PRODUCTION_ENV.UPLOAD_PUBLIC_BASE_URL must be https://api.soundlog.p-e.kr.'
-            exit 1
-          fi
           if [ "${#RELEASE_MODERATION_ADMIN_KEY}" -lt 32 ]; then
             echo 'MODERATION_ADMIN_KEY must contain at least 32 characters.'
             exit 1
@@ -214,7 +207,8 @@ jobs:
 
           {
             printf 'DOCKER_IMAGE=%s/soundlog-server:%s\n' "$DOCKERHUB_USERNAME" "$IMAGE_TAG"
-            printf '%s\n' "$PRODUCTION_ENV" | sed '/^DOCKER_IMAGE=/d;/^DATABASE_URL=/d;/^NODE_ENV=/d;/^MODERATION_ADMIN_KEY=/d;/^MODERATION_ALERT_MODE=/d;/^APP_REVIEW_EMAIL=/d;/^APP_REVIEW_PASSWORD=/d;/^SUPPORT_EMAIL=/d;/^TRUST_PROXY_HOPS=/d'
+            printf '%s\n' "$PRODUCTION_ENV" | sed '/^DOCKER_IMAGE=/d;/^DATABASE_URL=/d;/^NODE_ENV=/d;/^UPLOAD_PUBLIC_BASE_URL=/d;/^MODERATION_ADMIN_KEY=/d;/^MODERATION_ALERT_MODE=/d;/^APP_REVIEW_EMAIL=/d;/^APP_REVIEW_PASSWORD=/d;/^SUPPORT_EMAIL=/d;/^TRUST_PROXY_HOPS=/d'
+            printf 'UPLOAD_PUBLIC_BASE_URL=https://api.soundlog.p-e.kr\n'
             printf 'MODERATION_ADMIN_KEY=%s\n' "$RELEASE_MODERATION_ADMIN_KEY"
             printf 'MODERATION_ALERT_MODE=cloud_logging\n'
             printf 'APP_REVIEW_EMAIL=%s\n' "$RELEASE_APP_REVIEW_EMAIL"

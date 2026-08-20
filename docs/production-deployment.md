@@ -36,14 +36,13 @@ POSTGRES_USER=
 POSTGRES_PASSWORD=
 POSTGRES_DB=
 JWT_SECRET=
-UPLOAD_PUBLIC_BASE_URL=https://api.soundlog.p-e.kr
 USE_MOCK_DB=false
 ALLOW_DEV_AUTH_FALLBACK=false
 ```
 
 심사 운영값은 각각 별도 Repository secret으로 관리합니다. 워크플로가 기존 `PRODUCTION_ENV`에서 같은 이름의 오래된 값을 제거하고 별도 시크릿을 최종 환경 파일에 덧붙입니다. 신고 알림 방식은 `cloud_logging`으로 설정하고 nginx 프록시 단계는 `1`로 고정합니다.
 
-`SUPPORT_EMAIL`에는 실제로 메일을 받을 수 있고 심사 대응에 사용할 주소를 넣습니다. 수신 설정이 확인되지 않은 `@soundlog.shop` 주소는 운영 검사에서 거부합니다. `DOCKER_IMAGE`, `DATABASE_URL`, `NODE_ENV`, `MODERATION_ALERT_MODE`, `TRUST_PROXY_HOPS`는 워크플로가 안전하게 생성하므로 `PRODUCTION_ENV`에 직접 넣지 않습니다.
+`SUPPORT_EMAIL`에는 실제로 메일을 받을 수 있고 심사 대응에 사용할 주소를 넣습니다. 수신 설정이 확인되지 않은 `@soundlog.shop` 주소는 운영 검사에서 거부합니다. `DOCKER_IMAGE`, `DATABASE_URL`, `NODE_ENV`, `UPLOAD_PUBLIC_BASE_URL`, `MODERATION_ALERT_MODE`, `TRUST_PROXY_HOPS`는 워크플로가 안전하게 생성하므로 `PRODUCTION_ENV`에 직접 넣지 않습니다. 업로드 공개 주소는 `https://api.soundlog.p-e.kr`로 고정됩니다.
 
 ## 배포 중 보호 절차
 
