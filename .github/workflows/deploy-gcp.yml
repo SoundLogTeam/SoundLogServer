@@ -1,0 +1,325 @@
+name: Deploy API to production
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: Docker image tag. Defaults to the selected commit SHA.
+        required: false
+        type: string
+
+concurrency:
+  group: deploy-api-production
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify release candidate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.23.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          cache: pnpm
+          node-version: 22
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm run db:generate
+
+      - name: Verify server
+        run: |
+          pnpm run typecheck
+          pnpm run build
+          pnpm run check:openapi-sync
+          pnpm run check:no-spotify-metadata
+          pnpm run test:coverage
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/soundlog_ci?schema=public
+          JWT_SECRET: soundlog-ci-test-secret
+          NODE_ENV: test
+          USE_MOCK_DB: 'true'
+
+  build-and-push:
+    name: Build and push Docker image
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      image_tag: ${{ steps.meta.outputs.image_tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate Docker Hub secrets
+        shell: bash
+        env:
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+        run: |
+          set -euo pipefail
+          for name in DOCKERHUB_USERNAME DOCKERHUB_TOKEN; do
+            if [ -z "${!name}" ]; then
+              echo "Missing required secret: $name"
+              exit 1
+            fi
+          done
+
+      - name: Set image tag
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          image_tag="${GITHUB_SHA::12}"
+          if [ -n "${{ inputs.image_tag }}" ]; then
+            image_tag="${{ inputs.image_tag }}"
+          fi
+          if [[ ! "$image_tag" =~ ^[A-Za-z0-9_.-]{1,128}$ ]]; then
+            echo "Invalid Docker image tag: $image_tag"
+            exit 1
+          fi
+          echo "image_tag=$image_tag" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/soundlog-server:${{ steps.meta.outputs.image_tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy to api.soundlog.p-e.kr
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate deployment secrets and production environment
+        shell: bash
+        env:
+          GCP_APP_DIR: ${{ secrets.GCP_APP_DIR }}
+          GCP_HOST: ${{ secrets.GCP_HOST }}
+          GCP_SSH_KEY: ${{ secrets.GCP_SSH_KEY }}
+          GCP_SSH_PORT: ${{ secrets.GCP_SSH_PORT }}
+          GCP_USER: ${{ secrets.GCP_USER }}
+          PRODUCTION_ENV: ${{ secrets.PRODUCTION_ENV }}
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in GCP_HOST GCP_USER GCP_SSH_KEY GCP_SSH_PORT GCP_APP_DIR PRODUCTION_ENV; do
+            if [ -z "${!name}" ]; then
+              missing+=("$name")
+            fi
+          done
+
+          required_env=(
+            CLIENT_URLS
+            POSTGRES_USER
+            POSTGRES_PASSWORD
+            POSTGRES_DB
+            JWT_SECRET
+            UPLOAD_PUBLIC_BASE_URL
+            MODERATION_ADMIN_KEY
+            MODERATION_ALERT_MODE
+            APP_REVIEW_EMAIL
+            APP_REVIEW_PASSWORD
+            SUPPORT_EMAIL
+            TRUST_PROXY_HOPS
+          )
+          for key in "${required_env[@]}"; do
+            value="$(sed -n "s/^${key}=//p" <<< "$PRODUCTION_ENV" | tail -n 1 | tr -d '\r')"
+            if [ -z "$value" ]; then
+              missing+=("PRODUCTION_ENV.$key")
+            fi
+          done
+
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf 'Missing required deployment values: %s\n' "${missing[*]}"
+            exit 1
+          fi
+
+          if grep -qE '^(DOCKER_IMAGE|DATABASE_URL)=' <<< "$PRODUCTION_ENV"; then
+            echo 'PRODUCTION_ENV must not contain DOCKER_IMAGE or DATABASE_URL.'
+            exit 1
+          fi
+
+          upload_origin="$(sed -n 's/^UPLOAD_PUBLIC_BASE_URL=//p' <<< "$PRODUCTION_ENV" | tail -n 1 | tr -d '\r')"
+          proxy_hops="$(sed -n 's/^TRUST_PROXY_HOPS=//p' <<< "$PRODUCTION_ENV" | tail -n 1 | tr -d '\r')"
+          support_email="$(sed -n 's/^SUPPORT_EMAIL=//p' <<< "$PRODUCTION_ENV" | tail -n 1 | tr -d '\r')"
+
+          if [ "$upload_origin" != 'https://api.soundlog.p-e.kr' ]; then
+            echo 'PRODUCTION_ENV.UPLOAD_PUBLIC_BASE_URL must be https://api.soundlog.p-e.kr.'
+            exit 1
+          fi
+          if [ "$proxy_hops" != '1' ]; then
+            echo 'PRODUCTION_ENV.TRUST_PROXY_HOPS must be 1 behind the production nginx proxy.'
+            exit 1
+          fi
+          if [[ "$support_email" == *@soundlog.shop ]]; then
+            echo 'PRODUCTION_ENV.SUPPORT_EMAIL must use a mailbox with verified mail reception.'
+            exit 1
+          fi
+
+      - name: Create production env file
+        shell: bash
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
+          PRODUCTION_ENV: ${{ secrets.PRODUCTION_ENV }}
+        run: |
+          set -euo pipefail
+          mkdir -p .deploy
+          postgres_user="$(sed -n 's/^POSTGRES_USER=//p' <<< "$PRODUCTION_ENV" | tail -n 1 | tr -d '\r')"
+          postgres_password="$(sed -n 's/^POSTGRES_PASSWORD=//p' <<< "$PRODUCTION_ENV" | tail -n 1 | tr -d '\r')"
+          postgres_db="$(sed -n 's/^POSTGRES_DB=//p' <<< "$PRODUCTION_ENV" | tail -n 1 | tr -d '\r')"
+
+          database_url="$(
+            POSTGRES_USER="$postgres_user" POSTGRES_PASSWORD="$postgres_password" POSTGRES_DB="$postgres_db" node <<'NODE'
+          const encode = encodeURIComponent;
+          const user = encode(process.env.POSTGRES_USER || '');
+          const password = encode(process.env.POSTGRES_PASSWORD || '');
+          const database = encode(process.env.POSTGRES_DB || '');
+          process.stdout.write(`postgresql://${user}:${password}@db:5432/${database}?schema=public`);
+          NODE
+          )"
+
+          {
+            printf 'DOCKER_IMAGE=%s/soundlog-server:%s\n' "$DOCKERHUB_USERNAME" "$IMAGE_TAG"
+            printf '%s\n' "$PRODUCTION_ENV" | sed '/^DOCKER_IMAGE=/d;/^DATABASE_URL=/d;/^NODE_ENV=/d'
+            printf 'DATABASE_URL=%s\n' "$database_url"
+            printf 'NODE_ENV=production\n'
+          } > .deploy/production.env
+
+      - name: Verify SSH target is the live API host
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.GCP_HOST }}
+          username: ${{ secrets.GCP_USER }}
+          key: ${{ secrets.GCP_SSH_KEY }}
+          port: ${{ secrets.GCP_SSH_PORT }}
+          script: |
+            set -eu
+            resolved_ip="$(getent ahostsv4 api.soundlog.p-e.kr | awk 'NR == 1 { print $1 }')"
+            public_ip="$(curl -fsS --max-time 10 https://api.ipify.org)"
+            if [ "$public_ip" != "$resolved_ip" ]; then
+              echo "Refusing deployment: SSH host $public_ip does not serve api.soundlog.p-e.kr ($resolved_ip)."
+              exit 1
+            fi
+            app_dir="${{ secrets.GCP_APP_DIR }}"
+            backup_dir="$app_dir/.deploy-backups/${{ github.run_id }}"
+            mkdir -p "$app_dir" "$backup_dir"
+            [ ! -f "$app_dir/.env" ] || cp -p "$app_dir/.env" "$backup_dir/.env"
+            [ ! -f "$app_dir/docker-compose.prod.yml" ] || cp -p "$app_dir/docker-compose.prod.yml" "$backup_dir/docker-compose.prod.yml"
+            sudo docker --version
+            sudo docker compose version
+
+      - name: Copy production compose file
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.GCP_HOST }}
+          username: ${{ secrets.GCP_USER }}
+          key: ${{ secrets.GCP_SSH_KEY }}
+          port: ${{ secrets.GCP_SSH_PORT }}
+          source: docker-compose.prod.yml
+          target: ${{ secrets.GCP_APP_DIR }}
+          overwrite: true
+
+      - name: Copy production env file
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.GCP_HOST }}
+          username: ${{ secrets.GCP_USER }}
+          key: ${{ secrets.GCP_SSH_KEY }}
+          port: ${{ secrets.GCP_SSH_PORT }}
+          source: .deploy/production.env
+          target: ${{ secrets.GCP_APP_DIR }}
+          strip_components: 1
+          overwrite: true
+
+      - name: Deploy with rollback backup
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.GCP_HOST }}
+          username: ${{ secrets.GCP_USER }}
+          key: ${{ secrets.GCP_SSH_KEY }}
+          port: ${{ secrets.GCP_SSH_PORT }}
+          command_timeout: 15m
+          script: |
+            set -eu
+            cd "${{ secrets.GCP_APP_DIR }}"
+            backup_dir=".deploy-backups/${{ github.run_id }}"
+            mv production.env .env
+
+            rollback() {
+              echo 'Deployment failed. Restoring the previous compose and environment files.'
+              [ ! -f "$backup_dir/.env" ] || cp -p "$backup_dir/.env" .env
+              [ ! -f "$backup_dir/docker-compose.prod.yml" ] || cp -p "$backup_dir/docker-compose.prod.yml" docker-compose.prod.yml
+              sudo docker compose -f docker-compose.prod.yml up -d db api || true
+            }
+            trap rollback INT TERM HUP EXIT
+
+            echo "${{ secrets.DOCKERHUB_TOKEN }}" | sudo docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+            sudo docker compose -f docker-compose.prod.yml pull api
+            sudo docker compose -f docker-compose.prod.yml up -d db api
+
+            for attempt in $(seq 1 24); do
+              if sudo docker compose -f docker-compose.prod.yml exec -T api \
+                node -e "fetch('http://127.0.0.1:4000/v1/health').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"; then
+                break
+              fi
+              if [ "$attempt" -eq 24 ]; then
+                sudo docker compose -f docker-compose.prod.yml logs --tail=160 api
+                exit 1
+              fi
+              sleep 10
+            done
+
+            sudo docker compose -f docker-compose.prod.yml exec -T api node scripts/check-production-env.mjs
+            sudo docker compose -f docker-compose.prod.yml exec -T api node dist/prisma/seed-review.js
+            sudo docker compose -f docker-compose.prod.yml exec -T \
+              -e PUBLIC_API_BASE_URL=http://127.0.0.1:4000 \
+              api node scripts/check-public-api-contract.mjs
+
+            trap - INT TERM HUP EXIT
+            echo "Deployment completed. Rollback backup: $backup_dir"
+
+      - name: Verify public HTTPS endpoints
+        shell: bash
+        env:
+          PUBLIC_API_BASE_URL: https://api.soundlog.p-e.kr
+        run: |
+          set -euo pipefail
+          node scripts/check-public-api-contract.mjs
+          for endpoint in /legal/privacy /legal/terms /support; do
+            curl --fail --silent --show-error --head --max-time 15 "${PUBLIC_API_BASE_URL}${endpoint}" > /dev/null
+          done
+          admin_status="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 15 "${PUBLIC_API_BASE_URL}/v1/admin/moderation/reports")"
+          if [ "$admin_status" != '401' ]; then
+            echo "Expected unauthenticated moderation API to return 401, got $admin_status."
+            exit 1
+          fi

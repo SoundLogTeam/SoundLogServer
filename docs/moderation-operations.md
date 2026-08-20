@@ -19,7 +19,7 @@ pnpm db:seed:review
 아래 예시에서 주소와 비밀키는 운영 환경에 맞게 바꿉니다.
 
 ```bash
-curl -fsS 'https://api.soundlog.shop/v1/admin/moderation/reports?status=pending&limit=50' \
+curl -fsS 'https://api.soundlog.p-e.kr/v1/admin/moderation/reports?status=pending&limit=50' \
   -H 'x-soundlog-admin-key: YOUR_ADMIN_KEY'
 ```
 
@@ -30,7 +30,7 @@ curl -fsS 'https://api.soundlog.shop/v1/admin/moderation/reports?status=pending&
 - `hide_and_suspend`는 콘텐츠를 숨기고 작성자의 로그인을 중단합니다.
 
 ```bash
-curl -fsS -X PATCH 'https://api.soundlog.shop/v1/admin/moderation/reports/REPORT_ID' \
+curl -fsS -X PATCH 'https://api.soundlog.p-e.kr/v1/admin/moderation/reports/REPORT_ID' \
   -H 'content-type: application/json' \
   -H 'x-soundlog-admin-key: YOUR_ADMIN_KEY' \
   --data '{"action":"hide_content","note":"운영 정책 위반 콘텐츠를 숨겼습니다."}'
@@ -41,20 +41,20 @@ curl -fsS -X PATCH 'https://api.soundlog.shop/v1/admin/moderation/reports/REPORT
 사진이 포함된 공개 리캡과 음악 기록은 승인 전까지 다른 사용자에게 보이지 않습니다.
 
 ```bash
-curl -fsS 'https://api.soundlog.shop/v1/admin/moderation/content?limit=50' \
+curl -fsS 'https://api.soundlog.p-e.kr/v1/admin/moderation/content?limit=50' \
   -H 'x-soundlog-admin-key: YOUR_ADMIN_KEY'
 ```
 
 응답의 `photoUrl` 또는 `backgroundImageUrl` 마지막 경로에 있는 32자리 `fileId`를 관리자 이미지 경로에 넣으면 사용자 로그인 토큰 없이 검토 원본을 확인할 수 있습니다.
 
 ```bash
-curl -fsS 'https://api.soundlog.shop/v1/admin/moderation/content-images/FILE_ID' \
+curl -fsS 'https://api.soundlog.p-e.kr/v1/admin/moderation/content-images/FILE_ID' \
   -H 'x-soundlog-admin-key: YOUR_ADMIN_KEY' \
   --output moderation-image
 ```
 
 ```bash
-curl -fsS -X PATCH 'https://api.soundlog.shop/v1/admin/moderation/content/CONTENT_ID' \
+curl -fsS -X PATCH 'https://api.soundlog.p-e.kr/v1/admin/moderation/content/CONTENT_ID' \
   -H 'content-type: application/json' \
   -H 'x-soundlog-admin-key: YOUR_ADMIN_KEY' \
   --data '{"type":"recap","decision":"approved"}'
@@ -65,7 +65,7 @@ curl -fsS -X PATCH 'https://api.soundlog.shop/v1/admin/moderation/content/CONTEN
 서버는 15분마다 처리 기한을 확인합니다. 20시간이 지난 미처리 신고와 24시간을 넘긴 신고를 웹훅으로 다시 알립니다. 배포 직후에는 아래 명령으로 점검 작업을 직접 실행하고 웹훅 수신 여부를 확인합니다.
 
 ```bash
-curl -fsS -X POST 'https://api.soundlog.shop/v1/admin/moderation/sweep' \
+curl -fsS -X POST 'https://api.soundlog.p-e.kr/v1/admin/moderation/sweep' \
   -H 'x-soundlog-admin-key: YOUR_ADMIN_KEY'
 ```
 

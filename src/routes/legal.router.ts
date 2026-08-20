@@ -1,6 +1,8 @@
 import { Router } from 'express';
 
-const SUPPORT_EMAIL = 'support@soundlog.shop';
+import { env } from '../config/env.js';
+
+const SUPPORT_EMAIL = env.SUPPORT_EMAIL;
 const EFFECTIVE_DATE = '2026.08.15';
 
 type LegalSection = {

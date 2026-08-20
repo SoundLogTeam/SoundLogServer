@@ -41,6 +41,7 @@ const envSchema = z.object({
     .string()
     .min(8)
     .default('Soundlog/0.1 (+https://github.com/SoundLogTeam/SoundLogServer)'),
+  SUPPORT_EMAIL: z.string().email().default('support@soundlog.shop'),
   TOUR_API_BASE_URL: z.string().url().default('https://apis.data.go.kr/B551011/KorService2'),
   TOUR_API_SERVICE_KEY: z.string().optional(),
   TRUST_PROXY_HOPS: z.coerce.number().int().min(0).default(0),

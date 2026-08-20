@@ -8,7 +8,7 @@ let ownsContractUser = false;
 
 if (!apiBaseUrl) {
   console.error(
-    'Usage: PUBLIC_API_BASE_URL=https://soundlog.shop/api/soundlog node scripts/check-public-api-contract.mjs',
+    'Usage: PUBLIC_API_BASE_URL=https://api.soundlog.p-e.kr node scripts/check-public-api-contract.mjs',
   );
   process.exit(1);
 }
@@ -130,8 +130,58 @@ async function verifyOpenApi() {
       addError(`/openapi.yaml returned HTTP ${response.status}.`);
     }
 
-    if (!text.includes('openapi: 3.1.0') || !text.includes('/v1/auth/register')) {
+    const requiredPaths = [
+      '/v1/auth/register:',
+      '/v1/community/blocks:',
+      '/v1/admin/moderation/reports:',
+    ];
+
+    if (
+      !text.includes('openapi: 3.1.0') ||
+      requiredPaths.some((path) => !text.includes(path))
+    ) {
       addError('/openapi.yaml does not match the current SoundLogServer API contract.');
+    }
+  } catch (error) {
+    addError(error instanceof Error ? error.message : String(error));
+  }
+}
+
+async function verifyLegalPages() {
+  const pages = [
+    ['/legal/privacy', '개인정보 처리방침'],
+    ['/legal/terms', '서비스 이용약관'],
+    ['/support', '고객지원'],
+  ];
+
+  for (const [path, title] of pages) {
+    try {
+      const { response, text } = await fetchText(path);
+
+      if (!response.ok) {
+        addError(`${path} returned HTTP ${response.status}.`);
+        continue;
+      }
+      if (!response.headers.get('content-type')?.includes('text/html')) {
+        addError(`${path} did not return an HTML document.`);
+      }
+      if (!text.includes(`<h1>${title}</h1>`) || !text.includes('mailto:')) {
+        addError(`${path} does not contain the expected public support content.`);
+      }
+    } catch (error) {
+      addError(error instanceof Error ? error.message : String(error));
+    }
+  }
+}
+
+async function verifyModerationAuthBoundary() {
+  try {
+    const { response, text } = await fetchText('/v1/admin/moderation/reports');
+
+    if (response.status !== 401) {
+      addError(
+        `/v1/admin/moderation/reports returned HTTP ${response.status}; expected 401 without the admin key. sample=${text.slice(0, 120)}`,
+      );
     }
   } catch (error) {
     addError(error instanceof Error ? error.message : String(error));
@@ -202,7 +252,7 @@ async function verifyPlaylistCatalog() {
     if (typeof playlist?.backgroundImageUrl !== 'string') {
       addError('/v1/playlists/jeju-island did not return a background image URL.');
     } else {
-      const artworkPath = new URL(playlist.backgroundImageUrl).pathname;
+      const artworkPath = new URL(playlist.backgroundImageUrl, `${apiBaseUrl}/`).pathname;
       const { response } = await fetchText(artworkPath);
 
       if (!response.ok || response.headers.get('content-type') !== 'image/webp') {
@@ -258,6 +308,8 @@ async function verifyRemovedMusicPlatformRoute() {
 
 await verifyHealth();
 await verifyOpenApi();
+await verifyLegalPages();
+await verifyModerationAuthBoundary();
 await createContractSession();
 
 try {
