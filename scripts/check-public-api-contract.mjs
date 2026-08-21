@@ -238,6 +238,34 @@ async function verifyMusicMetadata() {
   }
 }
 
+async function verifyMlRecommendation() {
+  try {
+    const payload = await fetchJson(
+      '/v1/recommendations/playlists?mood=%EC%9E%94%EC%9E%94%ED%95%9C&state=%EB%B0%94%EB%8B%A4&x=129.1186&y=35.1532',
+      { authenticated: true },
+    );
+    const recommendation = payload?.data;
+
+    if (recommendation?.context?.source !== 'ml-recommendation') {
+      addError(
+        `/v1/recommendations/playlists did not return the ML source: ${JSON.stringify(
+          recommendation?.context ?? null,
+        )}`,
+      );
+    }
+
+    if (!Array.isArray(recommendation?.tracks) || recommendation.tracks.length === 0) {
+      addError('/v1/recommendations/playlists returned no recommended tracks.');
+    }
+
+    if (!recommendation?.coverImageUrl?.startsWith('https://')) {
+      addError('/v1/recommendations/playlists returned no HTTPS playlist cover image.');
+    }
+  } catch (error) {
+    addError(error instanceof Error ? error.message : String(error));
+  }
+}
+
 async function verifyPlaylistCatalog() {
   try {
     const payload = await fetchJson('/v1/playlists/jeju-island', {
@@ -315,6 +343,7 @@ await createContractSession();
 try {
   await verifyNearbyPlaces();
   await verifyMusicMetadata();
+  await verifyMlRecommendation();
   await verifyPlaylistCatalog();
   await verifyRemovedMusicPlatformRoute();
 } finally {

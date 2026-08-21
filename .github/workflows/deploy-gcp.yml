@@ -142,7 +142,6 @@ jobs:
           done
 
           required_env=(
-            CLIENT_URLS
             POSTGRES_USER
             POSTGRES_PASSWORD
             POSTGRES_DB
@@ -207,7 +206,8 @@ jobs:
 
           {
             printf 'DOCKER_IMAGE=%s/soundlog-server:%s\n' "$DOCKERHUB_USERNAME" "$IMAGE_TAG"
-            printf '%s\n' "$PRODUCTION_ENV" | sed '/^DOCKER_IMAGE=/d;/^DATABASE_URL=/d;/^NODE_ENV=/d;/^UPLOAD_PUBLIC_BASE_URL=/d;/^MODERATION_ADMIN_KEY=/d;/^MODERATION_ALERT_MODE=/d;/^APP_REVIEW_EMAIL=/d;/^APP_REVIEW_PASSWORD=/d;/^SUPPORT_EMAIL=/d;/^TRUST_PROXY_HOPS=/d'
+            printf '%s\n' "$PRODUCTION_ENV" | sed '/^DOCKER_IMAGE=/d;/^DATABASE_URL=/d;/^NODE_ENV=/d;/^CLIENT_URL=/d;/^CLIENT_URLS=/d;/^UPLOAD_PUBLIC_BASE_URL=/d;/^MODERATION_ADMIN_KEY=/d;/^MODERATION_ALERT_MODE=/d;/^APP_REVIEW_EMAIL=/d;/^APP_REVIEW_PASSWORD=/d;/^SUPPORT_EMAIL=/d;/^TRUST_PROXY_HOPS=/d'
+            printf 'CLIENT_URLS=https://api.soundlog.p-e.kr\n'
             printf 'UPLOAD_PUBLIC_BASE_URL=https://api.soundlog.p-e.kr\n'
             printf 'MODERATION_ADMIN_KEY=%s\n' "$RELEASE_MODERATION_ADMIN_KEY"
             printf 'MODERATION_ALERT_MODE=cloud_logging\n'

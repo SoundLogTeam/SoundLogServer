@@ -31,7 +31,6 @@ GitHub Actions의 `Deploy API to production` 워크플로를 수동으로 실행
 `PRODUCTION_ENV`에는 최소한 다음 값을 포함해야 합니다.
 
 ```dotenv
-CLIENT_URLS=https://api.soundlog.p-e.kr
 POSTGRES_USER=
 POSTGRES_PASSWORD=
 POSTGRES_DB=
@@ -42,7 +41,9 @@ ALLOW_DEV_AUTH_FALLBACK=false
 
 심사 운영값은 각각 별도 Repository secret으로 관리합니다. 워크플로가 기존 `PRODUCTION_ENV`에서 같은 이름의 오래된 값을 제거하고 별도 시크릿을 최종 환경 파일에 덧붙입니다. 신고 알림 방식은 `cloud_logging`으로 설정하고 nginx 프록시 단계는 `1`로 고정합니다.
 
-`SUPPORT_EMAIL`에는 실제로 메일을 받을 수 있고 심사 대응에 사용할 주소를 넣습니다. 수신 설정이 확인되지 않은 `@soundlog.shop` 주소는 운영 검사에서 거부합니다. `DOCKER_IMAGE`, `DATABASE_URL`, `NODE_ENV`, `UPLOAD_PUBLIC_BASE_URL`, `MODERATION_ALERT_MODE`, `TRUST_PROXY_HOPS`는 워크플로가 안전하게 생성하므로 `PRODUCTION_ENV`에 직접 넣지 않습니다. 업로드 공개 주소는 `https://api.soundlog.p-e.kr`로 고정됩니다.
+`SUPPORT_EMAIL`에는 실제로 메일을 받을 수 있고 심사 대응에 사용할 주소를 넣습니다. 수신 설정이 확인되지 않은 `@soundlog.shop` 주소는 운영 검사에서 거부합니다. `DOCKER_IMAGE`, `DATABASE_URL`, `NODE_ENV`, `CLIENT_URL`, `CLIENT_URLS`, `UPLOAD_PUBLIC_BASE_URL`, `MODERATION_ALERT_MODE`, `TRUST_PROXY_HOPS`는 워크플로가 안전하게 생성하므로 `PRODUCTION_ENV`에 직접 넣지 않습니다. 클라이언트와 업로드 공개 주소는 `https://api.soundlog.p-e.kr`로 고정됩니다.
+
+`ML_RECOMMENDATION_API_URL`은 API 서버가 내부적으로 호출할 HTTPS 추천 엔드포인트입니다. 앱은 이 내부 주소를 직접 호출하지 않고 `https://api.soundlog.p-e.kr/v1/recommendations/playlists`만 호출합니다. 배포 후 공개 계약 검사는 이 경로가 폴백이 아닌 `ml-recommendation` 결과와 HTTPS 커버 이미지를 반환하는지 확인합니다.
 
 ## 배포 중 보호 절차
 

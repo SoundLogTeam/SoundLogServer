@@ -86,6 +86,10 @@ clientUrls.forEach((url) => {
   }
 });
 
+if (clientUrls.length !== 1 || clientUrls[0] !== 'https://api.soundlog.p-e.kr') {
+  addError('CLIENT_URLS must use only https://api.soundlog.p-e.kr in production.');
+}
+
 if ((process.env.JWT_SECRET ?? '').length < 32) {
   addWarning('JWT_SECRET is shorter than 32 characters. Use a long random secret in production.');
 }
