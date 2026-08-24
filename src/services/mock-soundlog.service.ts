@@ -1187,7 +1187,11 @@ export const mockSoundlogService = {
         : undefined;
 
     return [...mockDb.playlists]
-      .filter((playlist) => playlist.source !== 'personalized')
+      .filter((playlist) =>
+        playlist.source === undefined ||
+        playlist.source === 'location' ||
+        playlist.source === 'trend',
+      )
       .sort((first, second) => {
         if (first.id === preferredId) {
           return -1;

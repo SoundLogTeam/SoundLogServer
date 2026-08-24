@@ -82,10 +82,20 @@ describe('mockSoundlogService', () => {
       mood: '시원한',
       state: '드라이브',
     });
+    const featuredAfterMlRecommendations = await mockSoundlogService.getFeaturedPlaylists(undefined, {
+      limit: 20,
+      locationRecommendationEnabled: true,
+      recommendationMode: 'everyday',
+    });
 
     expect(profile.completedOnboarding).toBe(true);
     expect(profile.preferredGenres).toEqual(['인디']);
     expect(profile.dislikedArtists).toEqual(['skip-me']);
+    const featuredSources = featuredAfterMlRecommendations.map((playlist) =>
+      String(playlist.source ?? ''),
+    );
+    expect(featuredSources).not.toContain('ml-recommendation');
+    expect(featuredSources).not.toContain('personalized');
     expect(places).toHaveLength(1);
     expect(places[0].source).toBe('seed');
     expect(places[0].id).toMatch(/^seed-/);
