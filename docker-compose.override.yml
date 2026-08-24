@@ -1,0 +1,42 @@
+# Soundlog 배포 오버라이드 — echo 서버 전용
+#
+# 저장소의 docker-compose.yml은 그대로 두고 이 파일만 얹는다.
+# `docker compose up -d` 가 두 파일을 자동 병합한다.
+#
+# ── 이 서버의 제약 (2026-08 확인) ──
+# echo 서버는 여러 서비스가 공존하는 공용 서버다. 아래를 반드시 지킨다.
+#
+#   호스트 5432  : PostgreSQL 18이 이미 사용 중  → 컨테이너 db 포트를 노출하지 않는다
+#   호스트 80/443: nginx가 이미 사용 중          → 지금은 사용 안 함 (나중에 프록시로 전환 가능)
+#   호스트 8000  : ML(uvicorn)이 별도 프로세스로 운영 중 → 컨테이너에서 호스트로 호출
+#   호스트 8005  : 비어 있음                     → api가 사용 (ACG에서 열 것)
+#
+# 추천 모델 서비스는 이 compose가 관리하지 않는다.
+#   호스트에서 uvicorn으로 따로 운영하며, api 컨테이너가 host-gateway를 통해 호출한다.
+#   ML을 다른 서버로 옮기면 .env에 ML_RECOMMENDATION_API_URL을 지정해 덮어쓰면 된다.
+
+services:
+  db:
+    # 원본 compose의 "${POSTGRES_PORT:-5432}:5432" 노출을 취소한다.
+    # 호스트 PostgreSQL 18과 충돌하며, 컨테이너 네트워크 안에서만 쓰면 충분하다.
+    ports: !reset []
+
+  api:
+    # 호스트 8005를 외부에 공개한다. ACG에서 TCP 8005를 열어야 접속된다.
+    #
+    # 8005를 고른 이유: 이 서버에서 8000(ML), 8001(ci), 8002(echohub),
+    # 8004(blogstudio), 8006/8011(java)이 이미 사용 중이고 8005만 비어 있다.
+    #
+    # 나중에 nginx 뒤로 옮길 때는 아래 한 줄을 127.0.0.1 바인딩으로 바꾸면 된다.
+    # 그러면 HTTPS를 기존 nginx 인증서로 처리하고 ACG에서 8005를 닫을 수 있다.
+    #   - "127.0.0.1:${API_PORT:-8005}:4000"
+    ports: !override
+      - "${API_PORT:-8005}:4000"
+    environment:
+      # 컨테이너에서 호스트의 추천 서비스(8000)를 호출한다.
+      # 리눅스에서는 host-gateway가 docker0 브리지 주소로 해석된다.
+      ML_RECOMMENDATION_API_URL: http://host.docker.internal:8000/recommend
+      # 관광공사 API가 느릴 때를 감안한 여유. Python 쪽 예산은 3.6초다.
+      ML_RECOMMENDATION_TIMEOUT_MS: ${ML_RECOMMENDATION_TIMEOUT_MS:-8000}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

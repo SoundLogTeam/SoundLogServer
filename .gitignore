@@ -1,0 +1,32 @@
+# 비밀 — JWT_SECRET · POSTGRES_PASSWORD · TOUR_API_SERVICE_KEY
+.env
+.env.*
+!.env.example
+
+# 의존성 · 빌드
+node_modules/
+dist/
+*.tsbuildinfo
+.pnpm-store/
+
+# 테스트
+coverage/
+
+# 런타임 산출물 — 사용자 업로드 사진
+uploads/
+logs/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# 백업 · 임시 · 인증서
+*.bak
+*.zip
+*.pem
+*.key
+
+# 에디터 — .vscode/sftp.json 에 서버 비밀번호가 들어 있다
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

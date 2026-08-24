@@ -1,0 +1,80 @@
+model Track {
+  id                   String               @id
+  title                String
+  artist               String
+  fallbackColor        String?
+  albumImageUrl        String?
+  previewUrl           String?
+  externalUrl          String?
+  platformUrls         Json?
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
+  playlistTracks       PlaylistTrack[]
+  moodRecommendations  MoodRecommendation[]
+  libraryTrackStates   LibraryTrackState[]
+  representativeRecaps Recap[]              @relation("RepresentativeTrack")
+}
+
+model Playlist {
+  id                 String          @id
+  regionName         String
+  description        String?
+  placeName          String?
+  reason             String
+  coverImageUrl      String?
+  backgroundImageUrl String?
+  trackCount         Int
+  durationText       String
+  source             String?
+  context            Json?
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+  tracks             PlaylistTrack[]
+  moodRecommendations MoodRecommendation[]
+}
+
+model PlaylistTrack {
+  playlistId String
+  trackId    String
+  position   Int
+  isLiked    Boolean  @default(false)
+  isSaved    Boolean  @default(false)
+  playlist   Playlist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+  track      Track    @relation(fields: [trackId], references: [id], onDelete: Cascade)
+
+  @@id([playlistId, trackId])
+  @@unique([playlistId, position])
+}
+
+model MoodRecommendation {
+  id           String   @id
+  title        String
+  subtitle     String?
+  color        String
+  genres       String[] @default([])
+  moods        String[] @default([])
+  travelStyles String[] @default([])
+  imageUrl     String?
+  playlistId   String?
+  trackId      String
+  sortOrder    Int      @default(0)
+  playlist     Playlist? @relation(fields: [playlistId], references: [id], onDelete: SetNull)
+  track        Track    @relation(fields: [trackId], references: [id])
+
+  @@index([playlistId])
+}
+
+model LibraryTrackState {
+  userId     String
+  trackId    String
+  playlistId String?
+  isLiked    Boolean   @default(false)
+  isSaved    Boolean   @default(false)
+  likedAt    DateTime?
+  savedAt    DateTime?
+  updatedAt  DateTime  @updatedAt
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  track      Track     @relation(fields: [trackId], references: [id])
+
+  @@id([userId, trackId])
+}

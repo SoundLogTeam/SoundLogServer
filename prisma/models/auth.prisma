@@ -1,0 +1,65 @@
+model User {
+  id                       String                    @id @default(cuid())
+  provider                 String
+  providerUserId           String
+  displayName              String?
+  passwordHash             String?
+  createdAt                DateTime                  @default(now())
+  updatedAt                DateTime                  @updatedAt
+  profile                  UserProfile?
+  musicPlatform            MusicPlatform?
+  refreshTokens            RefreshToken[]
+  libraryTrackStates       LibraryTrackState[]
+  momentLogs               MomentLog[]
+  recommendationEvents     RecommendationEvent[]
+  recaps                   Recap[]
+  travelSessions           TravelSession[]
+  recapShareEvents         RecapShareEvent[]
+  idempotencyRecords       IdempotencyRecord[]
+  ownedTravelRooms         TravelRoom[]              @relation("TravelRoomOwner")
+  travelRoomMembers        TravelRoomMember[]
+  travelRoomMoments        TravelRoomMoment[]
+  travelRoomMomentComments TravelRoomMomentComment[]
+  soundMapPins             SoundMapPin[]
+  sentMateRequests         TravelMateRequest[]       @relation("TravelMateRequester")
+  receivedMateRequests     TravelMateRequest[]       @relation("TravelMateTarget")
+  communityBlocksMade      CommunityBlock[]          @relation("CommunityBlocker")
+  communityBlocksTaken     CommunityBlock[]          @relation("CommunityBlocked")
+  communityReports         CommunityReport[]         @relation("CommunityReporter")
+  communityReportsOn       CommunityReport[]         @relation("CommunityReportedUser")
+
+  @@unique([provider, providerUserId])
+}
+
+model RefreshToken {
+  id        String   @id @default(cuid())
+  tokenHash String   @unique
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model UserProfile {
+  userId                        String   @id
+  companionType                 String?
+  locationRecommendationEnabled Boolean  @default(true)
+  preferredGenres               String[]
+  preferredMoods                String[]
+  travelStyles                  String[]
+  dislikedArtists               String[] @default([])
+  birthYear                     Int?
+  gender                        String?
+  completedOnboarding           Boolean  @default(true)
+  updatedAt                     DateTime @updatedAt
+  user                          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model MusicPlatform {
+  userId             String   @id
+  selectedPlatformId String
+  connected          Boolean  @default(false)
+  providerUserId     String?
+  updatedAt          DateTime @updatedAt
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}

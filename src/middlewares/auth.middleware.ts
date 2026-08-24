@@ -1,0 +1,94 @@
+import type { NextFunction, Request, Response } from 'express';
+
+import { env } from '../config/env.js';
+import { ERROR_MESSAGES } from '../constants/error.constants.js';
+import { prisma } from '../config/prisma.js';
+import { defaultUser } from '../data/seed-data.js';
+import { mockDb } from '../mock/mock-db.js';
+import { unauthorized } from '../utils/http-error.js';
+import { verifyAccessToken } from '../utils/tokens.js';
+
+export async function authMiddleware(req: Request, _res: Response, next: NextFunction) {
+  const authorization = req.header('authorization');
+  const token = authorization?.startsWith('Bearer ')
+    ? authorization.slice('Bearer '.length)
+    : undefined;
+
+  if (!token) {
+    if (env.ALLOW_DEV_AUTH_FALLBACK && env.NODE_ENV !== 'production') {
+      if (env.USE_MOCK_DB) {
+        req.user = mockDb.user;
+        next();
+        return;
+      }
+
+      const user = await prisma.user.upsert({
+        where: { provider_providerUserId: defaultUser },
+        update: {},
+        create: {
+          ...defaultUser,
+          displayName: 'Local Soundlog User',
+        },
+      });
+
+      req.user = user;
+      next();
+      return;
+    }
+
+    throw unauthorized();
+  }
+
+  try {
+    const userId = verifyAccessToken(token);
+
+    if (env.USE_MOCK_DB) {
+      const passwordUser = mockDb.passwordUsers.find((user) => user.id === userId);
+      const isDefaultMockUser = userId === 'mock-user-local';
+
+      if (!isDefaultMockUser && !passwordUser) {
+        throw unauthorized(ERROR_MESSAGES.INVALID_TOKEN);
+      }
+
+      req.user = passwordUser
+        ? {
+            id: passwordUser.id,
+            provider: 'email',
+            providerUserId: passwordUser.email,
+          }
+        : {
+            id: 'mock-user-local',
+            provider: mockDb.user.provider,
+            providerUserId: mockDb.user.providerUserId,
+          };
+      next();
+      return;
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        provider: true,
+        providerUserId: true,
+      },
+    });
+
+    if (!user) {
+      throw unauthorized(ERROR_MESSAGES.INVALID_TOKEN);
+    }
+
+    req.user = user;
+    next();
+  } catch {
+    throw unauthorized(ERROR_MESSAGES.INVALID_TOKEN);
+  }
+}
+
+export function requireUser(req: Request) {
+  if (!req.user) {
+    throw unauthorized();
+  }
+
+  return req.user;
+}

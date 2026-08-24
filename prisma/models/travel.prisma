@@ -1,0 +1,51 @@
+model Place {
+  id             String   @id
+  title          String
+  address        String?
+  category       String?
+  contentType    String?
+  distanceMeters Int?
+  imageUrl       String?
+  lat            Float?
+  lng            Float?
+  overview       String?
+  source         String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model MomentLog {
+  id            String   @id
+  userId        String
+  photoUrl      String?
+  createdAt     DateTime
+  sessionId     String?
+  lat           Float?
+  lng           Float?
+  placeCategory String?
+  placeId       String?
+  placeName     String?
+  note          String?
+  trackSnapshot Json?
+  templateId    String   @default("album")
+  travelMode    String?
+  moodTags      String[]
+  source        String
+  syncStatus    String
+  visibility    String   @default("private")
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model TravelSession {
+  id         String    @id
+  userId     String
+  status     String
+  startedAt  DateTime?
+  endedAt    DateTime?
+  travelMode String?
+  lat        Float?
+  lng        Float?
+  routePoints Json?
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  recap      Recap?
+}
