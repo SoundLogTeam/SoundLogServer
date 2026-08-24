@@ -84,7 +84,7 @@ Soundlog는 웹 서비스를 배포하지 않습니다. 배포된 iOS와 Android
 
 - Swagger UI: `http://localhost:4000/docs`
 - OpenAPI YAML: `http://localhost:4000/openapi.yaml`
-- 운영 API: `https://api.soundlog.shop`
+- 운영 API: `https://api.soundlog.p-e.kr`
 
 Swagger에서 바로 DB 쓰기를 확인할 때는 인증 없이 호출 가능한 개발용 API를 사용할 수 있습니다.
 
@@ -99,7 +99,7 @@ Swagger에서 바로 DB 쓰기를 확인할 때는 인증 없이 호출 가능�
 - `ALLOW_DEV_AUTH_FALLBACK=false`
 - 자체 이메일/비밀번호 로그인만 사용하며, 서버는 비밀번호 원문 대신 bcrypt hash만 저장
 - `CLIENT_URLS`, `UPLOAD_PUBLIC_BASE_URL`, 앱의 `EXPO_PUBLIC_SOUNDLOG_API_BASE_URL`은 HTTPS 도메인 사용
-- 운영 클라이언트는 네이티브 앱입니다. 공개 API URL은 `https://api.soundlog.shop`입니다.
+- 운영 클라이언트는 네이티브 앱입니다. 공개 API URL은 `https://api.soundlog.p-e.kr`입니다.
 - `REQUEST_BODY_LIMIT`, `MOMENT_PHOTO_MAX_FILE_SIZE_MB`, `UPLOAD_DIRECTORY`는 운영 파일 업로드 정책에 맞게 조정
 - iOS 앱 설정에 전체 ATS 예외를 넣지 않기
 
@@ -110,6 +110,8 @@ Swagger에서 바로 DB 쓰기를 확인할 때는 인증 없이 호출 가능�
 ```bash
 NODE_ENV=production npm run check:production-env
 ```
+
+현재 운영 서버의 수동 배포 절차와 GitHub Actions 시크릿 구성은 [운영 배포 안내](docs/production-deployment.md)를 따릅니다.
 
 ## Scripts
 

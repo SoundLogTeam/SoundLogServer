@@ -9,6 +9,8 @@ const required = [
   'MODERATION_ALERT_MODE',
   'APP_REVIEW_EMAIL',
   'APP_REVIEW_PASSWORD',
+  'SUPPORT_EMAIL',
+  'TRUST_PROXY_HOPS',
 ];
 
 const errors = [];
@@ -48,8 +50,16 @@ if (process.env.AUTH_RATE_LIMIT_ENABLED === 'false') {
   addError('AUTH_RATE_LIMIT_ENABLED must not be false in production.');
 }
 
+if (process.env.TRUST_PROXY_HOPS !== '1') {
+  addError('TRUST_PROXY_HOPS must be 1 behind the api.soundlog.p-e.kr nginx proxy.');
+}
+
 if (!isHttpsUrl(process.env.UPLOAD_PUBLIC_BASE_URL)) {
   addError('UPLOAD_PUBLIC_BASE_URL must be an HTTPS URL.');
+}
+
+if (process.env.UPLOAD_PUBLIC_BASE_URL !== 'https://api.soundlog.p-e.kr') {
+  addError('UPLOAD_PUBLIC_BASE_URL must use https://api.soundlog.p-e.kr.');
 }
 
 if (
@@ -76,6 +86,10 @@ clientUrls.forEach((url) => {
   }
 });
 
+if (clientUrls.length !== 1 || clientUrls[0] !== 'https://api.soundlog.p-e.kr') {
+  addError('CLIENT_URLS must use only https://api.soundlog.p-e.kr in production.');
+}
+
 if ((process.env.JWT_SECRET ?? '').length < 32) {
   addWarning('JWT_SECRET is shorter than 32 characters. Use a long random secret in production.');
 }
@@ -97,6 +111,14 @@ if (
 
 if ((process.env.APP_REVIEW_PASSWORD ?? '').length < 8) {
   addError('APP_REVIEW_PASSWORD must be at least 8 characters.');
+}
+
+if (!/^\S+@\S+\.\S+$/.test(process.env.SUPPORT_EMAIL ?? '')) {
+  addError('SUPPORT_EMAIL must be a valid email address.');
+}
+
+if ((process.env.SUPPORT_EMAIL ?? '').endsWith('@soundlog.shop')) {
+  addError('SUPPORT_EMAIL must not use soundlog.shop until its mail receiving setup is verified.');
 }
 
 if (!process.env.TOUR_API_SERVICE_KEY) {
