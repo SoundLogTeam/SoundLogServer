@@ -30,6 +30,7 @@ import { getLimit, paginateByCursor } from '../utils/pagination.js';
 import { createPublicId } from '../utils/tokens.js';
 import { badRequest, forbidden, notFound } from '../utils/http-error.js';
 import { findRegionalPlaylistId } from '../utils/regional-playlist.js';
+import { createMlRecommendationArtwork } from '../utils/ml-recommendation-artwork.js';
 import { reverseGeocodeLocation } from './reverse-geocoding.service.js';
 import {
   assertUserTextAllowed,
@@ -98,6 +99,7 @@ type MlMood = '잔잔한' | '신나는' | '시원한' | '설레는' | '감성적
 const RECAP_DISCOVERY_RADIUS_METERS = 300;
 
 type MlRecommendationResponse = {
+  backgroundImageUrl?: unknown;
   tracks?: unknown;
 };
 
@@ -1013,8 +1015,7 @@ async function fetchMlRecommendationPlaylist(
       regionName: state,
       placeName: input.placeId,
       reason: `${state} 중인 지금, ${mood} 무드에 맞춰 추천했어요`,
-      coverImageUrl: undefined,
-      backgroundImageUrl: undefined,
+      ...createMlRecommendationArtwork(data?.backgroundImageUrl),
       trackCount: tracks.length,
       durationText: `${tracks.length * 4}:00분`,
       context: {
