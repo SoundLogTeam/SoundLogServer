@@ -8,6 +8,9 @@ API 구현 기준은 `openapi/soundlog-api.yaml`이며, 현재 Express와 OpenAP
 [`SoundLogTeam/soundlog-ml`](https://github.com/SoundLogTeam/soundlog-ml)입니다.
 과거 개인 API 스냅샷이 아니라 이 저장소와 공식 ML 저장소를 함께 변경합니다.
 
+팀에서 활성 관리하는 세 저장소와 과거 이력 보존 위치는
+[저장소 구조 문서](docs/repository-structure.md)에서 확인할 수 있습니다.
+
 리캡, 여행 로그, 여행 세션, GPS 경로를 변경할 때는 [Recap / Log 서버 도메인 계약](docs/recap-log-domain-contract.md)을 먼저 확인합니다.
 
 ## Stack
