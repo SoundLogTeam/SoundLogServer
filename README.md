@@ -4,6 +4,10 @@ SoundLog React Native/Expo 앱과 연동되는 Express + TypeScript API 서버�
 
 API 구현 기준은 `openapi/soundlog-api.yaml`이며, 현재 Express와 OpenAPI에 동기화된 62개 HTTP 연산을 제공합니다.
 
+위치와 무드 기반 추천 모델의 구현 기준은
+[`SoundLogTeam/soundlog-ml`](https://github.com/SoundLogTeam/soundlog-ml)입니다.
+과거 개인 API 스냅샷이 아니라 이 저장소와 공식 ML 저장소를 함께 변경합니다.
+
 리캡, 여행 로그, 여행 세션, GPS 경로를 변경할 때는 [Recap / Log 서버 도메인 계약](docs/recap-log-domain-contract.md)을 먼저 확인합니다.
 
 ## Stack

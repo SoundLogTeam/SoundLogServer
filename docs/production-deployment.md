@@ -45,6 +45,11 @@ ALLOW_DEV_AUTH_FALLBACK=false
 
 `ML_RECOMMENDATION_API_URL`은 API 서버가 내부적으로 호출할 HTTPS 추천 엔드포인트입니다. 앱은 이 내부 주소를 직접 호출하지 않고 `https://api.soundlog.p-e.kr/v1/recommendations/playlists`만 호출합니다. 배포 후 공개 계약 검사는 이 경로가 폴백이 아닌 `ml-recommendation` 결과와 HTTPS 커버 이미지를 반환하는지 확인합니다.
 
+추천 서비스 코드와 `/recommend` 응답 계약은
+[`SoundLogTeam/soundlog-ml`](https://github.com/SoundLogTeam/soundlog-ml)을 기준으로
+관리합니다. `backgroundImageUrl` 계약을 변경할 때는 ML 저장소의 `API.md`와 이
+서버의 응답 변환 테스트를 같은 작업에서 확인합니다.
+
 ## 배포 중 보호 절차
 
 워크플로는 새 compose 파일을 복사하기 전에 기존 `.env`와 `docker-compose.prod.yml`을 `.deploy-backups/<GitHub run id>`에 보관합니다. 새 API가 시작되지 않거나 내부 계약 검사가 실패하면 이전 파일로 되돌리고 기존 컨테이너를 다시 시작합니다.
