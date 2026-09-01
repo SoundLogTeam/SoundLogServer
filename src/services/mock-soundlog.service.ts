@@ -2547,6 +2547,7 @@ export const mockSoundlogService = {
   },
 
   async createRecap(userId: string, input: {
+    backgroundImageUrl?: string;
     momentLogIds?: string[];
     representativeTrackId?: string;
     routePoints?: RoutePointDto[];
@@ -2709,7 +2710,7 @@ export const mockSoundlogService = {
           momentCount: moments.length,
           sessionId: input.sessionId,
           travelSessionId: input.sessionId,
-          backgroundImageUrl: thumbnailMoment.photoUrl,
+          backgroundImageUrl: thumbnailMoment.photoUrl ?? input.backgroundImageUrl,
           discImageUrl: representativeMoment.photoUrl,
           lat: recapLocation?.lat,
           lng: recapLocation?.lng,
@@ -2746,6 +2747,18 @@ export const mockSoundlogService = {
         return recapItemToDto(recap, userId);
       },
     );
+  },
+
+  // mock은 네트워크를 타지 않는다 — 시드 플레이리스트의 배경을 그대로 돌려준다
+  async getRecapBackgroundSuggestion(input: { location: { lat: number; lng: number } }) {
+    void input;
+    const seed = mockDb.playlists.find((playlist) => playlist.backgroundImageUrl);
+    return {
+      backgroundImageUrl: seed?.backgroundImageUrl ?? null,
+      placeName: seed?.placeName ?? null,
+      placeType: null,
+      source: seed?.backgroundImageUrl ? ('poi_image' as const) : null,
+    };
   },
 
   async getRecapShare(userId: string, recapId: string) {

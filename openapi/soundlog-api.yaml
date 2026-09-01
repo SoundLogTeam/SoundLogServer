@@ -1181,6 +1181,31 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /v1/recaps/background-suggestion:
+    post:
+      tags:
+        - Recaps
+      summary: 리캡 배경 사진 추천
+      description: 좌표(와 선택한 여행 모드·무드)로 ML 서비스의 관광공사 사진 추천을 받습니다. 리캡 생성 화면에서 사용자 사진이 없을 때 배경으로 제안합니다. ML 서비스가 응답하지 않으면 500 대신 backgroundImageUrl이 null인 응답을 돌려줍니다.
+      operationId: getRecapBackgroundSuggestion
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecapBackgroundSuggestionRequest"
+      responses:
+        "200":
+          description: 추천 배경 (없으면 null)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecapBackgroundSuggestionResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /v1/recaps/{recapId}/share:
     get:
       tags:
@@ -3221,6 +3246,62 @@ components:
             $ref: "#/components/schemas/RoutePoint"
         visibility:
           $ref: "#/components/schemas/RecapVisibility"
+        backgroundImageUrl:
+          type: string
+          format: uri
+          description: 리캡 배경 추천(/v1/recaps/background-suggestion) 결과를 저장할 때 보냅니다. 대표 캡처에 사진이 없을 때만 배경으로 쓰이며, 사용자 사진이 항상 우선합니다.
+
+    RecapBackgroundSuggestionRequest:
+      type: object
+      required:
+        - location
+      properties:
+        location:
+          $ref: "#/components/schemas/GeoPoint"
+        travelMode:
+          $ref: "#/components/schemas/TravelMode"
+        moodTags:
+          type: array
+          items:
+            $ref: "#/components/schemas/MoodTag"
+        state:
+          $ref: "#/components/schemas/MlTravelState"
+        mood:
+          $ref: "#/components/schemas/MlMood"
+
+    RecapBackgroundSuggestion:
+      type: object
+      required:
+        - backgroundImageUrl
+        - placeName
+        - placeType
+        - source
+      properties:
+        backgroundImageUrl:
+          type: string
+          format: uri
+          nullable: true
+          description: 관광공사 사진 URL. 근처에 관광지가 없거나 ML 서비스가 응답하지 않으면 null.
+        placeName:
+          type: string
+          nullable: true
+          description: 사진의 기준이 된 관광지 이름 (예: 광안리해수욕장)
+        placeType:
+          type: string
+          nullable: true
+        source:
+          type: string
+          nullable: true
+          enum: [poi_image, gallery]
+          description: poi_image는 관광지 대표 사진, gallery는 관광사진갤러리 매칭 결과
+
+    RecapBackgroundSuggestionResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          $ref: "#/components/schemas/RecapBackgroundSuggestion"
 
     RecapVisibilityUpdateRequest:
       type: object

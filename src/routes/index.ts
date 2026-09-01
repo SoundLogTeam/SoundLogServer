@@ -283,6 +283,12 @@ export function createApiRouter() {
     validate({ body: recapValidators.createBody }),
     asyncHandler(recapController.createRecap),
   );
+  router.post(
+    '/v1/recaps/background-suggestion',
+    authMiddleware,
+    validate({ body: recapValidators.backgroundSuggestionBody }),
+    asyncHandler(recapController.getRecapBackgroundSuggestion),
+  );
   router.get(
     '/v1/recaps/:recapId/share',
     authMiddleware,

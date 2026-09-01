@@ -361,6 +361,9 @@ export const recapValidators = {
     scope: z.enum(['all', 'mine', 'others']).optional().default('mine'),
   }),
   createBody: z.object({
+    // ML 배경 추천(/v1/recaps/background-suggestion) 결과를 저장할 때 보낸다.
+    // 대표 캡처에 사진이 없을 때만 배경으로 쓰인다 — 사용자 사진이 항상 우선.
+    backgroundImageUrl: z.string().url().optional(),
     momentLogIds: z.array(z.string()).optional(),
     representativeTrackId: z.string().optional(),
     routePoints: routePointsSchema.optional(),
@@ -368,6 +371,14 @@ export const recapValidators = {
     templateId: recapTemplateSchema,
     title: z.string().optional(),
     visibility: recapVisibilitySchema.optional().default('private'),
+  }),
+  // 리캡 배경 추천 — contextual 플레이리스트와 같은 어휘(travelMode/moodTags)를 받는다.
+  backgroundSuggestionBody: z.object({
+    location: geoPointSchema,
+    mood: mlMoodSchema.optional(),
+    moodTags: z.array(moodTagSchema).optional(),
+    state: mlTravelStateSchema.optional(),
+    travelMode: travelModeSchema.optional(),
   }),
   recapParams: z.object({
     recapId: z.string().min(1),
