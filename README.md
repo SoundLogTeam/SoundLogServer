@@ -2,7 +2,7 @@
 
 SoundLog React Native/Expo 앱과 연동되는 Express + TypeScript API 서버입니다.
 
-API 구현 기준은 `openapi/soundlog-api.yaml`이며, 현재 Express와 OpenAPI에 동기화된 62개 HTTP 연산을 제공합니다.
+API 구현 기준은 `openapi/soundlog-api.yaml`이며, 현재 Express와 OpenAPI에 동기화된 69개 HTTP 연산을 제공합니다.
 
 리캡, 여행 로그, 여행 세션, GPS 경로를 변경할 때는 [Recap / Log 서버 도메인 계약](docs/recap-log-domain-contract.md)을 먼저 확인합니다.
 
@@ -102,6 +102,10 @@ Swagger에서 바로 DB 쓰기를 확인할 때는 인증 없이 호출 가능�
 - 운영 클라이언트는 네이티브 앱입니다. 공개 API URL은 `https://api.soundlog.p-e.kr`입니다.
 - `REQUEST_BODY_LIMIT`, `MOMENT_PHOTO_MAX_FILE_SIZE_MB`, `UPLOAD_DIRECTORY`는 운영 파일 업로드 정책에 맞게 조정
 - iOS 앱 설정에 전체 ATS 예외를 넣지 않기
+- `MODERATION_ADMIN_KEY` 32자 이상 설정 — 없으면 관리자 신고 처리 API가 잠긴다 (심사 요건)
+- `TRUST_PROXY_HOPS=1` — nginx 뒤이므로. 0이면 rate limit이 모든 요청을 같은 IP로 본다
+- `SUPPORT_EMAIL` 실제 수신 가능한 주소 — 약관·지원 페이지에 그대로 노출된다
+- `ML_RECOMMENDATION_API_URL`은 공개망이면 https 필수. 내부망(루프백·사설·host.docker.internal)은 평문 허용
 
 서버 코드는 자체 계정 로그인(`POST /v1/auth/login`, `POST /v1/auth/register`)으로 Soundlog access/refresh token을 발급합니다.
 
@@ -141,10 +145,12 @@ pnpm db:seed     # 로컬 seed 데이터 적재
 - Tour / Home / Playlists
   - `GET /v1/tour/nearby-places`
   - `GET /v1/tour/reverse-geocode`
+  - `GET /v1/tour/places`
   - `GET /v1/home/featured-playlists`
   - `GET /v1/home/mood-recommendations`
   - `GET /v1/home/recent-music-logs`
   - `POST /v1/playlists/contextual`
+  - `POST /v1/recommendations/playlists`
   - `GET /v1/playlists/:playlistId`
 - Moment Logs / Library / Recaps
   - `GET /v1/recap-captures`
@@ -155,12 +161,16 @@ pnpm db:seed     # 로컬 seed 데이터 적재
   - `DELETE /v1/recap-captures/:momentLogId/photo`
   - `GET /v1/moment-logs`
   - `POST /v1/moment-logs`
+  - `PATCH /v1/moment-logs/:momentLogId`
+  - `PUT /v1/moment-logs/:momentLogId/photo`
   - `GET /v1/library/tracks`
   - `PUT /v1/library/tracks/:trackId`
   - `POST /v1/recommendation-events`
   - `GET /v1/recap-markers`
   - `GET /v1/recaps`
   - `POST /v1/recaps`
+  - `POST /v1/recaps/background-suggestion`: ML 관광사진 배경 추천 (실패해도 200 + null)
+  - `PUT /v1/recaps/:recapId/thumbnail`
   - `GET /v1/recaps/:recapId/share`
   - `PATCH /v1/recaps/:recapId/visibility`
   - `POST /v1/recaps/:recapId/share-events`
@@ -170,6 +180,7 @@ pnpm db:seed     # 로컬 seed 데이터 적재
 - Community
   - `POST /v1/travel-rooms`: 방장으로 공동 여행방 생성
   - `GET /v1/travel-rooms/:roomId`: 방장/참여자만 공동 여행방 조회
+  - `POST /v1/travel-rooms/join`: 초대 코드만으로 참여
   - `POST /v1/travel-rooms/:roomId/join`: 신규 참여자는 초대 코드 필요
   - `POST /v1/travel-rooms/:roomId/moments`: 공동 Recap 후보 순간 추가
   - `PATCH /v1/travel-rooms/:roomId/moments/:momentId`: 방장만 후보 상태 변경
@@ -183,6 +194,16 @@ pnpm db:seed     # 로컬 seed 데이터 적재
   - `PATCH /v1/travel-mate-requests/:requestId`: 수신자/발신자 권한에 따라 요청 상태 변경
   - `POST /v1/community/blocks`
   - `POST /v1/community/reports`
+- Moderation Admin (`x-soundlog-admin-key` 필요 — 앱 심사 24시간 대응 요건)
+  - `GET /v1/admin/moderation/reports`: 처리 기한이 빠른 순서의 신고 큐
+  - `PATCH /v1/admin/moderation/reports/:reportId`: dismiss / hide_content / hide_and_suspend
+  - `GET /v1/admin/moderation/content`: 공개 전 이미지 검토 대기 목록
+  - `PATCH /v1/admin/moderation/content/:contentId`: 승인 / 반려
+  - `GET /v1/admin/moderation/content-images/:fileId`: 사용자 토큰 없이 원본 검토
+  - `POST /v1/admin/moderation/sweep`: 20시간 경고 · 24시간 초과 점검 수동 실행
+- Public pages (인증 없음, HTML)
+  - `GET /legal/privacy`, `GET /legal/terms`, `GET /support`
+  - 앱 스토어 심사에 제출한 주소다. 죽으면 심사가 막힌다.
 - Trends
   - `GET /v1/trends/regions/:regionCode/sound`
 
