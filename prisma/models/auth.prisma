@@ -17,6 +17,7 @@ model User {
   libraryTrackStates       LibraryTrackState[]
   momentLogs               MomentLog[]
   recommendationEvents     RecommendationEvent[]
+  recommendationFeedbacks  RecommendationFeedback[]
   recaps                   Recap[]
   travelSessions           TravelSession[]
   recapShareEvents         RecapShareEvent[]

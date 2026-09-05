@@ -2828,11 +2828,15 @@ components:
           example: 광안리해수욕장
         source:
           type: string
-          description: 추천 산출 경로입니다. ML 추천이 실패했거나 위치가 없으면 seed-fallback으로 내려갑니다.
-          enum:
-            - ml-recommendation
-            - seed-fallback
-            - server-contextual
+          description: |
+            추천 산출 경로입니다.
+
+            음악은 `ml-recommendation` / `seed-fallback` / `server-contextual` 중 하나이며,
+            ML 추천이 실패했거나 위치가 없으면 seed-fallback으로 내려갑니다.
+
+            추천사진 피드백은 `recommended-photo:<관광 데이터 출처>` 형식을 씁니다
+            (예: `recommended-photo:tour-api`). 출처가 계속 늘어나므로 enum으로 고정하지 않습니다.
+          maxLength: 120
           example: ml-recommendation
         travelMode:
           $ref: "#/components/schemas/TravelMode"
@@ -3115,6 +3119,7 @@ components:
         - recommendation_mode_change
         - top_filter_change
         - recap_representative_track_select
+        - recommendation_feedback
 
     RecommendationEvent:
       type: object
@@ -3146,6 +3151,44 @@ components:
         createdAt:
           type: string
           format: date-time
+
+    RecommendationFeedbackValue:
+      type: object
+      description: |
+        추천 피드백 이벤트의 `value` 문자열을 파싱한 결과입니다. 전송할 때는
+        이 객체를 JSON으로 직렬화해 `value`에 문자열로 넣습니다.
+
+        의견 원문은 운영 로그와 검증 오류 메시지에 남기지 않습니다.
+      required:
+        - version
+        - subject
+        - rating
+      properties:
+        version:
+          type: integer
+          description: 현재 지원 버전은 1입니다. 그 밖의 값은 해석하지 않고 거부합니다.
+          enum:
+            - 1
+          example: 1
+        subject:
+          type: string
+          description: 평가 대상. `music`이면 playlistId가 함께 필요합니다.
+          enum:
+            - music
+            - photo
+          example: music
+        rating:
+          type: integer
+          minimum: 1
+          maximum: 5
+          description: 1부터 5까지의 정수. 소수점은 거부합니다.
+          example: 5
+        opinion:
+          type: string
+          minLength: 1
+          maxLength: 300
+          description: 선택 항목. 앞뒤 공백을 제거한 뒤 1자 이상 300자 이하여야 합니다.
+          example: 산책할 때 잘 어울렸어요
 
     RecommendationEventsRequest:
       type: object
@@ -3285,7 +3328,7 @@ components:
         placeName:
           type: string
           nullable: true
-          description: 사진의 기준이 된 관광지 이름 (예: 광안리해수욕장)
+          description: "사진의 기준이 된 관광지 이름 (예: 광안리해수욕장)"
         placeType:
           type: string
           nullable: true

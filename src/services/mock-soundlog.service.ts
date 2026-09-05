@@ -5,6 +5,10 @@ import { badRequest, forbidden, notFound } from '../utils/http-error.js';
 import { getLimit, paginateByCursor } from '../utils/pagination.js';
 import { findRegionalPlaylistId } from '../utils/regional-playlist.js';
 import { createPublicId } from '../utils/tokens.js';
+import {
+  RECOMMENDATION_FEEDBACK_TYPE,
+  parseRecommendationFeedbackValue,
+} from '../validators/api.validators.js';
 import { assertUserTextAllowed, type ModerationTargetType } from './content-moderation.service.js';
 
 type TrackDto = {
@@ -1707,6 +1711,38 @@ export const mockSoundlogService = {
       mockDb.recommendationEvents.push({
         ...event,
         userId,
+        createdAt: new Date(event.createdAt),
+      });
+
+      if (event.type !== RECOMMENDATION_FEEDBACK_TYPE) {
+        return;
+      }
+
+      const parsed = parseRecommendationFeedbackValue(event.value);
+
+      if (!parsed.ok) {
+        return;
+      }
+
+      const context = event.context ?? {};
+      const readString = (key: string) =>
+        typeof context[key] === 'string' && context[key] !== ''
+          ? (context[key] as string)
+          : null;
+
+      mockDb.recommendationFeedbacks.push({
+        id: event.id,
+        userId,
+        sessionId: event.sessionId,
+        version: parsed.value.version,
+        subject: parsed.value.subject,
+        rating: parsed.value.rating,
+        opinion: parsed.value.opinion ?? null,
+        playlistId: event.playlistId ?? null,
+        placeId: readString('placeId'),
+        placeName: readString('placeName'),
+        source: readString('source'),
+        context,
         createdAt: new Date(event.createdAt),
       });
     });

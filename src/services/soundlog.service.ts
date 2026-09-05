@@ -29,6 +29,10 @@ import { UPLOAD_FILE_ID_PATTERN } from '../middlewares/upload.middleware.js';
 import { getLimit, paginateByCursor } from '../utils/pagination.js';
 import { createPublicId } from '../utils/tokens.js';
 import { badRequest, forbidden, notFound } from '../utils/http-error.js';
+import {
+  RECOMMENDATION_FEEDBACK_TYPE,
+  parseRecommendationFeedbackValue,
+} from '../validators/api.validators.js';
 import { findRegionalPlaylistId } from '../utils/regional-playlist.js';
 import { reverseGeocodeLocation } from './reverse-geocoding.service.js';
 import {
@@ -1880,6 +1884,62 @@ async function findDefaultPlaylist(params?: { lat?: number; lng?: number; placeI
   });
 }
 
+/**
+ * 이벤트 배치에서 피드백 이벤트만 골라 구조화된 행으로 옮긴다.
+ *
+ * 검증은 validate 미들웨어에서 이미 끝났다 — 여기 도달한 피드백 이벤트는
+ * 형식이 성하다. 그래도 같은 파서를 다시 쓰는 이유는, 검증과 저장이 서로 다른
+ * 해석을 하기 시작하면 그게 제일 찾기 어려운 종류의 버그라서다.
+ */
+function buildRecommendationFeedbackRows(
+  userId: string,
+  events: Array<{
+    context: RecommendationContext;
+    createdAt: string;
+    id: string;
+    playlistId?: string;
+    sessionId: string;
+    type: string;
+    value?: string;
+  }>,
+) {
+  return events.flatMap((event) => {
+    if (event.type !== RECOMMENDATION_FEEDBACK_TYPE) {
+      return [];
+    }
+
+    const parsed = parseRecommendationFeedbackValue(event.value);
+
+    if (!parsed.ok) {
+      return [];
+    }
+
+    const context = (event.context ?? {}) as Record<string, unknown>;
+    const readString = (key: string) =>
+      typeof context[key] === 'string' && context[key] !== ''
+        ? (context[key] as string)
+        : null;
+
+    return [
+      {
+        id: event.id,
+        userId,
+        sessionId: event.sessionId,
+        version: parsed.value.version,
+        subject: parsed.value.subject,
+        rating: parsed.value.rating,
+        opinion: parsed.value.opinion ?? null,
+        playlistId: event.playlistId ?? null,
+        placeId: readString('placeId'),
+        placeName: readString('placeName'),
+        source: readString('source'),
+        context: event.context as Prisma.InputJsonValue,
+        createdAt: new Date(event.createdAt),
+      },
+    ];
+  });
+}
+
 export const soundlogService = {
   async getHealth() {
     let database: 'ok' | 'unavailable' = 'ok';
@@ -2850,19 +2910,31 @@ export const soundlogService = {
     await withIdempotency(
       { idempotencyKey, scope: 'recommendation-events.create', userId },
       async () => {
-        await prisma.recommendationEvent.createMany({
-          data: input.events.map((event) => ({
-            id: event.id,
-            userId,
-            sessionId: event.sessionId,
-            type: event.type,
-            trackId: event.trackId,
-            playlistId: event.playlistId,
-            value: event.value,
-            context: event.context as Prisma.InputJsonValue,
-            createdAt: new Date(event.createdAt),
-          })),
-          skipDuplicates: true,
+        const feedbackRows = buildRecommendationFeedbackRows(userId, input.events);
+
+        await prisma.$transaction(async (transaction) => {
+          await transaction.recommendationEvent.createMany({
+            data: input.events.map((event) => ({
+              id: event.id,
+              userId,
+              sessionId: event.sessionId,
+              type: event.type,
+              trackId: event.trackId,
+              playlistId: event.playlistId,
+              value: event.value,
+              context: event.context as Prisma.InputJsonValue,
+              createdAt: new Date(event.createdAt),
+            })),
+            skipDuplicates: true,
+          });
+
+          if (feedbackRows.length > 0) {
+            // id가 이벤트 id라 재전송돼도 한 행만 남는다.
+            await transaction.recommendationFeedback.createMany({
+              data: feedbackRows,
+              skipDuplicates: true,
+            });
+          }
         });
 
         return { accepted: true };

@@ -55,17 +55,71 @@ const envSchema = z.object({
 
 const parsedEnv = envSchema.parse(process.env);
 
-const mlRecommendationApiUrl =
-  parsedEnv.NODE_ENV === 'production' &&
-  parsedEnv.ML_RECOMMENDATION_API_URL &&
-  new URL(parsedEnv.ML_RECOMMENDATION_API_URL).protocol !== 'https:'
-    ? undefined
-    : parsedEnv.ML_RECOMMENDATION_API_URL;
+/**
+ * 평문 ML 주소를 받아들일지 판단한다.
+ *
+ * 추천 요청에는 정확한 위경도와 무드가 실린다. 공개망을 평문으로 지나가면
+ * 그대로 노출되므로 production에서는 https를 요구한다.
+ *
+ * 다만 ML이 같은 호스트에 있으면 이야기가 다르다. echo 배포에서 api 컨테이너는
+ * host.docker.internal:8000으로 docker0 브리지를 통해 ML을 부른다. 이 트래픽은
+ * 호스트 밖으로 나가지 않으므로 평문이어도 노출 경로가 없고, 여기에 https를
+ * 요구하면 내부 호출에 인증서를 붙여야 하는 실익 없는 작업이 생긴다.
+ *
+ * 그래서 "공개망 평문만" 막는다. 이 판정이 틀리면 ML 주소가 undefined가 되어
+ * 음악 추천과 리캡 배경이 조용히 폴백으로 내려간다 — 에러도 로그도 없이.
+ */
+function isPrivateHost(hostname: string): boolean {
+  if (
+    hostname === 'localhost' ||
+    hostname === 'host.docker.internal' ||
+    hostname.endsWith('.local') ||
+    hostname.endsWith('.internal')
+  ) {
+    return true;
+  }
+
+  const ipv4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(hostname);
+
+  if (!ipv4) {
+    return hostname === '::1';
+  }
+
+  const [a, b] = ipv4.slice(1).map(Number);
+
+  // 127/8 루프백, 10/8, 172.16/12, 192.168/16 사설 대역
+  return a === 127 || a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+}
+
+function resolveMlApiUrl(rawUrl: string | undefined, nodeEnv: string): string | undefined {
+  if (!rawUrl) {
+    return undefined;
+  }
+
+  const url = new URL(rawUrl);
+
+  if (url.protocol === 'https:' || nodeEnv !== 'production') {
+    return rawUrl;
+  }
+
+  if (isPrivateHost(url.hostname)) {
+    return rawUrl;
+  }
+
+  console.warn(
+    `[env] ML_RECOMMENDATION_API_URL(${url.hostname})이 공개망 평문이라 무시한다. https를 쓰거나 내부 주소로 바꿀 것.`,
+  );
+
+  return undefined;
+}
+
+const mlRecommendationApiUrl = resolveMlApiUrl(
+  parsedEnv.ML_RECOMMENDATION_API_URL,
+  parsedEnv.NODE_ENV,
+);
 
 export const env = {
   ...parsedEnv,
-  // Production recommendation requests can include precise location and mood.
-  // Drop a legacy plaintext endpoint so callers use their local fallback instead.
   ML_RECOMMENDATION_API_URL: mlRecommendationApiUrl,
   // Defaults to disabled under NODE_ENV=test so existing tests that call
   // auth endpoints repeatedly are not destabilized. Set

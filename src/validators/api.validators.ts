@@ -107,9 +107,105 @@ const recommendationContextSchema = z
     placeId: z.string().optional(),
     placeName: z.string().optional(),
     recommendationMode: recommendationModeSchema.optional(),
+    // 음악 추천 출처 또는 'recommended-photo:<관광 데이터 출처>'.
+    // z.object()는 모르는 키를 조용히 버리므로 여기에 선언돼 있어야 서비스까지 넘어간다.
+    source: z.string().trim().min(1).max(120).optional(),
     travelMode: travelModeSchema.optional(),
   })
   .default({});
+
+export const RECOMMENDATION_FEEDBACK_TYPE = 'recommendation_feedback';
+export const SUPPORTED_RECOMMENDATION_FEEDBACK_VERSIONS = [1] as const;
+
+/**
+ * 이벤트 value에 담겨 오는 피드백 본문.
+ *
+ * 검증 실패 메시지에 opinion 원문을 절대 넣지 않는다 — error 미들웨어가
+ * details.issues를 그대로 응답에 실어 보내기 때문에 의견이 밖으로 샌다.
+ */
+export const recommendationFeedbackValueSchema = z.object({
+  opinion: z.string().trim().min(1).max(300).optional(),
+  rating: z.number().int().min(1).max(5),
+  subject: z.enum(['music', 'photo']),
+  version: z.literal(SUPPORTED_RECOMMENDATION_FEEDBACK_VERSIONS),
+});
+
+export type RecommendationFeedbackValue = z.infer<
+  typeof recommendationFeedbackValueSchema
+>;
+
+type FeedbackRejectionCode =
+  | 'INVALID_FEEDBACK_VALUE'
+  | 'MISSING_FEEDBACK_TARGET'
+  | 'UNSUPPORTED_FEEDBACK_VERSION';
+
+/**
+ * value 문자열을 파싱해 피드백 본문을 얻는다. 형식이 어긋나면 사유 코드를 돌려준다.
+ * 서비스 계층에서도 같은 함수를 써서 검증과 저장이 갈라지지 않게 한다.
+ */
+export function parseRecommendationFeedbackValue(raw?: string):
+  | { code: FeedbackRejectionCode; message: string; ok: false }
+  | { ok: true; value: RecommendationFeedbackValue } {
+  if (typeof raw !== 'string' || raw.trim() === '') {
+    return {
+      code: 'INVALID_FEEDBACK_VALUE',
+      message: 'value에 피드백 JSON 문자열이 필요합니다.',
+      ok: false,
+    };
+  }
+
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return {
+      code: 'INVALID_FEEDBACK_VALUE',
+      message: 'value를 JSON으로 해석할 수 없습니다.',
+      ok: false,
+    };
+  }
+
+  // 지원하지 않는 version은 나머지 필드를 해석하지 않고 먼저 끊는다.
+  const version = (parsed as { version?: unknown } | null)?.version;
+
+  if (
+    typeof version !== 'number' ||
+    !SUPPORTED_RECOMMENDATION_FEEDBACK_VERSIONS.includes(
+      version as (typeof SUPPORTED_RECOMMENDATION_FEEDBACK_VERSIONS)[number],
+    )
+  ) {
+    return {
+      code: 'UNSUPPORTED_FEEDBACK_VERSION',
+      message: `지원하는 피드백 version은 ${SUPPORTED_RECOMMENDATION_FEEDBACK_VERSIONS.join(', ')} 입니다.`,
+      ok: false,
+    };
+  }
+
+  const result = recommendationFeedbackValueSchema.safeParse(parsed);
+
+  if (!result.success) {
+    const hasRatingIssue = result.error.issues.some(
+      (issue) => issue.path[0] === 'rating',
+    );
+    const hasOpinionIssue = result.error.issues.some(
+      (issue) => issue.path[0] === 'opinion',
+    );
+
+    return {
+      code: 'INVALID_FEEDBACK_VALUE',
+      message: hasRatingIssue
+        ? 'rating은 1부터 5까지의 정수여야 합니다.'
+        : hasOpinionIssue
+          ? 'opinion은 공백을 제외하고 1자 이상 300자 이하여야 합니다.'
+          : 'subject는 music 또는 photo여야 합니다.',
+      ok: false,
+    };
+  }
+
+  return { ok: true, value: result.data };
+}
+
 
 export const authValidators = {
   loginBody: z.object({
@@ -339,8 +435,40 @@ export const recommendationEventValidators = {
             'recommendation_mode_change',
             'top_filter_change',
             'recap_representative_track_select',
+            RECOMMENDATION_FEEDBACK_TYPE,
           ]),
           value: z.string().optional(),
+        })
+        .superRefine((event, ctx) => {
+          if (event.type !== RECOMMENDATION_FEEDBACK_TYPE) {
+            return;
+          }
+
+          const parsed = parseRecommendationFeedbackValue(event.value);
+
+          if (!parsed.ok) {
+            ctx.addIssue({
+              code: 'custom',
+              message: parsed.message,
+              params: { eventId: event.id, feedbackCode: parsed.code },
+              path: ['value'],
+            });
+
+            return;
+          }
+
+          // 음악은 어떤 플레이리스트를 평가했는지 없으면 분석에 못 쓴다.
+          if (parsed.value.subject === 'music' && !event.playlistId) {
+            ctx.addIssue({
+              code: 'custom',
+              message: '음악 피드백에는 playlistId가 필요합니다.',
+              params: {
+                eventId: event.id,
+                feedbackCode: 'MISSING_FEEDBACK_TARGET',
+              },
+              path: ['playlistId'],
+            });
+          }
         }),
       )
       .min(1)

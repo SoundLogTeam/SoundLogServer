@@ -279,6 +279,21 @@ function createMockDb() {
       userId: string;
       value?: string;
     }>,
+    recommendationFeedbacks: [] as Array<{
+      context: Record<string, unknown>;
+      createdAt: Date;
+      id: string;
+      opinion: string | null;
+      placeId: string | null;
+      placeName: string | null;
+      playlistId: string | null;
+      rating: number;
+      sessionId: string;
+      source: string | null;
+      subject: string;
+      userId: string;
+      version: number;
+    }>,
     recaps: recaps.map((recap) => {
       const routePoints = 'routePoints' in recap
         ? recap.routePoints.map((point) => ({ ...point }))
