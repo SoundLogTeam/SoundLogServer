@@ -28,6 +28,11 @@ export const recapController = {
     );
   },
 
+  async getRecapBackgroundSuggestion(req: Request, res: Response) {
+    requireUser(req);
+    res.json(dataResponse(await apiService.getRecapBackgroundSuggestion(req.body)));
+  },
+
   async getRecapShare(req: Request, res: Response) {
     const user = requireUser(req);
     res.json(dataResponse(await apiService.getRecapShare(user.id, String(req.params.recapId))));

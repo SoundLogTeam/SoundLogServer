@@ -5,6 +5,10 @@ import { badRequest, forbidden, notFound } from '../utils/http-error.js';
 import { getLimit, paginateByCursor } from '../utils/pagination.js';
 import { findRegionalPlaylistId } from '../utils/regional-playlist.js';
 import { createPublicId } from '../utils/tokens.js';
+import {
+  RECOMMENDATION_FEEDBACK_TYPE,
+  parseRecommendationFeedbackValue,
+} from '../validators/api.validators.js';
 import { assertUserTextAllowed, type ModerationTargetType } from './content-moderation.service.js';
 
 type TrackDto = {
@@ -1709,6 +1713,38 @@ export const mockSoundlogService = {
         userId,
         createdAt: new Date(event.createdAt),
       });
+
+      if (event.type !== RECOMMENDATION_FEEDBACK_TYPE) {
+        return;
+      }
+
+      const parsed = parseRecommendationFeedbackValue(event.value);
+
+      if (!parsed.ok) {
+        return;
+      }
+
+      const context = event.context ?? {};
+      const readString = (key: string) =>
+        typeof context[key] === 'string' && context[key] !== ''
+          ? (context[key] as string)
+          : null;
+
+      mockDb.recommendationFeedbacks.push({
+        id: event.id,
+        userId,
+        sessionId: event.sessionId,
+        version: parsed.value.version,
+        subject: parsed.value.subject,
+        rating: parsed.value.rating,
+        opinion: parsed.value.opinion ?? null,
+        playlistId: event.playlistId ?? null,
+        placeId: readString('placeId'),
+        placeName: readString('placeName'),
+        source: readString('source'),
+        context,
+        createdAt: new Date(event.createdAt),
+      });
     });
   },
 
@@ -2547,6 +2583,7 @@ export const mockSoundlogService = {
   },
 
   async createRecap(userId: string, input: {
+    backgroundImageUrl?: string;
     momentLogIds?: string[];
     representativeTrackId?: string;
     routePoints?: RoutePointDto[];
@@ -2709,7 +2746,7 @@ export const mockSoundlogService = {
           momentCount: moments.length,
           sessionId: input.sessionId,
           travelSessionId: input.sessionId,
-          backgroundImageUrl: thumbnailMoment.photoUrl,
+          backgroundImageUrl: thumbnailMoment.photoUrl ?? input.backgroundImageUrl,
           discImageUrl: representativeMoment.photoUrl,
           lat: recapLocation?.lat,
           lng: recapLocation?.lng,
@@ -2746,6 +2783,18 @@ export const mockSoundlogService = {
         return recapItemToDto(recap, userId);
       },
     );
+  },
+
+  // mock은 네트워크를 타지 않는다 — 시드 플레이리스트의 배경을 그대로 돌려준다
+  async getRecapBackgroundSuggestion(input: { location: { lat: number; lng: number } }) {
+    void input;
+    const seed = mockDb.playlists.find((playlist) => playlist.backgroundImageUrl);
+    return {
+      backgroundImageUrl: seed?.backgroundImageUrl ?? null,
+      placeName: seed?.placeName ?? null,
+      placeType: null,
+      source: seed?.backgroundImageUrl ? ('poi_image' as const) : null,
+    };
   },
 
   async getRecapShare(userId: string, recapId: string) {

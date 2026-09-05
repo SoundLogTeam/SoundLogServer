@@ -29,6 +29,10 @@ import { UPLOAD_FILE_ID_PATTERN } from '../middlewares/upload.middleware.js';
 import { getLimit, paginateByCursor } from '../utils/pagination.js';
 import { createPublicId } from '../utils/tokens.js';
 import { badRequest, forbidden, notFound } from '../utils/http-error.js';
+import {
+  RECOMMENDATION_FEEDBACK_TYPE,
+  parseRecommendationFeedbackValue,
+} from '../validators/api.validators.js';
 import { findRegionalPlaylistId } from '../utils/regional-playlist.js';
 import { reverseGeocodeLocation } from './reverse-geocoding.service.js';
 import {
@@ -98,6 +102,7 @@ type MlMood = '잔잔한' | '신나는' | '시원한' | '설레는' | '감성적
 const RECAP_DISCOVERY_RADIUS_METERS = 300;
 
 type MlRecommendationResponse = {
+  backgroundImageUrl?: string | null;
   tracks?: unknown;
 };
 
@@ -127,6 +132,28 @@ type ContextualPlaylistInput = {
   preferredMoods?: string[];
   state?: MlTravelState;
   travelMode?: string;
+};
+
+type RecapBackgroundSuggestionInput = {
+  location: { lat: number; lng: number };
+  mood?: MlMood;
+  moodTags?: string[];
+  state?: MlTravelState;
+  travelMode?: string;
+};
+
+// ML `POST /photo` 응답 — /recommend와 같은 계약(backgroundImageUrl 키 항상 존재, null 가능)
+type MlPhotoResponse = {
+  backgroundImageUrl?: string | null;
+  meta?: { photo?: { source?: string | null } | null } | null;
+  poi?: { title?: string | null; type?: string | null } | null;
+};
+
+type RecapBackgroundSuggestionDto = {
+  backgroundImageUrl: string | null;
+  placeName: string | null;
+  placeType: string | null;
+  source: 'gallery' | 'poi_image' | null;
 };
 
 type MomentLogUpdateInput = {
@@ -960,6 +987,73 @@ function normalizeMlTracks(rawTracks: unknown): TrackDto[] {
   });
 }
 
+// ML `/photo`는 /recommend의 앞부분(POI 확보 → 사진 선택)만 타는 엔드포인트다.
+// 주소는 별도 env 없이 /recommend 주소에서 파생한다 — override의
+// host.docker.internal 경로를 그대로 따라가므로 배포 설정을 건드리지 않는다.
+// env.ts가 프로덕션에서 https가 아닌 ML 주소를 undefined로 떨어뜨리므로,
+// 그때는 fetchMlRecommendationPlaylist와 똑같이 호출하지 않는다.
+function mlPhotoApiUrl(): string | undefined {
+  return env.ML_RECOMMENDATION_API_URL?.replace(/\/recommend\/?$/, '/photo');
+}
+
+const EMPTY_BACKGROUND_SUGGESTION: RecapBackgroundSuggestionDto = {
+  backgroundImageUrl: null,
+  placeName: null,
+  placeType: null,
+  source: null,
+};
+
+// 리캡 배경 추천. ML이 죽거나 늦으면 500 대신 null 응답 — 앱은 사용자 사진/그라데이션으로 간다.
+async function fetchMlBackgroundSuggestion(
+  input: RecapBackgroundSuggestionInput,
+): Promise<RecapBackgroundSuggestionDto> {
+  const url = mlPhotoApiUrl();
+
+  if (!url) {
+    return EMPTY_BACKGROUND_SUGGESTION;
+  }
+
+  const state = resolveMlTravelState(input);
+  const mood = resolveMlMood(input);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), env.ML_RECOMMENDATION_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(url, {
+      body: JSON.stringify({
+        mood,
+        state,
+        x: input.location.lng,
+        y: input.location.lat,
+      }),
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      method: 'POST',
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      return EMPTY_BACKGROUND_SUGGESTION;
+    }
+
+    const data = (await response.json().catch(() => undefined)) as MlPhotoResponse | undefined;
+    const source = data?.meta?.photo?.source;
+
+    return {
+      backgroundImageUrl: data?.backgroundImageUrl ?? null,
+      placeName: data?.poi?.title ?? null,
+      placeType: data?.poi?.type ?? null,
+      source: source === 'poi_image' || source === 'gallery' ? source : null,
+    };
+  } catch {
+    return EMPTY_BACKGROUND_SUGGESTION;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function fetchMlRecommendationPlaylist(
   input: ContextualPlaylistInput,
 ): Promise<MlPlaylistDto | undefined> {
@@ -1013,8 +1107,8 @@ async function fetchMlRecommendationPlaylist(
       regionName: state,
       placeName: input.placeId,
       reason: `${state} 중인 지금, ${mood} 무드에 맞춰 추천했어요`,
-      coverImageUrl: undefined,
-      backgroundImageUrl: undefined,
+      coverImageUrl: data?.backgroundImageUrl ?? undefined,
+      backgroundImageUrl: data?.backgroundImageUrl ?? undefined,
       trackCount: tracks.length,
       durationText: `${tracks.length * 4}:00분`,
       context: {
@@ -1787,6 +1881,62 @@ async function findDefaultPlaylist(params?: { lat?: number; lng?: number; placeI
     lat: params?.lat,
     lng: params?.lng,
     placeText,
+  });
+}
+
+/**
+ * 이벤트 배치에서 피드백 이벤트만 골라 구조화된 행으로 옮긴다.
+ *
+ * 검증은 validate 미들웨어에서 이미 끝났다 — 여기 도달한 피드백 이벤트는
+ * 형식이 성하다. 그래도 같은 파서를 다시 쓰는 이유는, 검증과 저장이 서로 다른
+ * 해석을 하기 시작하면 그게 제일 찾기 어려운 종류의 버그라서다.
+ */
+function buildRecommendationFeedbackRows(
+  userId: string,
+  events: Array<{
+    context: RecommendationContext;
+    createdAt: string;
+    id: string;
+    playlistId?: string;
+    sessionId: string;
+    type: string;
+    value?: string;
+  }>,
+) {
+  return events.flatMap((event) => {
+    if (event.type !== RECOMMENDATION_FEEDBACK_TYPE) {
+      return [];
+    }
+
+    const parsed = parseRecommendationFeedbackValue(event.value);
+
+    if (!parsed.ok) {
+      return [];
+    }
+
+    const context = (event.context ?? {}) as Record<string, unknown>;
+    const readString = (key: string) =>
+      typeof context[key] === 'string' && context[key] !== ''
+        ? (context[key] as string)
+        : null;
+
+    return [
+      {
+        id: event.id,
+        userId,
+        sessionId: event.sessionId,
+        version: parsed.value.version,
+        subject: parsed.value.subject,
+        rating: parsed.value.rating,
+        opinion: parsed.value.opinion ?? null,
+        playlistId: event.playlistId ?? null,
+        placeId: readString('placeId'),
+        placeName: readString('placeName'),
+        source: readString('source'),
+        context: event.context as Prisma.InputJsonValue,
+        createdAt: new Date(event.createdAt),
+      },
+    ];
   });
 }
 
@@ -2760,19 +2910,31 @@ export const soundlogService = {
     await withIdempotency(
       { idempotencyKey, scope: 'recommendation-events.create', userId },
       async () => {
-        await prisma.recommendationEvent.createMany({
-          data: input.events.map((event) => ({
-            id: event.id,
-            userId,
-            sessionId: event.sessionId,
-            type: event.type,
-            trackId: event.trackId,
-            playlistId: event.playlistId,
-            value: event.value,
-            context: event.context as Prisma.InputJsonValue,
-            createdAt: new Date(event.createdAt),
-          })),
-          skipDuplicates: true,
+        const feedbackRows = buildRecommendationFeedbackRows(userId, input.events);
+
+        await prisma.$transaction(async (transaction) => {
+          await transaction.recommendationEvent.createMany({
+            data: input.events.map((event) => ({
+              id: event.id,
+              userId,
+              sessionId: event.sessionId,
+              type: event.type,
+              trackId: event.trackId,
+              playlistId: event.playlistId,
+              value: event.value,
+              context: event.context as Prisma.InputJsonValue,
+              createdAt: new Date(event.createdAt),
+            })),
+            skipDuplicates: true,
+          });
+
+          if (feedbackRows.length > 0) {
+            // id가 이벤트 id라 재전송돼도 한 행만 남는다.
+            await transaction.recommendationFeedback.createMany({
+              data: feedbackRows,
+              skipDuplicates: true,
+            });
+          }
         });
 
         return { accepted: true };
@@ -3798,6 +3960,7 @@ export const soundlogService = {
   async createRecap(
     userId: string,
     input: {
+      backgroundImageUrl?: string;
       momentLogIds?: string[];
       representativeTrackId?: string;
       routePoints?: RoutePointDto[];
@@ -3986,7 +4149,7 @@ export const soundlogService = {
             momentCount: moments.length,
             sessionId: input.sessionId,
             travelSessionId: input.sessionId,
-            backgroundImageUrl: thumbnailMoment.photoUrl,
+            backgroundImageUrl: thumbnailMoment.photoUrl ?? input.backgroundImageUrl,
             discImageUrl: representativeMoment.photoUrl,
             recordedAt: representativeMoment.createdAt,
             moments: moments.map(momentLogToRecapShareMoment) as Prisma.JsonArray,
@@ -4024,6 +4187,10 @@ export const soundlogService = {
         return recapItemToDto(recap, userId);
       },
     );
+  },
+
+  async getRecapBackgroundSuggestion(input: RecapBackgroundSuggestionInput) {
+    return fetchMlBackgroundSuggestion(input);
   },
 
   async getRecapShare(userId: string, recapId: string) {
